@@ -1,0 +1,2 @@
+[permissions]
+allow = ["Bash(dir C:\\Users\\26805\\Desktop\\简历\\自助式数据分析Agent平台\\后端_核心:*)", "Bash(dir)"]

@@ -1,0 +1,20 @@
+# 后端
+fastapi
+uvicorn
+python-multipart
+python-dotenv
+requests
+pandas
+openpyxl
+
+# 前端
+# - HTML/ECharts 主前端无 Python 依赖（纯静态 + Jinja2 模板，FastAPI 自带 Jinja2 依赖）
+# - 下面是 Streamlit 调试前端的依赖；不跑 streamlit 调试可注释掉
+streamlit
+streamlit-option-menu
+streamlit-ace
+plotly
+
+# 测试
+pytest
+pytest-timeout

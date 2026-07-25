@@ -1,0 +1,600 @@
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional, Tuple
+import html
+import json
+import logging
+
+import pandas as pd
+
+from 后端_核心.数据画像 import 生成数据画像
+from 后端_核心.agent import 解析自然语言需求 as agent解析自然语言需求
+
+logger = logging.getLogger(__name__)
+
+
+图表类型映射 = {
+    "自动推荐": "auto",
+    "柱状图": "bar",
+    "折线图": "line",
+    "饼图": "pie",
+    "散点图": "scatter",
+    "表格": "table",
+    "直方图": "histogram",
+    "热力图": "heatmap",
+    "堆积柱状图": "stacked_bar",
+    "面积图": "area",
+    "雷达图": "radar",
+}
+
+聚合映射 = {
+    "求和": "sum",
+    "平均值": "mean",
+    "计数": "count",
+    "最大值": "max",
+    "最小值": "min",
+}
+
+
+def _可_json值(value: Any) -> Any:
+    if pd.isna(value):
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if hasattr(value, "item"):
+        return value.item()
+    return value
+
+
+def _可_json行(df: pd.DataFrame) -> List[Dict[str, Any]]:
+    return [
+        {str(key): _可_json值(value) for key, value in row.items()}
+        for row in df.to_dict(orient="records")
+    ]
+
+
+def _可选字段(value: Optional[str]) -> Optional[str]:
+    if value is None or value == "无" or value == "":
+        return None
+    return value
+
+
+def _转换日期列(df: pd.DataFrame, columns: List[str]) -> pd.DataFrame:
+    result = df.copy()
+    for column in columns:
+        if column in result.columns and not pd.api.types.is_datetime64_any_dtype(result[column]):
+            parsed = pd.to_datetime(result[column], errors="coerce")
+            if parsed.notna().sum() > 0:
+                result[column] = parsed
+    return result
+
+
+def _匹配意图字段(画像: Dict[str, Any], 关键词列表: List[str]) -> Optional[str]:
+    可用字段 = 画像.get("字段列表", [])
+    分类字段 = 画像.get("分类字段", [])
+    for 关键词 in 关键词列表:
+        for field in [*可用字段, *分类字段]:
+            if 关键词 and 关键词 in field:
+                return field
+    if 分类字段:
+        return 分类字段[0]
+    if 可用字段:
+        return 可用字段[0]
+    return None
+
+
+占比关键词 = ["占比", "比例", "分布", "构成", "占比图", "占比分布", "占比分析"]
+字段意图关键词 = ["工作经验", "经验", "地区", "国家", "城市", "地点", "岗位", "职位", "分类", "类型", "行业", "部门", "公司"]
+
+
+def _提取模板字段(文本: str) -> List[str]:
+    fields: List[str] = []
+    start = 0
+    while True:
+        left = 文本.find("【", start)
+        right = 文本.find("】", left + 1)
+        if left == -1 or right == -1:
+            break
+        value = 文本[left + 1:right].strip()
+        if value:
+            fields.append(value)
+        start = right + 1
+    return fields
+
+
+def _合法字段(画像: Dict[str, Any], field: Optional[str]) -> Optional[str]:
+    if field and field in 画像.get("字段列表", []):
+        return field
+    return None
+
+
+def _受控语句配置(画像: Dict[str, Any], 分析需求: str) -> Dict[str, Any]:
+    文本 = 分析需求.strip()
+    fields = _提取模板字段(文本)
+    数值字段 = 画像.get("数值字段", [])
+    日期字段 = 画像.get("日期字段", [])
+    分类字段 = 画像.get("分类字段", [])
+
+    first = _合法字段(画像, fields[0] if fields else None)
+    second = _合法字段(画像, fields[1] if len(fields) > 1 else None)
+    metric = _合法字段(画像, fields[1] if len(fields) > 1 else None) or (数值字段[0] if 数值字段 else "记录数")
+
+    if "交叉分布" in 文本 or "热力图" in 文本 or "矩阵" in 文本:
+        return {"图表类型": "热力图", "x轴": first or (分类字段[0] if 分类字段 else None), "分组字段": second or (分类字段[1] if len(分类字段) > 1 else None), "y轴": ["记录数"], "聚合方式": "计数"}
+    if "直方图" in 文本 or "分布情况" in 文本 or "数值分布" in 文本:
+        target = first or (数值字段[0] if 数值字段 else None)
+        return {"图表类型": "直方图", "x轴": target, "y轴": [target] if target else [], "聚合方式": "计数"}
+    if "占比" in 文本 or "比例" in 文本 or "构成" in 文本:
+        return {"图表类型": "饼图", "x轴": first or _匹配意图字段(画像, 字段意图关键词), "y轴": ["记录数"], "聚合方式": "计数"}
+    if "趋势" in 文本 or "变化" in 文本 or "面积图" in 文本:
+        chart = "面积图" if "面积图" in 文本 else "折线图"
+        return {"图表类型": chart, "x轴": first or (日期字段[0] if 日期字段 else None), "y轴": [metric] if metric else [], "聚合方式": "计数" if metric == "记录数" else "求和"}
+    if "堆积" in 文本:
+        return {"图表类型": "堆积柱状图", "x轴": first or (分类字段[0] if 分类字段 else None), "分组字段": second or (分类字段[1] if len(分类字段) > 1 else None), "y轴": [metric] if metric else ["记录数"], "聚合方式": "计数" if metric == "记录数" else "求和"}
+    if "关系" in 文本 or "相关" in 文本 or "散点" in 文本:
+        return {"图表类型": "散点图", "x轴": first or (数值字段[0] if 数值字段 else None), "y轴": [second or (数值字段[1] if len(数值字段) > 1 else None)], "聚合方式": "求和"}
+    if "雷达" in 文本:
+        metrics = [field for field in fields[1:] if field in 数值字段] or 数值字段[:5]
+        return {"图表类型": "雷达图", "x轴": first or (分类字段[0] if 分类字段 else None), "y轴": metrics, "聚合方式": "平均值"}
+    if "统计" in 文本 and "数量" in 文本:
+        return {"图表类型": "柱状图", "x轴": first or (分类字段[0] if 分类字段 else None), "y轴": ["记录数"], "聚合方式": "计数"}
+    if "比较" in 文本 or "对比" in 文本:
+        return {"图表类型": "柱状图", "x轴": first or (分类字段[0] if 分类字段 else None), "y轴": [metric] if metric else ["记录数"], "聚合方式": "计数" if metric == "记录数" else "求和"}
+    return {}
+
+
+def _解析自然语言意图(画像: Dict[str, Any], 分析需求: str) -> Tuple[Dict[str, Any], str]:
+    """优先用 LLM (Function Calling) 解析; 任何失败都降级回规则匹配. 返回 (override, source).
+
+    source 取值:
+        "LLM"  - agent.编排器返回了合法意图
+        "规则" - 关键词匹配命中
+        "无"   - 未命中
+    """
+    if 分析需求 and 分析需求.strip():
+        try:
+            override = agent解析自然语言需求(分析需求, 画像)
+            if override:
+                return override, "LLM"
+            logger.warning("LLM 意图解析返回 None, 降级到关键词匹配")
+        except Exception as exc:
+            logger.warning("LLM 意图解析异常, 降级到关键词匹配: %s", exc)
+    rule_override = _意图驱动配置(画像, 分析需求)
+    return rule_override, ("规则" if rule_override else "无")
+
+
+def _意图驱动配置(画像: Dict[str, Any], 分析需求: str) -> Dict[str, Any]:
+    controlled = _受控语句配置(画像, 分析需求)
+    if controlled:
+        return {key: value for key, value in controlled.items() if value not in (None, [None])}
+
+    需求文本 = 分析需求.strip()
+    if not any(keyword in 需求文本 for keyword in 占比关键词):
+        return {}
+
+    目标字段 = _匹配意图字段(画像, 字段意图关键词)
+    if not 目标字段:
+        return {}
+
+    return {
+        "图表类型": "饼图",
+        "x轴": 目标字段,
+        "y轴": ["记录数"],
+        "聚合方式": "计数",
+    }
+
+
+def _推荐图表类型(画像: Dict[str, Any], x轴: Optional[str], y轴列表: List[str], 分析需求: str = "") -> str:
+    日期字段 = set(画像.get("日期字段", []))
+    数值字段 = set(画像.get("数值字段", []))
+    分类字段 = set(画像.get("分类字段", []))
+    需求文本 = 分析需求.strip()
+
+    if any(keyword in 需求文本 for keyword in 占比关键词):
+        return "饼图"
+    if x轴 in 日期字段 and y轴列表:
+        return "折线图"
+    if len(y轴列表) >= 2 and all(field in 数值字段 for field in y轴列表[:2]):
+        return "散点图"
+    if x轴 in 分类字段 and y轴列表:
+        return "柱状图"
+    if x轴 and y轴列表:
+        return "柱状图"
+    return "表格"
+
+
+def _生成推荐说明(
+    画像: Dict[str, Any],
+    图表类型: str,
+    x轴: Optional[str],
+    y轴列表: List[str],
+    分组字段: Optional[str],
+    聚合方式: str,
+    是否自动推荐: bool,
+    分析需求: str = "",
+) -> Dict[str, Any]:
+    日期字段 = set(画像.get("日期字段", []))
+    数值字段 = set(画像.get("数值字段", []))
+    分类字段 = set(画像.get("分类字段", []))
+    需求文本 = 分析需求.strip()
+    reasons: List[str] = []
+
+    if 是否自动推荐:
+        reasons.append(f"系统根据字段类型自动选择 `{图表类型}`")
+    else:
+        reasons.append(f"使用用户手动选择的 `{图表类型}`")
+    if any(keyword in 需求文本 for keyword in 占比关键词):
+        reasons.append("需求包含占比/分布语义，优先使用饼图并按计数统计各分类占比")
+    if x轴 in 日期字段:
+        reasons.append(f"`{x轴}` 被识别为日期字段，适合观察趋势变化")
+    elif x轴 in 分类字段:
+        reasons.append(f"`{x轴}` 被识别为分类字段，适合做分组对比")
+    elif x轴:
+        reasons.append(f"`{x轴}` 作为当前分析维度")
+    if y轴列表:
+        numeric_y = [field for field in y轴列表 if field in 数值字段]
+        if numeric_y:
+            reasons.append(f"`{'、'.join(numeric_y)}` 是数值字段，适合用 `{聚合方式}` 生成指标")
+        else:
+            reasons.append("当前指标字段不是数值字段，系统按计数类聚合处理")
+    if 分组字段:
+        reasons.append(f"`{分组字段}` 用作颜色/分组字段，便于比较不同类别")
+
+    return {
+        "图表类型": 图表类型,
+        "自动推荐": 是否自动推荐,
+        "理由": reasons,
+        "推荐字段": {
+            "X轴": x轴,
+            "Y轴": y轴列表,
+            "分组字段": 分组字段,
+            "聚合方式": 聚合方式,
+        },
+    }
+
+
+def _字段问题提示(画像: Dict[str, Any], 图表类型: str, x轴: Optional[str], y轴列表: List[str], 分析需求: str = "") -> List[str]:
+    warnings: List[str] = []
+    数值字段 = set(画像.get("数值字段", []))
+    需求文本 = 分析需求.strip()
+    if 图表类型 != "表格" and not x轴:
+        warnings.append("当前图表缺少 X 轴字段，已回退为数据预览/聚合结果")
+    if 图表类型 not in {"表格", "饼图"} and not y轴列表:
+        warnings.append("当前图表缺少 Y 轴数值字段，建议至少选择一个指标字段")
+    if 图表类型 == "散点图" and len([field for field in y轴列表 if field in 数值字段]) < 2:
+        warnings.append("散点图建议选择至少两个数值字段，否则相关性观察不充分")
+    if 图表类型 == "饼图" and len(y轴列表) > 1:
+        warnings.append("饼图只使用第一个 Y 轴字段作为占比值")
+    if 图表类型 == "雷达图" and len(y轴列表) < 3:
+        warnings.append("雷达图建议至少选择 3 个数值指标")
+    if 图表类型 == "热力图" and not x轴:
+        warnings.append("热力图需要至少一个分类字段作为 X 轴")
+    if 图表类型 == "直方图" and (not x轴 or x轴 not in 数值字段):
+        warnings.append("直方图建议选择一个数值字段")
+    return warnings
+
+
+def _生成_agent_trace(
+    分析需求: str,
+    画像: Dict[str, Any],
+    图表类型: str,
+    x轴: Optional[str],
+    y轴列表: List[str],
+    分组字段: Optional[str],
+    聚合方式: str,
+    推荐说明: Dict[str, Any],
+    风险提示: List[str],
+    意图来源: str = "无",
+) -> List[Dict[str, Any]]:
+    数据质量 = 画像.get("数据质量", {})
+    if 分析需求.strip():
+        理解说明 = f"意图来源：{意图来源}；需求：{分析需求.strip()}"
+    else:
+        理解说明 = "用户未填写自然语言需求，系统按字段结构生成基础报表。"
+    return [
+        {
+            "步骤": "理解需求",
+            "状态": "完成",
+            "说明": 理解说明,
+            "意图来源": 意图来源,
+        },
+        {
+            "步骤": "识别数据",
+            "状态": "完成",
+            "说明": f"数据集包含 {画像.get('行数', 0)} 行、{画像.get('列数', 0)} 列；数值字段 {len(画像.get('数值字段', []))} 个，日期字段 {len(画像.get('日期字段', []))} 个，分类字段 {len(画像.get('分类字段', []))} 个。",
+        },
+        {
+            "步骤": "推荐配置",
+            "状态": "完成",
+            "说明": "；".join(推荐说明.get("理由", [])) or f"使用 `{图表类型}` 生成报表。",
+            "配置": {
+                "图表类型": 图表类型,
+                "X轴": x轴,
+                "Y轴": y轴列表,
+                "分组字段": 分组字段,
+                "聚合方式": 聚合方式,
+            },
+        },
+        {
+            "步骤": "执行计算",
+            "状态": "完成",
+            "说明": f"按当前字段配置执行 `{聚合方式}` 聚合，并生成前端可渲染的图表数据。",
+        },
+        {
+            "步骤": "质量检查",
+            "状态": "需关注" if 风险提示 or 数据质量.get("提示") else "完成",
+            "说明": "；".join([*数据质量.get("提示", []), *风险提示]) or "未发现明显的数据质量或字段适配风险。",
+        },
+        {
+            "步骤": "生成结论",
+            "状态": "完成",
+            "说明": "结合报表数据、推荐依据和数据质量生成分析结论。",
+        },
+    ]
+
+
+def _生成HTML报告(report: Dict[str, Any]) -> str:
+    title = html.escape(report.get("标题") or "报表结果")
+    recommendation = report.get("推荐说明", {})
+    trace = report.get("Agent Trace", [])
+    rows = report.get("报表数据", [])
+    quality = report.get("数据画像", {}).get("数据质量", {})
+    return f"""<!doctype html>
+<html lang=\"zh-CN\">
+<head>
+  <meta charset=\"utf-8\" />
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+  <title>{title}</title>
+  <style>
+    body {{ font-family: Inter, 'PingFang SC', 'Microsoft YaHei', sans-serif; margin: 0; background: #f5f7fb; color: #0f172a; }}
+    main {{ max-width: 1120px; margin: 0 auto; padding: 24px; }}
+    .card {{ background: #fff; border: 1px solid #dbe3f0; border-radius: 14px; padding: 16px; margin-bottom: 16px; box-shadow: 0 16px 32px rgba(15,23,42,.06); }}
+    h1, h2, h3 {{ margin: 0 0 12px; }}
+    .meta {{ display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }}
+    .pill {{ display: inline-block; padding: 4px 10px; border-radius: 999px; background: #eff6ff; color: #2563eb; font-size: 12px; }}
+    ul {{ margin: 8px 0 0 20px; }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
+    th, td {{ border-bottom: 1px solid #dbe3f0; padding: 8px 10px; text-align: left; vertical-align: top; }}
+    pre {{ white-space: pre-wrap; word-break: break-word; background: #f8fafc; border-radius: 12px; padding: 12px; }}
+  </style>
+</head>
+<body>
+<main>
+  <div class=\"card\">
+    <h1>{title}</h1>
+    <div class=\"meta\">
+      <div><strong>图表类型</strong>：{html.escape(report.get('图表类型') or '')}</div>
+      <div><strong>数据质量</strong>：{html.escape(str(quality.get('等级', '未知')))}</div>
+      <div><strong>数据集ID</strong>：{html.escape(report.get('数据集ID') or '')}</div>
+      <div><strong>报表ID</strong>：{html.escape(report.get('报表ID') or '')}</div>
+    </div>
+  </div>
+
+  <div class=\"card\">
+    <h2>推荐依据</h2>
+    {''.join(f'<div class="pill">{html.escape(str(reason))}</div>' for reason in recommendation.get('理由', [])) or '<div>暂无推荐依据</div>'}
+  </div>
+
+  <div class=\"card\">
+    <h2>Agent Trace</h2>
+    {''.join(f'<div><strong>{html.escape(str(step.get("步骤", "")))}</strong> · {html.escape(str(step.get("状态", "")))}<div>{html.escape(str(step.get("说明", "")))}</div></div><hr/>' for step in trace) or '<div>暂无 Trace</div>'}
+  </div>
+
+  <div class=\"card\">
+    <h2>分析结论</h2>
+    <pre>{html.escape(report.get('结论') or '')}</pre>
+  </div>
+
+  <div class=\"card\">
+    <h2>报表数据</h2>
+    <table>
+      <thead>
+        <tr>{''.join(f'<th>{html.escape(str(h))}</th>' for h in (rows[0].keys() if rows else []))}</tr>
+      </thead>
+      <tbody>
+        {''.join('<tr>' + ''.join(f'<td>{html.escape(str(row.get(h, "")))}</td>' for h in (rows[0].keys() if rows else [])) + '</tr>' for row in rows) if rows else '<tr><td>暂无数据</td></tr>'}
+      </tbody>
+    </table>
+  </div>
+</main>
+</body>
+</html>"""
+
+
+def _格式化数值(value: Any) -> str:
+    if value is None:
+        return "无"
+    if isinstance(value, float):
+        return f"{value:.2f}"
+    return str(value)
+
+
+def _生成直方图数据(df: pd.DataFrame, field: Optional[str]) -> pd.DataFrame:
+    if not field or field not in df.columns or not pd.api.types.is_numeric_dtype(df[field]):
+        return df.head(200).copy()
+    series = df[field].dropna()
+    if series.empty:
+        return pd.DataFrame(columns=[field, "记录数"])
+    bins = min(10, max(3, int(series.nunique())))
+    bucket = pd.cut(series, bins=bins, duplicates="drop")
+    grouped = bucket.value_counts(sort=False).reset_index()
+    grouped.columns = [field, "记录数"]
+    grouped[field] = grouped[field].astype(str)
+    return grouped
+
+
+def _生成热力图数据(df: pd.DataFrame, x轴: Optional[str], 分组字段: Optional[str], y轴列表: List[str], 聚合方式: str) -> pd.DataFrame:
+    if not x轴 or not 分组字段 or x轴 not in df.columns or 分组字段 not in df.columns:
+        return df.head(200).copy()
+    value_field = y轴列表[0] if y轴列表 else "记录数"
+    if 聚合方式 == "计数" or value_field == "记录数" or value_field not in df.columns:
+        pivot = df.pivot_table(index=分组字段, columns=x轴, aggfunc="size", fill_value=0)
+    else:
+        agg = 聚合映射.get(聚合方式, "sum")
+        pivot = df.pivot_table(index=分组字段, columns=x轴, values=value_field, aggfunc=agg, fill_value=0)
+    return pivot.reset_index().melt(id_vars=[分组字段], var_name=x轴, value_name=value_field).head(500)
+
+
+def _聚合数据(
+    df: pd.DataFrame,
+    x轴: Optional[str],
+    y轴列表: List[str],
+    分组字段: Optional[str],
+    聚合方式: str,
+) -> pd.DataFrame:
+    if not x轴 or x轴 not in df.columns:
+        return df.head(200).copy()
+
+    valid_y = [field for field in y轴列表 if field in df.columns]
+    group_fields = [x轴]
+    if 分组字段 and 分组字段 in df.columns and 分组字段 != x轴:
+        group_fields.append(分组字段)
+
+    if 聚合方式 == "count" or 聚合方式 == "计数":
+        grouped = df.groupby(group_fields, dropna=False).size().reset_index(name="记录数")
+        return grouped.sort_values(group_fields).head(500)
+
+    agg = 聚合映射.get(聚合方式, "sum")
+    if not valid_y:
+        return df.head(200).copy()
+
+    grouped = df.groupby(group_fields, dropna=False)[valid_y].agg(agg).reset_index()
+    return grouped.sort_values(group_fields).head(500)
+
+
+def _生成结论(
+    分析需求: str,
+    画像: Dict[str, Any],
+    report_df: pd.DataFrame,
+    图表类型: str,
+    推荐说明: Dict[str, Any],
+    风险提示: List[str],
+) -> str:
+    rows = 画像.get("行数", 0)
+    cols = 画像.get("列数", 0)
+    missing = 画像.get("总缺失值", 0)
+    requirement = 分析需求.strip() or "未填写具体分析需求"
+    数据质量 = 画像.get("数据质量", {})
+    recommendation_lines = "\n".join(f"- {reason}" for reason in 推荐说明.get("理由", []))
+    warning_lines = "\n".join(f"- {warning}" for warning in [*数据质量.get("提示", []), *风险提示]) or "- 未发现明显的数据质量或字段适配风险。"
+
+    insight_lines: List[str] = []
+    y_fields = 推荐说明.get("推荐字段", {}).get("Y轴", [])
+    x_field = 推荐说明.get("推荐字段", {}).get("X轴")
+    if x_field and y_fields and x_field in report_df.columns:
+        first_y = y_fields[0]
+        if first_y in report_df.columns and not report_df.empty:
+            top_row = report_df.sort_values(first_y, ascending=False).iloc[0]
+            insight_lines.append(
+                f"- `{x_field}` 中 `{_格式化数值(top_row[x_field])}` 的 `{first_y}` 最高，值为 {_格式化数值(top_row[first_y])}。"
+            )
+            if len(report_df) >= 2:
+                bottom_row = report_df.sort_values(first_y, ascending=True).iloc[0]
+                insight_lines.append(
+                    f"- `{x_field}` 中 `{_格式化数值(bottom_row[x_field])}` 的 `{first_y}` 最低，值为 {_格式化数值(bottom_row[first_y])}。"
+                )
+    if not insight_lines:
+        insight_lines.append(f"- 当前报表结果包含 {len(report_df)} 行数据，可优先查看数据表确认明细。")
+
+    insight_text = "\n".join(insight_lines)
+
+    return (
+        "### 报表结论\n\n"
+        f"- 已基于上传数据生成 `{图表类型}`，原始数据共 {rows} 行、{cols} 列。\n"
+        f"- 分析需求：{requirement}。\n"
+        f"- 当前报表结果包含 {len(report_df)} 行聚合/预览数据。\n"
+        f"- 数据中检测到 {missing} 个缺失值，数据质量等级：{数据质量.get('等级', '未知')}。\n\n"
+        "### 推荐依据\n"
+        f"{recommendation_lines}\n\n"
+        "### 关键发现\n"
+        f"{insight_text}\n\n"
+        "### 注意事项\n"
+        f"{warning_lines}"
+    )
+
+
+def 生成报表数据(
+    df: pd.DataFrame,
+    分析需求: str = "",
+    图表类型: str = "自动推荐",
+    x轴: Optional[str] = None,
+    y轴: Optional[List[str] | str] = None,
+    分组字段: Optional[str] = None,
+    聚合方式: str = "求和",
+) -> Dict[str, Any]:
+    """根据上传数据和页面选择生成可渲染的报表配置。"""
+    if df.empty:
+        raise ValueError("没有可用于生成报表的数据")
+
+    画像 = 生成数据画像(df)
+    df = _转换日期列(df, 画像.get("日期字段", []))
+    x轴 = _可选字段(x轴)
+    分组字段 = _可选字段(分组字段)
+
+    if isinstance(y轴, str):
+        y轴列表 = [y轴] if y轴 else []
+    else:
+        y轴列表 = [field for field in (y轴 or []) if field]
+
+    intent_override, intent_source = _解析自然语言意图(画像, 分析需求)
+    if intent_override:
+        图表类型 = intent_override["图表类型"]
+        x轴 = intent_override.get("x轴") or x轴
+        y轴列表 = intent_override.get("y轴") or y轴列表
+        分组字段 = intent_override.get("分组字段") or 分组字段
+        聚合方式 = intent_override.get("聚合方式") or 聚合方式
+
+    是否自动推荐 = 图表类型 == "自动推荐"
+    effective_chart = 图表类型
+    if 是否自动推荐:
+        effective_chart = _推荐图表类型(画像, x轴, y轴列表, 分析需求)
+
+    if intent_override and 图表类型 == "饼图":
+        effective_chart = "饼图"
+
+    if effective_chart == "表格":
+        report_df = df.head(200).copy()
+    elif effective_chart == "直方图":
+        report_df = _生成直方图数据(df, x轴)
+    elif effective_chart == "热力图":
+        report_df = _生成热力图数据(df, x轴, 分组字段, y轴列表, 聚合方式)
+    else:
+        report_df = _聚合数据(df, x轴, y轴列表, 分组字段, 聚合方式)
+
+    plotly_type = 图表类型映射.get(effective_chart, "table")
+    report_rows = _可_json行(report_df)
+    chart_config: Dict[str, Any] = {
+        "类型": plotly_type,
+        "标题": 分析需求.strip() or f"上传数据{effective_chart}",
+        "X轴": x轴 or (report_df.columns[0] if len(report_df.columns) else None),
+        "Y轴": y轴列表,
+        "颜色": 分组字段,
+        "数据": report_rows,
+    }
+
+    if plotly_type == "pie" and x轴 and y轴列表:
+        chart_config["名称"] = x轴
+        chart_config["值"] = y轴列表[0]
+
+    推荐说明 = _生成推荐说明(画像, effective_chart, x轴, y轴列表, 分组字段, 聚合方式, 是否自动推荐, 分析需求)
+    风险提示 = _字段问题提示(画像, effective_chart, x轴, y轴列表, 分析需求)
+    result = {
+        "标题": chart_config["标题"],
+        "分析需求": 分析需求,
+        "图表类型": effective_chart,
+        "图表配置": chart_config,
+        "报表数据": report_rows,
+        "数据画像": 画像,
+        "推荐说明": 推荐说明,
+        "风险提示": 风险提示,
+        "Agent Trace": _生成_agent_trace(分析需求, 画像, effective_chart, x轴, y轴列表, 分组字段, 聚合方式, 推荐说明, 风险提示, intent_source),
+        "意图来源": intent_source,
+        "导出数据": {
+            "推荐文件名": "analysis-report.html",
+            "格式": "html",
+        },
+        "结论": _生成结论(分析需求, 画像, report_df, effective_chart, 推荐说明, 风险提示),
+    }
+    result["导出数据"]["HTML"] = _生成HTML报告(result)
+    result["导出数据"]["JSON"] = json.dumps(result, ensure_ascii=False, default=str)
+    return result
