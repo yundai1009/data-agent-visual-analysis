@@ -144,14 +144,14 @@ def _受控语句配置(画像: Dict[str, Any], 分析需求: str) -> Dict[str, 
     return {}
 
 
-def _解析自然语言意图(画像: Dict[str, Any], 分析需求: str) -> Tuple[Dict[str, Any], str, List[Dict[str, Any]]]:
+def _解析自然语言意图(画像: Dict[str, Any], 分析需求: str, df=None) -> Tuple[Dict[str, Any], str, List[Dict[str, Any]]]:
     """优先用 LLM 解析; 失败降级回规则匹配. 返回 (override, source, trace)。
     source: LLM / 规则 / 无
     trace: 多轮 ReAct 决策记录，或空列表
     """
     if 分析需求 and 分析需求.strip():
         try:
-            agent_result = 编排Agent(画像, 分析需求)
+            agent_result = 编排Agent(画像, 分析需求, df=df)
             if agent_result:
                 override = {
                     "图表类型": agent_result["图表类型"],
@@ -542,7 +542,7 @@ def 生成报表数据(
     else:
         y轴列表 = [field for field in (y轴 or []) if field]
 
-    intent_override, intent_source, agent_trace = _解析自然语言意图(画像, 分析需求)
+    intent_override, intent_source, agent_trace = _解析自然语言意图(画像, 分析需求, df)
     if intent_override:
         图表类型 = intent_override["图表类型"]
         x轴 = intent_override.get("x轴") or x轴
