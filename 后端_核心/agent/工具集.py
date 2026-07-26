@@ -71,11 +71,113 @@ from typing import Any, Callable, Dict, List, Optional
 }
 
 
-# 暴露给 LLM 的工具列表（阶段 1 仅 1 个）
+# 暴露给 LLM 的工具列表（阶段 1 仅 1 个；阶段 2 扩到 5 个）
 TOOL_SCHEMAS: List[Dict[str, Any]] = [意图识别_tool_schema]
 
-# 工具名 → 执行器 映射。阶段 1 的“执行”其实是“校验 + 透传”，不做 pandas 计算。
+
+# ===========================================================================
+# 阶段 2 新增：4 个 ReAct 工具的 schema 与执行器
+# ===========================================================================
+
+数据画像_tool_schema: Dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "获取数据画像",
+        "description": "读取当前数据集的字段画像：行数 / 列数 / 字段列表 / 字段类型 / 数值·日期·分类字段 / 数据质量等级。无入参。",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+}
+
+聚合分析_tool_schema: Dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "聚合分析",
+        "description": "按 X 轴 / 分组字段 / 聚合方式对数据集做 pandas 聚合，返回前 N 行结果。字段名必须来自画像.字段列表。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "X轴": {"type": ["string", "null"], "description": "X 轴字段名，必须来自画像字段列表；无则 null"},
+                "Y轴": {"type": "array", "items": {"type": "string"},
+                         "description": "Y 轴字段列表，元素必须来自画像字段列表；空数组表示只做计数"},
+                "分组字段": {"type": ["string", "null"], "description": "分组字段名；无则 null"},
+                "聚合方式": {"type": "string", "enum": ["求和", "平均值", "计数", "最大值", "最小值"],
+                             "description": "聚合方式；占比/分布场景一律用计数"},
+                "前N行": {"type": "integer", "description": "返回前 N 行；默认 5，最大 50", "default": 5},
+            },
+            "required": ["X轴", "Y轴", "聚合方式"],
+        },
+    },
+}
+
+推荐图表_tool_schema: Dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "推荐图表",
+        "description": "根据数据画像 + 已经做过的聚合结果，推荐一个合适的图表类型。会返回图表类型与一句话理由。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "图表类型": {
+                    "type": "string",
+                    "enum": ["柱状图", "折线图", "饼图", "散点图", "表格",
+                             "直方图", "热力图", "堆积柱状图", "面积图", "雷达图"],
+                    "description": "推荐的图表类型",
+                },
+                "理由": {"type": "string", "description": "为什么推荐这个图表（一句话）"},
+            },
+            "required": ["图表类型"],
+        },
+    },
+}
+
+生成结论_tool_schema: Dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "生成结论",
+        "description": "看完整画像 + 聚合结果 + 推荐依据，写一段 200-400 字的中文 Markdown 分析结论：含关键发现、Top/Bottom、异常提示、跟需求呼应。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "结论": {"type": "string", "description": "Markdown 格式的中文分析结论"},
+            },
+            "required": ["结论"],
+        },
+    },
+}
+
+
+# 阶段 2 全量工具 schema 暴露给编排器
+TOOL_SCHEMAS_FULL: List[Dict[str, Any]] = [
+    意图识别_tool_schema,
+    数据画像_tool_schema,
+    聚合分析_tool_schema,
+    推荐图表_tool_schema,
+    生成结论_tool_schema,
+]
+
+
+# 工具名 → 执行器映射：在编排器初始化时注入。
+# 阶段 1 的“执行”仅做校验 + 透传，故映射为空；阶段 2 的执行器待 编排器.py 注入。
 TOOL_EXECUTORS: Dict[str, Callable[[Dict[str, Any], Dict[str, Any]], Optional[Dict[str, Any]]]] = {}
+
+
+def register_tool_executor(name: str, func: Callable[[Dict[str, Any], Dict[str, Any]], Optional[Dict[str, Any]]]) -> None:
+    """注册工具执行器。编排器在启动时调用，把真实 pandas 函数注入到这里。"""
+    TOOL_EXECUTORS[name] = func
+
+
+def execute_tool(name: str, arguments: Dict[str, Any], context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """安全执行工具：白名单 + 字段校验在执行器内部完成；失败统一返回 None。"""
+    executor = TOOL_EXECUTORS.get(name)
+    if not callable(executor):
+        return None
+    try:
+        return executor(arguments, context)
+    except Exception:  # noqa: BLE001 工具执行器异常一律交给上层降级处理
+        return None
+
+
+# ---- 私有校验小函数 ----------------------------------------------------------
 
 
 def validate_intent_against_profile(

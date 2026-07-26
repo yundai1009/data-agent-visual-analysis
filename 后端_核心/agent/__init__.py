@@ -21,6 +21,6 @@
 - ``编排器``     : 解析自然语言需求的对外入口，含 Function Calling ReAct 单轮 + 兜底
 """
 
-from 后端_核心.agent.编排器 import 解析自然语言需求
+from 后端_核心.agent.编排器 import 解析自然语言需求, 编排Agent
 
-__all__ = ["解析自然语言需求"]
+__all__ = ["解析自然语言需求", "编排Agent"]

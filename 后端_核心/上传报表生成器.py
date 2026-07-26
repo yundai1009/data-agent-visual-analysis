@@ -8,7 +8,8 @@ import logging
 import pandas as pd
 
 from 后端_核心.数据画像 import 生成数据画像
-from 后端_核心.agent import 解析自然语言需求 as agent解析自然语言需求
+from 后端_核心.agent.编排器 import 编排Agent
+from 后端_核心.agent.结论润色 import 润色结论
 
 logger = logging.getLogger(__name__)
 
@@ -143,24 +144,29 @@ def _受控语句配置(画像: Dict[str, Any], 分析需求: str) -> Dict[str, 
     return {}
 
 
-def _解析自然语言意图(画像: Dict[str, Any], 分析需求: str) -> Tuple[Dict[str, Any], str]:
-    """优先用 LLM (Function Calling) 解析; 任何失败都降级回规则匹配. 返回 (override, source).
-
-    source 取值:
-        "LLM"  - agent.编排器返回了合法意图
-        "规则" - 关键词匹配命中
-        "无"   - 未命中
+def _解析自然语言意图(画像: Dict[str, Any], 分析需求: str) -> Tuple[Dict[str, Any], str, List[Dict[str, Any]]]:
+    """优先用 LLM 解析; 失败降级回规则匹配. 返回 (override, source, trace)。
+    source: LLM / 规则 / 无
+    trace: 多轮 ReAct 决策记录，或空列表
     """
     if 分析需求 and 分析需求.strip():
         try:
-            override = agent解析自然语言需求(分析需求, 画像)
-            if override:
-                return override, "LLM"
+            agent_result = 编排Agent(画像, 分析需求)
+            if agent_result:
+                override = {
+                    "图表类型": agent_result["图表类型"],
+                    "x轴": agent_result["x轴"],
+                    "y轴": agent_result["y轴"],
+                    "分组字段": agent_result["分组字段"],
+                    "聚合方式": agent_result["聚合方式"],
+                    "推荐理由": agent_result.get("推荐理由", ""),
+                }
+                return override, agent_result["意图来源"], agent_result["Agent_Trace"]
             logger.warning("LLM 意图解析返回 None, 降级到关键词匹配")
         except Exception as exc:
             logger.warning("LLM 意图解析异常, 降级到关键词匹配: %s", exc)
     rule_override = _意图驱动配置(画像, 分析需求)
-    return rule_override, ("规则" if rule_override else "无")
+    return rule_override, ("规则" if rule_override else "无"), []
 
 
 def _意图驱动配置(画像: Dict[str, Any], 分析需求: str) -> Dict[str, Any]:
@@ -536,7 +542,7 @@ def 生成报表数据(
     else:
         y轴列表 = [field for field in (y轴 or []) if field]
 
-    intent_override, intent_source = _解析自然语言意图(画像, 分析需求)
+    intent_override, intent_source, agent_trace = _解析自然语言意图(画像, 分析需求)
     if intent_override:
         图表类型 = intent_override["图表类型"]
         x轴 = intent_override.get("x轴") or x轴
@@ -587,14 +593,36 @@ def 生成报表数据(
         "数据画像": 画像,
         "推荐说明": 推荐说明,
         "风险提示": 风险提示,
-        "Agent Trace": _生成_agent_trace(分析需求, 画像, effective_chart, x轴, y轴列表, 分组字段, 聚合方式, 推荐说明, 风险提示, intent_source),
+        "Agent Trace": agent_trace or _生成_agent_trace(分析需求, 画像, effective_chart, x轴, y轴列表, 分组字段, 聚合方式, 推荐说明, 风险提示, intent_source),
         "意图来源": intent_source,
+        "结论来源": intent_source,
         "导出数据": {
             "推荐文件名": "analysis-report.html",
             "格式": "html",
         },
-        "结论": _生成结论(分析需求, 画像, report_df, effective_chart, 推荐说明, 风险提示),
+        "结论": _生成结论_含来源(分析需求, 画像, report_df, effective_chart, 推荐说明, 风险提示, agent_trace, intent_source)[0],
     }
     result["导出数据"]["HTML"] = _生成HTML报告(result)
     result["导出数据"]["JSON"] = json.dumps(result, ensure_ascii=False, default=str)
     return result
+def _生成结论_含来源(
+    分析需求: str,
+    画像: Dict[str, Any],
+    report_df: pd.DataFrame,
+    图表类型: str,
+    推荐说明: Dict[str, Any],
+    风险提示: List[str],
+    agent_trace: List[Dict[str, Any]],
+    intent_source: str = "",
+) -> Tuple[str, str]:
+    """优先用 LLM 润色结论，失败回退模板拼接。返回（结论文本, 来源）。
+    来源取值："LLM" | "模板"
+    """
+    if agent_trace:
+        try:
+            llm_结论 = 润色结论(分析需求, 画像, report_df, 推荐说明, 风险提示)
+            if llm_结论:
+                return llm_结论, "LLM"
+        except Exception:
+            pass
+    return _生成结论(分析需求, 画像, report_df, 图表类型, 推荐说明, 风险提示), "模板"
