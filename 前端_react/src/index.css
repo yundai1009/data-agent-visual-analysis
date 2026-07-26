@@ -1,92 +1,77 @@
 @import "tailwindcss";
 
 @theme {
-  --color-deep-900: #0a0e17;
-  --color-deep-800: #0f172a;
-  --color-deep-700: #1e293b;
-  --color-slate-850: #1a2332;
-  --color-indigo-450: #818cf8;
-  --color-cyan-450: #22d3ee;
+  --color-gray-50: #F7F8FA;
+  --color-gray-100: #F2F3F5;
+  --color-gray-200: #E5E6EB;
+  --color-gray-300: #C9CDD4;
+  --color-gray-400: #86909C;
+  --color-gray-500: #4E5969;
+  --color-gray-600: #1D2129;
+  --color-accent: #6366f1;
+  --color-accent-light: rgba(99,102,241,.08);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
-  font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  background: #0a0e17;
-  color: #e2e8f0;
+  font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Inter', sans-serif;
+  background: #F7F8FA;
+  color: #1D2129;
   overflow: hidden;
   height: 100vh;
 }
 
-/* 背景网格动画 */
-.bg-grid {
-  background-image:
-    linear-gradient(rgba(99,102,241,.06) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(99,102,241,.06) 1px, transparent 1px);
-  background-size: 40px 40px;
-  position: fixed; inset: 0; z-index: 0;
-  pointer-events: none;
+/* 卡片 */
+.card {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  transition: all .2s;
 }
-.bg-glow {
-  position: fixed;
-  top: -20%; left: -10%;
-  width: 60%; height: 60%;
-  background: radial-gradient(ellipse, rgba(99,102,241,.12) 0%, transparent 70%);
-  pointer-events: none; z-index: 0;
-}
-.bg-glow-2 {
-  position: fixed;
-  bottom: -20%; right: -10%;
-  width: 50%; height: 50%;
-  background: radial-gradient(ellipse, rgba(6,182,212,.08) 0%, transparent 70%);
-  pointer-events: none; z-index: 0;
-}
-
-/* 毛玻璃 */
-.glass {
-  background: rgba(15,23,42,.75);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(99,102,241,.12);
-}
-.glass-light {
-  background: rgba(30,41,59,.5);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(99,102,241,.08);
-}
+.card:hover { box-shadow: 0 4px 12px rgba(0,0,0,.08); transform: translateY(-2px); }
 
 /* 滚动条 */
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(99,102,241,.3); border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: #C9CDD4; border-radius: 4px; }
+
+/* 页面切换动画 */
+.page-enter { animation: fadeIn .2s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+/* 骨架屏 */
+@keyframes shimmer { 0%{background-position:-200px 0} 100%{background-position:200px 0} }
+.skeleton {
+  background: linear-gradient(90deg, #F2F3F5 25%, #E5E6EB 50%, #F2F3F5 75%);
+  background-size: 400px 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 6px;
+}
+
+/* 上传区 */
+.upload-zone {
+  border: 2px dashed #C9CDD4; border-radius: 12px; padding: 40px 20px;
+  text-align: center; cursor: pointer; transition: all .2s; background: #fff;
+}
+.upload-zone:hover { border-color: #6366f1; background: rgba(99,102,241,.03); }
+.upload-zone.success {
+  border-style: solid; border-color: #52C41A; background: #F6FFED;
+  padding: 12px 20px; cursor: default;
+}
+
+/* 徽章规范：高20px，字号12px，圆角4px */
+.badge {
+  display: inline-flex; align-items: center; height: 20px;
+  padding: 0 8px; border-radius: 4px; font-size: 12px; font-weight: 500;
+}
+.badge-date { background: #E8F4FD; color: #1E6B9C; }
+.badge-cat { background: #FFF3E8; color: #B65B1E; }
+.badge-num { background: #E8F8E8; color: #1B7F3B; }
 
 /* 脉冲圆点 */
 .pulse-dot {
   width: 6px; height: 6px; border-radius: 50%;
-  background: #22c55e;
-  box-shadow: 0 0 8px rgba(34,197,94,.5);
-  animation: pulse 2s infinite;
+  background: #52C41A; animation: pulse 2s infinite;
 }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
-
-/* 柱状图高光 */
-.bar-glow::after {
-  content: '';
-  position: absolute; top: 0; left: 0; right: 0; height: 4px;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,.25), transparent);
-  border-radius: 6px 6px 0 0;
-}
-
-/* 页面切换动画 */
-.page-enter { animation: fadeIn .25s ease; }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-
-/* 骨架屏闪烁 */
-@keyframes shimmer { 0%{background-position:-200px 0} 100%{background-position:200px 0} }
-.skeleton {
-  background: linear-gradient(90deg, rgba(99,102,241,.06) 25%, rgba(99,102,241,.12) 50%, rgba(99,102,241,.06) 75%);
-  background-size: 400px 100%;
-  animation: shimmer 1.5s infinite;
-}
