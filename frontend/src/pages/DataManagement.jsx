@@ -1,6 +1,8 @@
 import { useState } from 'react';
-import { Upload, Download, Database, FileText, AlertTriangle, Search, ChevronRight, Sparkles } from 'lucide-react';
-import { uploadFile, loadExample, getDataset } from '../api';
+import { useNavigate } from 'react-router-dom';
+import { Upload, Download, Database, FileText, AlertTriangle, Search, Sparkles, Loader2 } from 'lucide-react';
+import { uploadFile, loadExample, cleanDataset } from '../api';
+import { useApp } from '../AppContext';
 
 const typeColors = {
   date: 'bg-cyan-50 text-cyan-600 border-cyan-200',
@@ -17,6 +19,8 @@ function inferType(field, profile) {
 }
 
 export default function DataManagement() {
+  const navigate = useNavigate();
+  const { setDataset: setAppDataset } = useApp();
   const [dataset, setDataset] = useState(null);
   const [profile, setProfile] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -26,6 +30,8 @@ export default function DataManagement() {
   const [typeFilter, setTypeFilter] = useState('all');
   const [detailField, setDetailField] = useState(null);
   const [showMissing, setShowMissing] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
+  const [cleanResult, setCleanResult] = useState(null);
 
   async function handleUpload(file) {
     setError('');
@@ -39,6 +45,7 @@ export default function DataManagement() {
       setTimeout(() => {
         setDataset(res);
         setProfile(res.数据画像);
+        setAppDataset({ 数据集ID: res.数据集ID, 文件名: res.文件名, 行数: res.行数, 数据画像: res.数据画像 });
         setUploading(false);
       }, 400);
     } catch (e) {
@@ -55,6 +62,7 @@ export default function DataManagement() {
       const res = await loadExample();
       setDataset(res);
       setProfile(res.数据画像);
+      setAppDataset({ 数据集ID: res.数据集ID, 文件名: res.文件名, 行数: res.行数, 数据画像: res.数据画像 });
     } catch (e) {
       setError(e.message);
     }
@@ -79,6 +87,40 @@ export default function DataManagement() {
   const qualityLevel = quality?.评级 || '—';
   const qualityDesc = quality?.等级说明 || '';
   const missingFields = quality?.缺失字段 || [];
+
+  async function handleClean() {
+    if (!dataset) return;
+    setCleaning(true);
+    try {
+      const res = await cleanDataset(dataset.数据集ID, {
+        deduplicate: true,
+        fill_missing: true,
+        fill_strategy: 'auto',
+        drop_empty_rows: true,
+      });
+      setCleanResult(res);
+      setProfile(res.数据画像);
+      setDataset(prev => ({ ...prev, 行数: res.清洗后行数 }));
+    } catch (e) {
+      alert('清洗失败: ' + e.message);
+    }
+    setCleaning(false);
+  }
+
+  function handleJoinAnalysis(field) {
+    if (!dataset) return;
+    setAppDataset(prev => ({ ...prev, focusField: field }));
+    navigate('/analysis');
+  }
+
+  function handleNewAnalysis() {
+    if (!dataset) return;
+    navigate('/analysis');
+  }
+
+  function handleCleanIgnore() {
+    navigate('/analysis');
+  }
 
   return (
     <div className="p-8 max-w-5xl mx-auto">
@@ -198,7 +240,7 @@ export default function DataManagement() {
                   <div className="flex-1 text-xs text-gray-400 truncate hidden md:block">{fieldAdvice?.理由 || ''}</div>
                   <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                     <button className="text-xs text-indigo-600 hover:bg-indigo-50 px-2 py-1 rounded" onClick={(e) => { e.stopPropagation(); setDetailField(field); }}>预览</button>
-                    <button className="text-xs text-indigo-600 hover:bg-indigo-50 px-2 py-1 rounded">加入分析</button>
+                    <button className="text-xs text-indigo-600 hover:bg-indigo-50 px-2 py-1 rounded" onClick={(e) => { e.stopPropagation(); handleJoinAnalysis(field); }}>加入分析</button>
                   </div>
                 </div>
               );
@@ -210,17 +252,17 @@ export default function DataManagement() {
       {/* Quick actions */}
       {profile && (
         <div className="grid grid-cols-3 gap-4 mt-6">
-          <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3 cursor-pointer hover:bg-gray-50/50 transition-all hover:shadow-sm">
+          <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3 cursor-pointer hover:bg-gray-50/50 transition-all hover:shadow-sm" onClick={handleNewAnalysis}>
             <div className="w-10 h-10 rounded-lg bg-indigo-50 flex items-center justify-center text-lg">📊</div>
             <div><p className="text-sm font-medium text-gray-700">基于此数据集新建分析</p><p className="text-xs text-gray-400 mt-0.5">自动带入当前数据集上下文</p></div>
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3 cursor-pointer hover:bg-gray-50/50 transition-all hover:shadow-sm">
-            <div className="w-10 h-10 rounded-lg bg-orange-50 flex items-center justify-center text-lg">🧹</div>
+          <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3 cursor-pointer hover:bg-gray-50/50 transition-all hover:shadow-sm" onClick={handleClean}>
+            <div className="w-10 h-10 rounded-lg bg-orange-50 flex items-center justify-center text-lg">{cleaning ? <Loader2 className="w-5 h-5 animate-spin" /> : '🧹'}</div>
             <div><p className="text-sm font-medium text-gray-700">一键基础清洗</p><p className="text-xs text-gray-400 mt-0.5">去重 / 填充缺失 / 删除空行</p></div>
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3 cursor-pointer hover:bg-gray-50/50 transition-all hover:shadow-sm">
-            <div className="w-10 h-10 rounded-lg bg-cyan-50 flex items-center justify-center text-lg">📋</div>
-            <div><p className="text-sm font-medium text-gray-700">生成数据质量报告</p><p className="text-xs text-gray-400 mt-0.5">详细的数据完整性分析</p></div>
+          <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3 cursor-pointer hover:bg-gray-50/50 transition-all hover:shadow-sm" onClick={() => navigate('/report')}>
+            <div className="w-10 h-10 rounded-lg bg-cyan-50 flex items-center justify-center text-lg">📈</div>
+            <div><p className="text-sm font-medium text-gray-700">查看报表</p><p className="text-xs text-gray-400 mt-0.5">浏览已生成的智能分析报告</p></div>
           </div>
         </div>
       )}
@@ -235,10 +277,12 @@ export default function DataManagement() {
             </div>
             <div className="p-5 space-y-3 text-sm">
               <div className="grid grid-cols-2 gap-3">
-                <div className="bg-gray-50 rounded-lg p-3"><p className="text-xs text-gray-400">类型</p><p className="text-sm mt-1">{typeLabels[inferType(detailField, profile)]}</p></div>
-                <div className="bg-gray-50 rounded-lg p-3"><p className="text-xs text-gray-400">唯一值</p><p className="text-sm mt-1 font-mono">{profile.行数}</p></div>
-                <div className="bg-gray-50 rounded-lg p-3"><p className="text-xs text-gray-400">空值数量</p><p className="text-sm mt-1 font-mono">—</p></div>
-                <div className="bg-gray-50 rounded-lg p-3"><p className="text-xs text-gray-400">示例值</p><p className="text-sm mt-1 text-gray-500 truncate">数据预览中查看</p></div>
+                <div className="bg-gray-50 rounded-lg p-3"><p className="text-xs text-gray-400">字段类型</p><p className="text-sm mt-1 font-medium">{typeLabels[inferType(detailField, profile)]}</p></div>
+                <div className="bg-gray-50 rounded-lg p-3"><p className="text-xs text-gray-400">空值数量</p><p className="text-sm mt-1 font-mono">{(profile.缺失值 || {})[detailField] ?? '0'}</p></div>
+              </div>
+              <div className="bg-indigo-50 rounded-lg p-3 text-xs text-indigo-600 leading-relaxed">
+                <p className="font-medium mb-1">💡 字段建议</p>
+                <p>{(profile.字段建议 || []).find(a => a.字段 === detailField)?.理由 || '该字段可按需用于分析'}</p>
               </div>
             </div>
           </div>
@@ -265,13 +309,36 @@ export default function DataManagement() {
                     </tbody>
                   </table>
                   <div className="flex gap-3 mt-5">
-                    <button className="px-4 py-2 rounded-lg bg-gray-900 text-white text-xs font-medium hover:bg-gray-800 transition-all">分析时自动忽略缺失行</button>
-                    <button className="px-4 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all">先进行数据清洗</button>
+                    <button className="px-4 py-2 rounded-lg bg-gray-900 text-white text-xs font-medium hover:bg-gray-800 transition-all" onClick={() => { setShowMissing(false); navigate('/analysis'); }}>分析时自动忽略缺失行</button>
+                    <button className="px-4 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all" onClick={() => { setShowMissing(false); handleClean(); }}>先进行数据清洗</button>
                   </div>
                 </>
               ) : (
                 <p className="text-sm text-gray-500 text-center py-4">暂无缺失值</p>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 清洗结果弹窗 */}
+      {cleanResult && (
+        <div className="fixed inset-0 bg-black/20 z-50 flex items-center justify-center" onClick={() => setCleanResult(null)}>
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <span className="text-sm font-semibold text-gray-900">清洗完成</span>
+              <button className="text-gray-400 hover:text-gray-600 text-lg leading-none" onClick={() => setCleanResult(null)}>✕</button>
+            </div>
+            <div className="p-5 text-sm space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-gray-50 rounded-lg p-3"><p className="text-xs text-gray-400">清洗前</p><p className="text-sm mt-1 font-mono">{cleanResult.原行数} 行</p></div>
+                <div className="bg-green-50 rounded-lg p-3"><p className="text-xs text-green-600">清洗后</p><p className="text-sm mt-1 font-mono text-green-700">{cleanResult.清洗后行数} 行</p></div>
+              </div>
+              <div className="bg-indigo-50 rounded-lg p-3 text-xs text-indigo-600">
+                <p className="font-medium mb-1">操作摘要</p>
+                <pre className="text-xs whitespace-pre-wrap">{JSON.stringify(cleanResult.操作摘要, null, 2)}</pre>
+              </div>
+              <button className="w-full py-2 rounded-lg bg-gray-900 text-white text-xs font-medium hover:bg-gray-800 transition-all" onClick={() => { setCleanResult(null); navigate('/analysis'); }}>前往分析</button>
             </div>
           </div>
         </div>
