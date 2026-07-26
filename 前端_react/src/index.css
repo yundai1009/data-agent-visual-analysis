@@ -1,0 +1,92 @@
+@import "tailwindcss";
+
+@theme {
+  --color-deep-900: #0a0e17;
+  --color-deep-800: #0f172a;
+  --color-deep-700: #1e293b;
+  --color-slate-850: #1a2332;
+  --color-indigo-450: #818cf8;
+  --color-cyan-450: #22d3ee;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: #0a0e17;
+  color: #e2e8f0;
+  overflow: hidden;
+  height: 100vh;
+}
+
+/* 背景网格动画 */
+.bg-grid {
+  background-image:
+    linear-gradient(rgba(99,102,241,.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(99,102,241,.06) 1px, transparent 1px);
+  background-size: 40px 40px;
+  position: fixed; inset: 0; z-index: 0;
+  pointer-events: none;
+}
+.bg-glow {
+  position: fixed;
+  top: -20%; left: -10%;
+  width: 60%; height: 60%;
+  background: radial-gradient(ellipse, rgba(99,102,241,.12) 0%, transparent 70%);
+  pointer-events: none; z-index: 0;
+}
+.bg-glow-2 {
+  position: fixed;
+  bottom: -20%; right: -10%;
+  width: 50%; height: 50%;
+  background: radial-gradient(ellipse, rgba(6,182,212,.08) 0%, transparent 70%);
+  pointer-events: none; z-index: 0;
+}
+
+/* 毛玻璃 */
+.glass {
+  background: rgba(15,23,42,.75);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(99,102,241,.12);
+}
+.glass-light {
+  background: rgba(30,41,59,.5);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(99,102,241,.08);
+}
+
+/* 滚动条 */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(99,102,241,.3); border-radius: 4px; }
+
+/* 脉冲圆点 */
+.pulse-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 8px rgba(34,197,94,.5);
+  animation: pulse 2s infinite;
+}
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+/* 柱状图高光 */
+.bar-glow::after {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 4px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.25), transparent);
+  border-radius: 6px 6px 0 0;
+}
+
+/* 页面切换动画 */
+.page-enter { animation: fadeIn .25s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+/* 骨架屏闪烁 */
+@keyframes shimmer { 0%{background-position:-200px 0} 100%{background-position:200px 0} }
+.skeleton {
+  background: linear-gradient(90deg, rgba(99,102,241,.06) 25%, rgba(99,102,241,.12) 50%, rgba(99,102,241,.06) 75%);
+  background-size: 400px 100%;
+  animation: shimmer 1.5s infinite;
+}

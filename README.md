@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # 自助式数据分析 Agent 平台
 
 > 上传 CSV / Excel → 自然语言描述分析目标 → 自动生成 ECharts 可视化报表
@@ -182,3 +183,7 @@ python -m pytest tests/ -v
 | `意图来源` 一直是 `规则` | `.env` 里 `LLM_API_KEY` 还是占位，改成真实 DeepSeek key |
 | 重启后数据丢了 | 检查 `data/daa.db` 是否被手动删除或被 git 处理 |
 | 停不掉进程 | 任务管理器搜 `python.exe` 手动结束，或删 `.reasonix/run/daa_pids.json` |
+=======
+# data-agent-visual-analysis
+自然语言驱动 Agent 自动数据分析平台，支持文件上传、智能推荐 / 自定义可视化图表、自动数据分析
+>>>>>>> 990be0ecdbaaa501d561800debab1176d3fbb704

@@ -101,6 +101,25 @@ class GoldenSetItem(BaseModel):
     创建时间: Optional[datetime] = None
 
 
+class CleanDatasetResponse(BaseModel):
+    数据集ID: str
+    原行数: int
+    清洗后行数: int
+    去重行数: int
+    填充缺失值: int
+    删除空行: int
+    数据画像: Dict[str, Any]
+
+
+class LoadExampleResponse(BaseModel):
+    数据集ID: str
+    文件名: str
+    行数: int
+    列数: int
+    字段列表: list[str]
+    数据画像: Dict[str, Any]
+
+
 class HealthResponse(BaseModel):
     status: str
     version: str

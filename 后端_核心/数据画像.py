@@ -89,20 +89,39 @@ def _生成字段建议(df: pd.DataFrame, 字段: Dict[str, List[str]]) -> List[
 def _生成数据质量(df: pd.DataFrame, 缺失值: Dict[str, int]) -> Dict[str, Any]:
     warnings: List[str] = []
     row_count = max(len(df), 1)
+
+    # ── A/B/C 分级 ──
+    total_missing = sum(缺失值.values())
+    missing_rate = total_missing / (row_count * max(len(df.columns), 1))
+
+    constant_fields = [column for column in df.columns if df[column].nunique(dropna=True) <= 1]
+    duplicate_count = int(df.duplicated().sum())
+
+    if missing_rate < 0.05 and not constant_fields:
+        level = "A"
+        level_label = "优秀"
+    elif missing_rate < 0.20 and duplicate_count < row_count * 0.1:
+        level = "B"
+        level_label = "良好"
+    else:
+        level = "C"
+        level_label = "需关注"
+
     missing_fields = [f"{column}（{count / row_count:.0%}）" for column, count in 缺失值.items() if count]
     if missing_fields:
         warnings.append(f"存在缺失值：{ '、'.join(missing_fields[:5]) }")
-    duplicate_count = int(df.duplicated().sum())
     if duplicate_count:
         warnings.append(f"发现 {duplicate_count} 行完全重复记录")
-    constant_fields = [column for column in df.columns if df[column].nunique(dropna=True) <= 1]
     if constant_fields:
         warnings.append(f"字段无有效变化，可能不适合分析：{ '、'.join(constant_fields[:5]) }")
+
     return {
         "重复行数": duplicate_count,
         "缺失字段": missing_fields,
         "提示": warnings,
-        "等级": "需关注" if warnings else "良好",
+        "等级": level_label,
+        "评级": level,
+        "缺失率": round(missing_rate * 100, 2),
     }
 
 
