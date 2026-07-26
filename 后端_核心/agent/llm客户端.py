@@ -206,3 +206,46 @@ def extract_tool_call(response: Optional[Dict[str, Any]]) -> Optional[Dict[str, 
     else:
         arguments = {}
     return {"name": name, "arguments": arguments}
+
+
+def embed_text(text: str) -> Optional[List[float]]:
+    """调用 OpenAI 兼容的 /embeddings 接口，返回向量。
+
+    Args:
+        text: 要编码的文本
+
+    Returns:
+        浮点数向量列表，失败返回 None
+    """
+    if not is_llm_configured():
+        logger.warning("LLM 未配置，无法生成 embedding")
+        return None
+
+    base_url = (EnvConfig.LLM_BASE_URL or "").rstrip("/")
+    url = f"{base_url}/embeddings"
+    headers = {
+        "Authorization": f"Bearer {EnvConfig.LLM_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    # DeepSeek 使用 text-embedding-v3，OpenAI 使用 text-embedding-3-small
+    model = "text-embedding-3-small"  # 通用 fallback
+    payload = {
+        "input": text,
+        "model": model,
+    }
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+    except requests.RequestException as exc:
+        logger.warning("Embedding 网络异常: %s", exc)
+        return None
+
+    if response.status_code != 200:
+        logger.warning("Embedding HTTP %s: %s", response.status_code, response.text[:200])
+        return None
+
+    try:
+        data = response.json()
+        return data.get("data", [{}])[0].get("embedding")
+    except (json.JSONDecodeError, IndexError, TypeError, ValueError) as exc:
+        logger.warning("Embedding 响应解析失败: %s", exc)
+        return None

@@ -26,6 +26,7 @@ from 后端_核心.agent.工具集 import (
 )
 from 后端_核心.agent.trace import TraceRecorder, 计时, 提取token
 from 后端_核心.agent.执行器注册 import 注册所有执行器
+from 后端_核心.agent.记忆 import 检索相似记忆, 保存记忆, 生成_few_shot_prompt, 记忆条数
 
 logger = logging.getLogger(__name__)
 
@@ -92,8 +93,12 @@ def 编排Agent(
 
     # ═══ LLM 多轮 ReAct ═══
     if enable_llm and (分析需求 or "").strip():
+        # ── 检索相似历史记忆（few-shot） ──
+        相似记忆 = 检索相似记忆(分析需求)
+        memory_hint = 生成_few_shot_prompt(相似记忆)
+
         messages: List[Dict[str, Any]] = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": _SYSTEM_PROMPT + memory_hint},
             {"role": "user", "content": 分析需求},
         ]
         # 上下文：供 tool executor 使用的数据
@@ -116,9 +121,19 @@ def 编排Agent(
             else:
                 # ── 第 3 轮：推荐图表 + 生成结论 ──
                 round3_ok = _执行一轮(messages, tools, context, 轮次=3, trace=trace)
-                if not round3_ok:
-                    logger.warning("第 3 轮（推荐图表）失败，降级")
-                    trace.记录观察(轮次=3, 说明="图表推荐失败，降级到关键词匹配", 状态="失败")
+                if round3_ok:
+                    # 从多轮消息中提取最终意图
+                    intent_override = _从消息提取意图(messages, 画像)
+                    if intent_override:
+                        intent_source = "LLM"
+                        trace.记录观察(轮次=3, 说明="多轮 ReAct 完成", 状态="成功")
+                        # 保存到长期记忆
+                        try:
+                            from 后端_核心.数据画像 import 生成数据画像
+                            画像摘要 = f"{画像.get('行数',0)}行/{画像.get('列数',0)}列"
+                            保存记忆(分析需求, intent_override, 画像摘要)
+                        except Exception:
+                            pass
 
     # ═══ 降级：关键词匹配 ═══
     if intent_override is None:
@@ -232,3 +247,66 @@ def _结果转文本(result: Dict[str, Any]) -> str:
     if not parts:
         return str(result)[:500]
     return "\n".join(parts)
+
+
+def _从消息提取意图(messages: List[Dict[str, Any]], 画像: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """从多轮 ReAct 的 messages 中提取结构化意图。"""
+    chart_type = None
+    x_axis = None
+    y_axis_list: List[str] = []
+    group_field = None
+    agg_method = None
+    reason = ""
+
+    for msg in reversed(messages):
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        content = msg.get("content", "")
+
+        if role == "tool" and isinstance(content, str):
+            if "推荐图表：" in content:
+                for line in content.split("\n"):
+                    if line.startswith("推荐图表："):
+                        chart_type = line.replace("推荐图表：", "").strip()
+                    if line.startswith("理由："):
+                        reason = line.replace("理由：", "").strip()
+
+        if role == "assistant" and msg.get("tool_calls"):
+            for tc in (msg.get("tool_calls") or []):
+                func = tc.get("function", {})
+                name = func.get("name", "")
+                try:
+                    import json
+                    args = json.loads(func.get("arguments", "{}")) if isinstance(func.get("arguments"), str) else func.get("arguments", {})
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+                if name == "推荐图表":
+                    chart_type = args.get("图表类型") or chart_type
+                    reason = args.get("理由") or reason
+                elif name == "聚合分析":
+                    x_axis = args.get("X轴") or args.get("x轴") or x_axis
+                    y_axis_list = args.get("Y轴") or args.get("y轴") or y_axis_list
+                    group_field = args.get("分组字段") or group_field
+                    agg_method = args.get("聚合方式") or agg_method
+
+    if not chart_type:
+        return None
+
+    可用字段 = set(画像.get("字段列表", []))
+    if x_axis and x_axis not in 可用字段:
+        x_axis = None
+    if isinstance(y_axis_list, str):
+        y_axis_list = [y_axis_list]
+    y_axis_list = [f for f in y_axis_list if f in 可用字段]
+    if group_field and group_field not in 可用字段:
+        group_field = None
+
+    return {
+        "图表类型": chart_type,
+        "x轴": x_axis,
+        "y轴": y_axis_list,
+        "分组字段": group_field,
+        "聚合方式": agg_method or "求和",
+        "推荐理由": reason[:200],
+    }
