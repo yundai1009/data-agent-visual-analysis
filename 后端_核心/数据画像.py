@@ -115,12 +115,20 @@ def _生成数据质量(df: pd.DataFrame, 缺失值: Dict[str, int]) -> Dict[str
     if constant_fields:
         warnings.append(f"字段无有效变化，可能不适合分析：{ '、'.join(constant_fields[:5]) }")
 
+    # ── 等级说明 ──
+    等级说明 = {
+        "A": "数据质量优秀，缺失率 < 5%，无重复行，无异常字段",
+        "B": "数据质量良好，缺失率 5%~20%，少量异常",
+        "C": "数据质量较差，缺失率 > 20% 或存在结构异常，建议清洗后再分析",
+    }
+
     return {
         "重复行数": duplicate_count,
         "缺失字段": missing_fields,
         "提示": warnings,
         "等级": level_label,
         "评级": level,
+        "等级说明": 等级说明.get(level, ""),
         "缺失率": round(missing_rate * 100, 2),
     }
 

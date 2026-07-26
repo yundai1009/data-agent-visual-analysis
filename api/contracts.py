@@ -105,9 +105,9 @@ class CleanDatasetResponse(BaseModel):
     数据集ID: str
     原行数: int
     清洗后行数: int
-    去重行数: int
-    填充缺失值: int
-    删除空行: int
+    清洗前列数: int = 0
+    清洗后列数: int = 0
+    操作摘要: Dict[str, Any] = Field(default_factory=dict)
     数据画像: Dict[str, Any]
 
 

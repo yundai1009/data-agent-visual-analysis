@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.contracts import HealthResponse
-from api.routes import datasets, reports
+from api.routes import datasets, reports, clean, examples
 from config.settings import EnvConfig
 
 
@@ -50,6 +50,8 @@ async def health_check() -> HealthResponse:
 
 app.include_router(datasets.router)
 app.include_router(reports.router)
+app.include_router(clean.router)
+app.include_router(examples.router)
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
