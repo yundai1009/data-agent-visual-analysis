@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Zap, BarChart3, LineChart, PieChart, ScatterChart, Table, Layers, Loader2 } from 'lucide-react';
+import { Zap, BarChart3, LineChart, PieChart, ScatterChart, Table, Layers, Loader2, Cpu, GitBranch } from 'lucide-react';
 import { generateReport } from '../api';
 import { useApp } from '../AppContext';
 
@@ -26,6 +26,14 @@ const templates = [
   { label: '🔀 交叉分析', text: '按【地区】和【岗位类型】做【销售额】交叉分析' },
 ];
 
+const models = [
+  { id: '', label: '系统默认' },
+  { id: 'gpt-4o-mini', label: 'GPT-4o Mini' },
+  { id: 'gpt-4o', label: 'GPT-4o' },
+  { id: 'deepseek-chat', label: 'DeepSeek Chat' },
+  { id: 'deepseek-v4', label: 'DeepSeek V4' },
+];
+
 export default function Analysis() {
   const navigate = useNavigate();
   const { dataset, setReport, setLoading } = useApp();
@@ -36,6 +44,8 @@ export default function Analysis() {
   const [yAxis, setYAxis] = useState('');
   const [groupField, setGroupField] = useState('');
   const [aggMethod, setAggMethod] = useState('求和');
+  const [agentMode, setAgentMode] = useState('single');
+  const [selectedModel, setSelectedModel] = useState('');
 
   const profile = dataset?.数据画像;
   const fields = profile?.字段列表 || [];
@@ -65,6 +75,8 @@ export default function Analysis() {
         y轴: yAxis ? [yAxis] : [],
         分组字段: groupField === '无' ? null : groupField,
         聚合方式: aggMethod,
+        agent_mode: agentMode,
+        model: selectedModel || undefined,
       });
       setReport(res);
       navigate('/report');
@@ -115,6 +127,25 @@ export default function Analysis() {
             {generating ? '分析中…' : '开始分析'}
           </button>
         </div>
+      </div>
+
+      {/* 模型选择 + Agent 模式 */}
+      <div className="flex items-center gap-4 mt-5">
+        <div className="flex items-center gap-2">
+          <Cpu className="w-4 h-4 text-gray-400" />
+          <select className="border border-gray-200 rounded-lg px-3 py-2 text-xs bg-white focus:outline-none focus:border-indigo-400" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
+            {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
+          <button className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${agentMode === 'single' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setAgentMode('single')}>
+            单 Agent
+          </button>
+          <button className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1 ${agentMode === 'multi' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setAgentMode('multi')}>
+            <GitBranch className="w-3 h-3" /> 多智能体
+          </button>
+        </div>
+        {agentMode === 'multi' && <span className="text-[11px] text-indigo-500">Supervisor + 3 个 Worker Agent</span>}
       </div>
 
       {/* Chart type */}

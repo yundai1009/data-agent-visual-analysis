@@ -53,6 +53,8 @@ class ReportGenerateRequest(BaseModel):
     y轴: list[str] = Field(default_factory=list)
     分组字段: Optional[str] = None
     聚合方式: str = "求和"
+    agent_mode: str = "single"  # "single" | "multi"
+    model: Optional[str] = None  # 临时覆盖 LLM 模型名，None=使用 .env 默认
 
 
 class ReportGenerateResponse(BaseModel):
@@ -70,6 +72,7 @@ class ReportGenerateResponse(BaseModel):
     结论: str
     # 阶段 1 已在 生成报表数据 返回中存在；阶段 2 透传到 API 响应，便于前端展示 LLM/规则 兜底来源
     意图来源: str = "无"
+    agent_mode: str = "single"
 
     class Config:
         populate_by_name = True
