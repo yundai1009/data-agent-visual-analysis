@@ -1,15 +1,15 @@
 # 自助式数据分析 Agent 平台
 
-> 上传 CSV / Excel → 自然语言描述分析目标 → 自动生成 ECharts 可视化报表
+> 上传 CSV / Excel → 自然语言描述分析目标 → 自动生成可视化报表
 >
-> 后端 FastAPI · 前端 HTML + ECharts · Agent 内核用 OpenAI 兼容 LLM Function Calling
+> 后端 FastAPI · 前端 React + Vite + Tailwind · Agent 内核用 OpenAI 兼容 LLM Function Calling
 
 ---
 
 ## 30 秒看懂
 
 1. **是什么**：一个能用自然语言指挥生成报表的数据分析工具
-2. **怎么跑**：`.\启动.ps1` 一键启动，浏览器自动打开 `http://127.0.0.1:8501`
+2. **怎么跑**：`.\启动.ps1` 一键启动，浏览器自动打开 `http://127.0.0.1:5173`
 3. **要不要 LLM key**：不配也能跑，自动降级到关键词匹配兜底；配了 DeepSeek/OpenAI key 用 LLM
 4. **要不要 MySQL**：不要。SQLite 持久化，零外部服务，零网络依赖
 
@@ -41,7 +41,7 @@ copy .env.example .env
 会自动：
 
 - 检查依赖
-- 找空闲端口启动 FastAPI 后端（默认 8000）与 HTML 前端（默认 8501）
+- 找空闲端口启动 FastAPI 后端（默认 8000）与 React 前端（默认 5173）
 - 健康检查后端 `/health`
 - 打开浏览器
 
@@ -81,16 +81,17 @@ copy .env.example .env
 │       ├── __init__.py
 │       └── sqlite_repo.py    # 仓储模式：参数化查询 + DataFrame JSON 序列化
 │
-├── 前端_html/                 # 主前端：HTML + ECharts + Jinja2
-│   ├── app.py                # uvicorn 入口
-│   ├── templates/index.html
-│   └── static/
-│       ├── css/app.css
-│       └── js/
-│           ├── api.js        # 后端 API 调用封装
-│           └── app.js        # UI 渲染 + ECharts
-│
-├── 前端_streamlit/            # 备用调试前端（不部署）
+├── frontend/                  # React + Vite + Tailwind 前端
+│   └── src/
+│       ├── App.jsx            # 路由 + 布局
+│       ├── AppContext.jsx     # 跨页面状态共享
+│       ├── api.js              # 7 个后端 API 调用封装
+│       ├── components/
+│       │   └── Sidebar.jsx    # 可折叠侧边栏导航
+│       └── pages/
+│           ├── DataManagement.jsx  # 上传/概览/字段列表/清洗
+│           ├── Analysis.jsx        # NL 输入/图表选择/Agent 模式切换
+│           └── Report.jsx          # 图表渲染/数据表/结论/Trace
 ├── tests/                    # 单元测试（不依赖网络与 LLM key）
 │   ├── test_agent_意图.py     # 26 个：LLM 客户端/校验/编排器降级路径
 │   └── test_sqlite_repo.py   # 11 个：仓储层 round-trip/重启/中文缺失值
@@ -100,9 +101,12 @@ copy .env.example .env
 │   └── uploads/             # 上传文件副本（.gitignore 忽略）
 │
 └── docs/
-    ├── 项目开发日志_阶段1.md   # LLM 接入：决策记录、面试可讲点
-    ├── 项目开发日志_阶段2.md   # SQLite 持久化：决策记录、面试可讲点
-    └── LLM接入说明.md         # 配置 / 安全姿态 / 故障排除
+    ├── 项目开发日志.md           # 八阶段演进与设计决策
+    ├── 项目开发日志_阶段1.md   # Agent 内核 + LLM Function Calling
+    ├── 项目开发日志_阶段2.md   # 多轮 ReAct + Trace + LLM 结论润色
+    ├── 项目开发日志_阶段3.md   # 前端重构 + 多智能体架构
+    ├── 用户使用指南.md          # 完整使用说明
+    └── LLM接入说明.md          # 配置 / 安全姿态 / 故障排除
 ```
 
 ---
@@ -114,7 +118,7 @@ copy .env.example .env
 | GET  | `/health` | 健康检查 |
 | POST | `/datasets/upload` | 上传 CSV / Excel，返回数据集 ID + 字段画像 |
 | GET  | `/datasets/{id}` | 凭 ID 取回数据集（预览前 20 行 + 画像） |
-| POST | `/reports/generate` | 用自然语言 + 字段配置生成 ECharts 报表 |
+| POST | `/reports/generate` | 用自然语言 + 字段配置生成可视化报表 |
 | GET  | `/datasets/` | 列出最近的数据集（阶段 2 新增） |
 
 API 文档：启动后端后访问 `http://127.0.0.1:8000/docs`（FastAPI 自带 Swagger UI）。
@@ -167,7 +171,7 @@ python -m pytest tests/ -v
 | 后端 | Python 3.11 · FastAPI · uvicorn · pandas · openpyxl |
 | Agent | OpenAI 兼容 chat/completions · Function Calling · DeepSeek / OpenAI |
 | 持久化 | SQLite（Python 标准库 `sqlite3`，零依赖） |
-| 前端 | HTML · CSS · 原生 JS · ECharts · Jinja2 |
+| 前端 | React 19 · Vite · Tailwind CSS v4 · 手写图表渲染 |
 | 测试 | pytest |
 
 ---

@@ -38,8 +38,8 @@ Start-Sleep -Seconds 2
 try{$resp=Invoke-RestMethod "http://127.0.0.1:$BackendPort/health" -TimeoutSec 5;o "Health: $($resp.status)"}catch{w "Health not ready"}
 Write-Host "`n====================================" -ForegroundColor Green
 o "Data Analysis Agent Platform started"
-Write-Host "  API:  http://127.0.0.1:$BackendPort/docs" -ForegroundColor White
 Write-Host "  UI:   http://127.0.0.1:$FrontendPort" -ForegroundColor White
+Write-Host "  API:  http://127.0.0.1:$BackendPort/docs" -ForegroundColor White
 Write-Host "  Stop: .\启动.ps1 -Stop" -ForegroundColor White
 Write-Host "====================================`n" -ForegroundColor Green
-if(-not $NoBrowser){Start-Process "http://127.0.0.1:$BackendPort/docs"}
+if(-not $NoBrowser){Start-Process "http://127.0.0.1:$FrontendPort"}

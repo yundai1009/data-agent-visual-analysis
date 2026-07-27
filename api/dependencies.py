@@ -13,6 +13,8 @@ security = HTTPBearer(auto_error=False)
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ) -> dict:
+    if not EnvConfig.AUTH_ENABLED:
+        return {"user_id": "demo", "roles": ["analyst"]}
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

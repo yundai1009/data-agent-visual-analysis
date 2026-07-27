@@ -131,7 +131,7 @@ def 多智能体分析(
         trace.记录观察(轮次=5, 说明=f"质量审查不通过：{quality_result.get('摘要', '')}", 状态="需关注")
 
     # ── 提取意图 ──
-    intent = _从消息提取意图(chart_result["消息"])
+    intent = _从消息提取意图(chart_result["消息"], 画像)
     if intent:
         intent_source = "LLM"
         trace.记录观察(轮次=6, 说明="多智能体分析完成" + ("（质量审查通过）" if passed else "（质量审查有建议）"), 状态="成功")
@@ -214,7 +214,7 @@ def _降级(画像: Dict[str, Any], 分析需求: str, trace: TraceRecorder) -> 
     }
 
 
-def _从消息提取意图(messages: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _从消息提取意图(messages: List[Dict[str, Any]], 画像: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """从多轮消息中提取结构化意图。"""
     from 后端_核心.agent.编排器 import _从消息提取意图 as _提取
-    return _提取(messages, {"字段列表": []})
+    return _提取(messages, {"字段列表": 画像.get("字段列表", [])} if 画像 else {"字段列表": []})

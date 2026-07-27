@@ -35,3 +35,6 @@ class EnvConfig:
         "DAA_SQLITE_PATH",
         str(PROJECT_ROOT / "data" / "daa.db"),
     )
+
+    # 认证开关：开发阶段设为 false 可免 token 访问
+    AUTH_ENABLED = os.getenv("AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
