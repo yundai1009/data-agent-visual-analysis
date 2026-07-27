@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -196,7 +197,7 @@ def _执行一轮(
         "tool_calls": [{
             "id": f"call_{轮次}",
             "type": "function",
-            "function": {"name": tool_name, "arguments": str(tool_args)},
+            "function": {"name": tool_name, "arguments": json.dumps(tool_args, ensure_ascii=False)},
         }],
     })
 
@@ -277,7 +278,6 @@ def _从消息提取意图(messages: List[Dict[str, Any]], 画像: Dict[str, Any
                 func = tc.get("function", {})
                 name = func.get("name", "")
                 try:
-                    import json
                     args = json.loads(func.get("arguments", "{}")) if isinstance(func.get("arguments"), str) else func.get("arguments", {})
                 except (json.JSONDecodeError, TypeError):
                     args = {}
