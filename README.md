@@ -15,6 +15,66 @@
 
 ---
 
+## 架构概览
+
+```mermaid
+graph TB
+  subgraph 用户侧
+    U[用户] --> |上传 CSV/Excel| Upload[数据管理页面]
+    U --> |自然语言需求| NL[智能分析页面]
+  end
+
+  subgraph 前端 React + Vite
+    Upload --> API
+    NL --> API[/API 路由/]
+    Report[报表查看页面] --> API
+  end
+
+  subgraph 后端 FastAPI
+    API --> Profile[数据画像<br/>字段类型/质量评级]
+    API --> Clean[数据清洗<br/>去重/填充/删除空行]
+    API --> ReportGen[上传报表生成器<br/>意图解析→聚合→图表]
+    Agent[Agent 编排器] -->|Tool Call| Tools
+    subgraph Agent 内核
+      direction LR
+      LLM[LLM<br/>OpenAI兼容] --> 编排器[编排器<br/>3轮 ReAct]
+      编排器 --> 工具集[工具集<br/>Schema+白名单]
+    end
+    subgraph Tools
+      T1[获取数据画像]
+      T2[聚合分析<br/>head 20]
+      T3[推荐图表]
+      T4[生成结论]
+    end
+    Tools --> Mem[(Chroma<br/>长期记忆)]
+  end
+
+  ReportGen --> Report
+
+  subgraph 持久化
+    SQL[(SQLite<br/>数据集)]
+    Chroma[(Chroma<br/>记忆向量)]
+  end
+
+  subgraph 失败降级
+    LLM --失败--> Rule[关键词规则匹配]
+    Rule --> Default[默认自动推荐]
+  end
+```
+
+### 关键流程
+
+```text
+用户输入"按地区统计销售额占比"
+  → Agent 第 1 轮：调「获取数据画像」感知数据特征
+  → Agent 第 2 轮：调「聚合分析」按地区/销售额计算
+  → Agent 第 3 轮：调「推荐图表」+「生成结论」
+  → LLM 返回 JSON → 字段白名单校验 → pandas 执行 → ECharts 渲染
+  → （失败时降级到关键词匹配，不阻挡用户使用）
+```
+
+---
+
 ## 快速开始
 
 ### 1. 装依赖
@@ -161,6 +221,48 @@ python -m pytest tests/ -v
 - OpenAI ↔ DeepSeek 同协议，切供应商只改 `.env` 三行，零代码改动
 
 更多设计取舍见 [`docs/项目开发日志_阶段1.md`](docs/项目开发日志_阶段1.md) 与 [`docs/项目开发日志_阶段2.md`](docs/项目开发日志_阶段2.md)。
+
+### 关键设计取舍（面试高频）
+
+**为什么不用 LangChain？**
+
+> 项目需求固定为 3 轮 Tool Calling，不需要 LangChain 的 Chain/Runnable/Memory 抽象层。自己处理 `chat/completion → JSON → executor` 的链路更透明，每步都在 Trace 中有对应记录。面试时说：**"简单场景 + 需要展示可控性 → 手写比框架更优。"**
+
+**为什么不用 `exec(LLM 代码)`？**
+
+> LLM Function Calling 将输出限制为结构化 JSON，经由字段白名单校验后才进入 pandas 执行器，全程无代码执行风险。面试时说：**"我不让 LLM 生成代码执行，而让它选择工具——参数越界即视为失败，回退到规则兜底。"**
+
+**为什么需要规则兜底？**
+
+> LLM 可能因网络、key 配置、输出格式异常等原因失败。三层降级（LLM → 关键词规则 → 默认自动推荐）确保**无 LLM key 也能完成完整的数据分析流程**。API 响应中的 `意图来源` 字段标明本请求是 LLM 还是规则在决策。
+
+**上下文过长怎么处理？**
+
+> 项目通过三层隔离控制上下文：LLM 只看数据画像（行数/列数/字段列表），不是完整 DataFrame；工具执行结果只返回前 20 行摘要；Trace 有记录数上限和截断。选字段和图表类型由 LLM 决策，数据计算由后端工具执行——LLM 只接触 schema 和摘要，不接触原始数据。
+
+### 评测结果（Golden Set，36 条）
+
+> 离线评测脚本 `scripts/eval_agent.py` 覆盖柱状图/折线图/饼图/散点图/热力图/堆积柱状图/面积图/雷达图等 10 种图表类型，四维指标分别统计。
+
+| 指标 | 规则兜底（36 条结果） | LLM 路径（需 Key） |
+|------|---------------------|-------------------|
+| 完全匹配率 | **22%**（8/36） | 待测 |
+| 图表类型准确率 | 69%（25/36） | 待测 |
+| X 轴命中率 | 61%（22/36） | 待测 |
+| Y 轴命中率 | 50%（18/36） | 待测 |
+| 聚合方式命中率 | 81%（29/36） | 待测 |
+
+> Baseline 完全匹配率仅 22%（原始 20 条仅 10%），说明纯规则路径在字段匹配上很弱——这正是 LLM 路径需要填补的缺口。配好 LLM key 后跑 `python scripts/eval_agent.py --verbose` 即可更新 LLM 路径分数。
+
+### 界面预览
+
+> 启动后打开 `http://127.0.0.1:5173` 即可查看以下页面（截图待补）：
+
+| 页面 | 功能 |
+|------|------|
+| 📁 数据管理 | 上传 CSV/Excel → 字段画像 → A/B/C 质量评级 → 一键清洗 |
+| 🧠 智能分析 | 自然语言输入 → 图表类型选择 → 单Agent/多智能体切换 → 模型选择 |
+| 📊 报表查看 | ECharts 图表渲染 → 数据表 → 分析结论 → Agent Trace → HTML/JSON 导出 |
 
 ---
 
