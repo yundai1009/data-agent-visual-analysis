@@ -1,37 +1,67 @@
-import React, { Component } from 'react';
-import ReactECharts from 'echarts-for-react';
-
-class EChartsChart extends Component {
-  render() {
-    const { chartType, chartConfig, height = 320 } = this.props;
-    const rows = Array.isArray(chartConfig?.数据) ? chartConfig.数据 : [];
-
-    if (!rows.length) {
-      return (
-        <div style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', fontSize: 14 }}>
-          暂无图表数据
-        </div>
-      );
-    }
-
-    try {
-      const option = buildOption(chartType, chartConfig, rows);
-      return (
-        <ReactECharts option={option} style={{ height, width: '100%' }} notMerge lazyUpdate />
-      );
-    } catch (e) {
-      return (
-        <div style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ef4444', fontSize: 13 }}>
-          图表渲染异常：{e.message}
-        </div>
-      );
-    }
-  }
-}
+import { useRef, useEffect } from 'react';
+import * as echarts from 'echarts';
 
 const COLORS = ['#6366f1', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
 
-function buildOption(chartType, config, rows) {
+export default function EChartsChart({ chartType, chartConfig, height = 320 }) {
+  const containerRef = useRef(null);
+  const chartRef = useRef(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    // 创建实例
+    if (!chartRef.current) {
+      chartRef.current = echarts.init(containerRef.current, null, { renderer: 'canvas' });
+    }
+    const chart = chartRef.current;
+
+    try {
+      const option = buildOption(chartType, chartConfig);
+      if (option) {
+        chart.setOption(option, { notMerge: true });
+        chart.resize();
+      }
+    } catch (e) {
+      chart.setOption({
+        title: { text: `图表渲染异常: ${e.message}`, left: 'center', textStyle: { fontSize: 13, color: '#ef4444' } },
+      });
+    }
+
+    return () => {
+      // 组件卸载时清理
+    };
+  }, [chartType, chartConfig]);
+
+  // resize 监听
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const handler = () => chart.resize();
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+
+  const hasData = Array.isArray(chartConfig?.数据) && chartConfig.数据.length > 0;
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height, minHeight: 160 }}>
+      {!hasData && (
+        <div style={{
+          position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
+          justifyContent: 'center', color: '#999', fontSize: 14, zIndex: 1,
+        }}>
+          暂无图表数据
+        </div>
+      )}
+      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+    </div>
+  );
+}
+
+function buildOption(chartType, config) {
+  const rows = Array.isArray(config?.数据) ? config.数据 : [];
+  if (!rows.length) return null;
+
   const xField = config.X轴 || Object.keys(rows[0])[0] || '';
   const yFields = config.Y轴 || [];
   const groupField = config.颜色 || config.分组字段;
@@ -110,7 +140,6 @@ function buildOption(chartType, config, rows) {
     };
   }
 
-  // Default: bar / stacked_bar / histogram
   if (groupField && (type === 'stacked_bar' || type === 'bar')) {
     const groups = [...new Set(rows.map(r => String(r[groupField] ?? '')))];
     const xVals = [...new Set(rows.map(r => String(r[xField] ?? '')))];
@@ -136,5 +165,3 @@ function buildOption(chartType, config, rows) {
     series: [{ type: 'bar', data: rows.map(r => Number(r[yf]) || 0) }],
   };
 }
-
-export default EChartsChart;
