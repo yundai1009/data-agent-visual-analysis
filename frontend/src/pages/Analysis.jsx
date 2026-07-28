@@ -1,19 +1,24 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Zap, BarChart3, LineChart, PieChart, ScatterChart, Table, Layers, Loader2, Cpu, GitBranch } from 'lucide-react';
+import { Zap, Sparkles, BarChart3, LineChart, PieChart, ScatterChart, Table, Layers, Loader2, Cpu, GitBranch } from 'lucide-react';
 import { generateReport } from '../api';
 import { useApp } from '../AppContext';
 
 const chartMap = {
-  bar: '柱状图', line: '折线图', pie: '饼图', scatter: '散点图',
+  auto: '自动推荐', bar: '柱状图', line: '折线图', pie: '饼图', scatter: '散点图',
   heatmap: '热力图', table: '表格', stacked: '堆积柱状图',
+  histogram: '直方图', area: '面积图', radar: '雷达图',
 };
 
 const chartTypes = [
+  { id: 'auto', icon: Sparkles, label: '智能推荐' },
   { id: 'bar', icon: BarChart3, label: '柱状图' },
   { id: 'line', icon: LineChart, label: '折线图' },
   { id: 'pie', icon: PieChart, label: '饼图' },
   { id: 'scatter', icon: ScatterChart, label: '散点图' },
+  { id: 'histogram', icon: BarChart3, label: '直方图' },
+  { id: 'area', icon: LineChart, label: '面积图' },
+  { id: 'radar', icon: Layers, label: '雷达图' },
   { id: 'heatmap', icon: Layers, label: '热力图' },
   { id: 'table', icon: Table, label: '表格' },
   { id: 'stacked', icon: Layers, label: '堆积图' },
@@ -36,7 +41,7 @@ const models = [
 
 export default function Analysis() {
   const navigate = useNavigate();
-  const { dataset, setReport } = useApp();
+  const { dataset } = useApp();
   const [nlInput, setNlInput] = useState('');
   const [chartType, setChartType] = useState('bar');
   const [generating, setGenerating] = useState(false);
@@ -46,10 +51,13 @@ export default function Analysis() {
   const [aggMethod, setAggMethod] = useState('求和');
   const [agentMode, setAgentMode] = useState('single');
   const [selectedModel, setSelectedModel] = useState('');
+  const [error, setError] = useState('');
 
   const profile = dataset?.数据画像;
   const fields = profile?.字段列表 || [];
   const numFields = profile?.数值字段 || [];
+  const catFields = profile?.分类字段 || [];
+  const dateFields = profile?.日期字段 || [];
 
   // Auto-fill based on profile
   if (profile && !xAxis) {
@@ -60,10 +68,17 @@ export default function Analysis() {
 
   async function handleGenerate() {
     if (!dataset) {
-      alert('请先在数据管理页面上传数据');
+      setError('请先在数据管理页面上传数据');
       navigate('/data');
       return;
     }
+    // 字段前置校验
+    const validationError = validateChartFields(chartType, xAxis, yAxis, groupField, profile);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+    setError('');
     setGenerating(true);
     try {
       const res = await generateReport({
@@ -77,13 +92,56 @@ export default function Analysis() {
         agent_mode: agentMode,
         model: selectedModel || undefined,
       });
-      // 用整页跳转代替 React Router navigate，避免 DOM reconcilation 冲突
+      // 存入 sessionStorage，整页跳转到 Report 页
       sessionStorage.setItem('report_cache', JSON.stringify(res));
-      window.location.href = '/report';
+      // 用整页跳转避免 React Router + Vite HMR 的 DOM 冲突
+      window.location.href = '/report?_=' + Date.now();
     } catch (e) {
-      alert('分析失败: ' + e.message);
+      // 区分错误类型
+      if (e.message?.includes('401') || e.message?.includes('UNAUTHORIZED')) {
+        setError('认证配置不正确，请检查 AUTH_ENABLED 设置');
+      } else if (e.message?.includes('413') || e.message?.includes('large')) {
+        setError('文件超过大小限制（最大 50MB）');
+      } else if (e.message?.includes('Failed to fetch') || e.message?.includes('NetworkError')) {
+        setError('后端服务不可用，请检查后端是否启动');
+      } else {
+        setError('分析失败：' + e.message);
+      }
     }
     setGenerating(false);
+  }
+
+  // 图表类型字段适配校验
+  function validateChartFields(type, x, y, group, profile) {
+    if (!profile) return null;
+    const nf = new Set(profile.数值字段 || []);
+    const cf = new Set(profile.分类字段 || []);
+    const df = new Set(profile.日期字段 || []);
+    const xIsNum = nf.has(x);
+    const yIsNum = nf.has(y);
+    const xIsCat = cf.has(x) || df.has(x);
+    const hasGroup = group && group !== '无';
+
+    switch (type) {
+      case 'scatter':
+        if (!xIsNum) return '散点图的 X 轴需要选择数值字段';
+        if (!yIsNum) return '散点图的 Y 轴需要选择数值字段';
+        break;
+      case 'histogram':
+        if (!xIsNum) return '直方图的 X 轴需要选择数值字段';
+        break;
+      case 'pie':
+        if (!xIsCat && x) return '饼图的 X 轴建议选择分类字段，当前选择可能不适用';
+        break;
+      case 'heatmap':
+        if (!hasGroup) return '热力图需要设置分组字段';
+        break;
+      case 'stacked':
+      case 'stacked_bar':
+        if (!hasGroup) return '堆积柱状图需要设置分组字段';
+        break;
+    }
+    return null;
   }
 
   return (
@@ -157,7 +215,7 @@ export default function Analysis() {
       {/* Chart type */}
       <div className="mt-6">
         <p className="text-xs font-semibold text-gray-500 mb-3">图表类型</p>
-        <div className="grid grid-cols-7 gap-2">
+        <div className="grid grid-cols-4 gap-2">
           {chartTypes.map((ct) => {
             const Icon = ct.icon;
             const active = chartType === ct.id;

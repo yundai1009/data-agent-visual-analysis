@@ -1,35 +1,43 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Download, DownloadCloud, Sparkles } from 'lucide-react';
+import { Download, DownloadCloud, Sparkles, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useApp } from '../AppContext';
 import EChartsChart from '../components/EChartsChart';
 
 export default function Report() {
   const navigate = useNavigate();
-  const { report: contextReport, setReport } = useApp();
-  // 优先从 sessionStorage 同步读取缓存的报表，避免 useEffect 延迟
-  const [report, setLocalReport] = useState(() => {
-    if (contextReport) return contextReport;
+  const { reports, addReport } = useApp();
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [tab, setTab] = useState('conclusion');
+
+  // 从 reports 列表取当前报表，如果列表为空则尝试 sessionStorage
+  const [localReport, setLocalReport] = useState(() => {
+    if (reports.length > 0) return reports[0];
     try {
       const cached = sessionStorage.getItem('report_cache');
       if (cached) {
         const parsed = JSON.parse(cached);
         sessionStorage.removeItem('report_cache');
-        // 同步到 AppContext 供其他页面使用
-        setTimeout(() => setReport(parsed), 0);
+        // 首次加载时同步到历史列表
+        setTimeout(() => addReport(parsed), 0);
         return parsed;
       }
     } catch { /* ignore */ }
     return null;
   });
-  const [tab, setTab] = useState('conclusion');
 
-  // 如果 Context 有值但本地没有（导航后 Context 更新）
+  // reports 列表变化时同步当前报表
   useEffect(() => {
-    if (contextReport && !report) {
-      setLocalReport(contextReport);
+    if (reports.length > 0 && currentIndex < reports.length) {
+      setLocalReport(reports[currentIndex]);
     }
-  }, [contextReport]);
+  }, [reports, currentIndex]);
+
+  // 上一份 / 下一份
+  const prevReport = () => setCurrentIndex(i => Math.max(0, i - 1));
+  const nextReport = () => setCurrentIndex(i => Math.min(reports.length - 1, i + 1));
+
+  const report = localReport;
 
   if (!report) {
     return (
@@ -44,12 +52,22 @@ export default function Report() {
 
   const chartConfig = report.图表配置 || {};
   const recommendations = report.推荐说明?.理由 || [];
+  const riskWarnings = report.风险提示 || [];
   const trace = report['Agent Trace'] || report.Agent_Trace || [];
   const conclusion = report.结论 || '';
   const chartTypeLabel = report.图表类型 || '柱状图';
   const chartTypeKey = chartConfig.类型 || 'bar';
   const intentSource = report.意图来源 || 'AI';
   const exportData = report.导出数据 || {};
+  const dataProfile = report.数据画像 || {};
+
+  // 清空历史报表
+  const handleClearHistory = () => {
+    if (reports.length === 0) return;
+    setReports([]);
+    localStorage.removeItem('reports_cache');
+    setLocalReport(null);
+  };
 
   return (
     <div className="p-8 max-w-5xl mx-auto">
@@ -57,9 +75,30 @@ export default function Report() {
       <div className="flex items-center justify-between mb-7">
         <div>
           <h1 className="text-lg font-semibold text-gray-900">报表查看</h1>
-          <p className="text-xs text-gray-400 mt-1">AI 自动生成的智能分析报告</p>
+          <p className="text-xs text-gray-400 mt-1">
+            AI 自动生成的智能分析报告
+            {dataProfile.行数 ? ` · 数据集共 ${dataProfile.行数} 行 ${dataProfile.列数} 列` : ''}
+          </p>
         </div>
         <div className="flex items-center gap-2">
+          {/* 历史报表导航 */}
+          {reports.length > 1 && (
+            <div className="flex items-center gap-1 mr-2">
+              <button onClick={prevReport} disabled={currentIndex === 0}
+                className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed">
+                <ChevronLeft className="w-4 h-4 text-gray-500" />
+              </button>
+              <span className="text-xs text-gray-400 select-none">{currentIndex + 1} / {reports.length}</span>
+              <button onClick={nextReport} disabled={currentIndex >= reports.length - 1}
+                className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed">
+                <ChevronRight className="w-4 h-4 text-gray-500" />
+              </button>
+              <button onClick={handleClearHistory}
+                className="ml-2 text-xs text-gray-400 hover:text-red-500 transition-colors">
+                清空
+              </button>
+            </div>
+          )}
           <span className="flex items-center gap-1 px-2.5 py-1 rounded text-xs bg-indigo-50 text-indigo-600 border border-indigo-200">
             <Sparkles className="w-3 h-3" /> {intentSource === 'LLM' ? 'AI 生成' : intentSource === '规则' ? '规则匹配' : '自动'}
           </span>
@@ -74,7 +113,7 @@ export default function Report() {
             表格类数据请在下方「数据表」Tab 中查看
           </div>
         ) : (
-          <EChartsChart chartType={chartTypeKey} chartConfig={chartConfig} height={360} />
+          <EChartsChart key={report._historyId || currentIndex} chartType={chartTypeKey} chartConfig={chartConfig} height={360} />
         )}
       </div>
 
@@ -93,15 +132,27 @@ export default function Report() {
         </div>
       )}
 
+      {/* 风险提示 */}
+      {riskWarnings.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mt-4">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-amber-600 text-xs font-semibold">⚠ 注意事项</span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {riskWarnings.map((w, i) => (
+              <span key={i} className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-700 text-xs border border-amber-200">{w}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="bg-white rounded-xl border border-gray-200 mt-5 overflow-hidden">
         <div className="flex items-center gap-6 px-5 pt-3.5 border-b border-gray-100">
           {['conclusion', 'table', 'trace'].map((t) => (
-            <span
-              key={t}
+            <span key={t}
               className={`pb-3 text-sm cursor-pointer transition-all ${tab === t ? 'text-gray-900 font-medium border-b-2 border-gray-900' : 'text-gray-400 hover:text-gray-600'}`}
-              onClick={() => setTab(t)}
-            >
+              onClick={() => setTab(t)}>
               {{ conclusion: '分析结论', table: '数据表', trace: '决策记录' }[t]}
             </span>
           ))}
@@ -134,9 +185,7 @@ export default function Report() {
                   ))}
                 </tbody>
               </table>
-            ) : (
-              <p className="text-sm text-gray-400 text-center py-8">暂无数据</p>
-            )}
+            ) : <p className="text-sm text-gray-400 text-center py-8">暂无数据</p>}
           </div>
         )}
 
@@ -154,9 +203,7 @@ export default function Report() {
                   <p className="text-xs text-gray-400 mt-0.5">{step.说明 || step.理由 || ''}</p>
                 </div>
               </div>
-            )) : (
-              <p className="text-sm text-gray-400 text-center py-4">暂无决策记录</p>
-            )}
+            )) : <p className="text-sm text-gray-400 text-center py-4">暂无决策记录</p>}
           </div>
         )}
       </div>

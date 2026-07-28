@@ -262,17 +262,29 @@ python -m pytest tests/ -v
 - 增加 LLM 模式与规则模式对比评测
 - 增加失败样例分析，用于改进 prompt 与规则兜底
 
+### 单 Agent / 多智能体对比
+
+| 维度 | 单 Agent（3 轮 ReAct） | 多智能体（Supervisor+3 Worker） |
+|------|----------------------|-------------------------------|
+| 编排方式 | 固定 3 轮工具调用链 | Supervisor 调度 + 质量审查重试 |
+| 可回溯性 | Trace 记录每轮 LLM 输入/输出 | 每个 Agent 独立 Trace + 审查反馈 |
+| 质量闭环 | 无 | 审查员打回后带反馈重跑（max_retries） |
+| 完全匹配率 | 待测 | 待测 |
+| 平均延迟 | 待测 | 待测 |
+
+> 多智能体模式增加了质量审查闭环和打回重试机制，代价是更高的延迟和 token 消耗。当前标注"待测"的数据需配置 LLM key 后运行评测。单 Agent 模式在大多数场景下已能覆盖需求。
+
 > 配好 LLM key 后跑 `python scripts/eval_agent.py --verbose` 即可更新 LLM 路径分数，验证提升效果。
 
 ### 界面预览
 
-> 启动后打开 `http://127.0.0.1:5173` 即可查看以下页面（截图待补）：
+> 启动后打开 `http://127.0.0.1:5173` 即可查看以下页面。截图存放于 `docs/screenshots/` 目录：
 
-| 页面 | 功能 |
-|------|------|
-| 📁 数据管理 | 上传 CSV/Excel → 字段画像 → A/B/C 质量评级 → 一键清洗 |
-| 🧠 智能分析 | 自然语言输入 → 图表类型选择 → 单Agent/多智能体切换 → 模型选择 |
-| 📊 报表查看 | ECharts 图表渲染 → 数据表 → 分析结论 → Agent Trace → HTML/JSON 导出 |
+| 页面 | 截图 | 功能 |
+|------|------|------|
+| 📁 数据管理 | `docs/screenshots/data-management.png` | 上传 CSV/Excel → 字段画像 → A/B/C 质量评级 → 一键清洗 |
+| 🧠 智能分析 | `docs/screenshots/analysis.png` | 自然语言输入 → 图表类型选择 → 单Agent/多智能体切换 → 模型选择 |
+| 📊 报表查看 | `docs/screenshots/report.png` | ECharts 图表渲染 → 数据表 → 分析结论 → Agent Trace → HTML/JSON 导出 |
 
 ---
 

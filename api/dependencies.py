@@ -20,6 +20,11 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="未提供认证信息",
         )
+    if not credentials.credentials or len(credentials.credentials.strip()) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="无效的认证令牌",
+        )
     # TODO: 替换为真实 JWT 校验
     return {"user_id": "demo", "roles": ["analyst"]}
 

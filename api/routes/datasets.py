@@ -36,6 +36,11 @@ async def upload_dataset(
     if len(content) > 50 * 1024 * 1024:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="文件超过 50MB 限制")
 
+    # MIME 类型校验
+    safe_name = (file.filename or "").lower()
+    if not safe_name.endswith(('.csv', '.xlsx', '.xls')):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="仅支持 .csv / .xlsx / .xls 格式")
+
     dataset_id = uuid4().hex
     # 只使用文件名末尾组件，防止路径穿越
     safe_name = Path(file.filename or "upload").name
