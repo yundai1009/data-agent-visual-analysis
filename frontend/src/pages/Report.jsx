@@ -69,7 +69,7 @@ export default function Report() {
 
       {/* ECharts Chart */}
       <div className="bg-white rounded-xl border border-gray-200 p-5">
-        <EChartsChart chartType={chartTypeKey} chartConfig={chartConfig} height={360} />
+        <EChartsChart key={report.报表ID || 'chart'} chartType={chartTypeKey} chartConfig={chartConfig} height={360} />
       </div>
 
       {/* Recommendation */}
