@@ -118,7 +118,7 @@ function buildOption(chartType, config) {
     return {
       ...base, tooltip: { trigger: 'item' },
       legend: { data: rows.map(r => String(r[xField] ?? '')), bottom: 0 },
-      radar: { indicator, radius: '60%' },
+      radar: { indicator: indicators, radius: '60%' },
       series: [{
         type: 'radar',
         data: rows.map(r => ({ name: String(r[xField] ?? ''), value: indicators.map(ind => Number(r[ind.name]) || 0) })),
@@ -154,6 +154,16 @@ function buildOption(chartType, config) {
         data: xVals.map(xv => { const m = rows.find(r => String(r[xField] ?? '') === xv && String(r[groupField] ?? '') === g); return m ? Number(m[yf]) || 0 : 0; }),
         itemStyle: { color: COLORS[i % COLORS.length] },
       })),
+    };
+  }
+
+  if (type === 'histogram') {
+    const yf = yFields[0] || Object.keys(rows[0]).find(k => k !== xField) || '';
+    return {
+      ...base, tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      xAxis: { type: 'category', data: rows.map(r => String(r[xField] ?? '')), axisLabel: { rotate: 45 } },
+      yAxis: { type: 'value' },
+      series: [{ type: 'bar', data: rows.map(r => Number(r[yf]) || 0), barWidth: '99%', itemStyle: { color: '#6366f1' } }],
     };
   }
 

@@ -6,22 +6,30 @@ import EChartsChart from '../components/EChartsChart';
 
 export default function Report() {
   const navigate = useNavigate();
-  const { report, setReport } = useApp();
-  const [tab, setTab] = useState('conclusion');
-
-  // 从 sessionStorage 恢复报表数据（整页跳转后）
-  useEffect(() => {
-    if (!report) {
+  const { report: contextReport, setReport } = useApp();
+  // 优先从 sessionStorage 同步读取缓存的报表，避免 useEffect 延迟
+  const [report, setLocalReport] = useState(() => {
+    if (contextReport) return contextReport;
+    try {
       const cached = sessionStorage.getItem('report_cache');
       if (cached) {
-        try {
-          const parsed = JSON.parse(cached);
-          setReport(parsed);
-          sessionStorage.removeItem('report_cache');
-        } catch { /* ignore */ }
+        const parsed = JSON.parse(cached);
+        sessionStorage.removeItem('report_cache');
+        // 同步到 AppContext 供其他页面使用
+        setTimeout(() => setReport(parsed), 0);
+        return parsed;
       }
+    } catch { /* ignore */ }
+    return null;
+  });
+  const [tab, setTab] = useState('conclusion');
+
+  // 如果 Context 有值但本地没有（导航后 Context 更新）
+  useEffect(() => {
+    if (contextReport && !report) {
+      setLocalReport(contextReport);
     }
-  }, []);
+  }, [contextReport]);
 
   if (!report) {
     return (
@@ -61,7 +69,13 @@ export default function Report() {
 
       {/* ECharts Chart */}
       <div className="bg-white rounded-xl border border-gray-200 p-5">
-        <EChartsChart chartType={chartTypeKey} chartConfig={chartConfig} height={360} />
+        {chartTypeKey === 'table' ? (
+          <div className="text-sm text-gray-400 text-center py-8">
+            表格类数据请在下方「数据表」Tab 中查看
+          </div>
+        ) : (
+          <EChartsChart chartType={chartTypeKey} chartConfig={chartConfig} height={360} />
+        )}
       </div>
 
       {/* Recommendation */}

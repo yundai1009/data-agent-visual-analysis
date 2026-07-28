@@ -5,11 +5,21 @@ function s($m){Write-Host "`n[>>] $m" -ForegroundColor Cyan}
 function o($m){Write-Host "[OK] $m" -ForegroundColor Green}
 function w($m){Write-Host "[!] $m" -ForegroundColor Yellow}
 function e($m){Write-Host "[X] $m" -ForegroundColor Red;exit 1}
+# 端口检测：找到第一个空闲端口
+function Get-FreePort([int]$Start) {
+    for($p=$Start;$p -le $Start+20;$p++){
+        try{$t=New-Object System.Net.Sockets.TcpClient;$t.Connect("127.0.0.1",$p);$t.Close()}catch{return $p}
+    }
+    return $Start
+}
 if($Stop){
     if(Test-Path $pf){$p=Get-Content $pf|ConvertFrom-Json
         if($p.backend){Stop-Process -Id $p.backend -Force -ErrorAction SilentlyContinue}
         if($p.frontend){Stop-Process -Id $p.frontend -Force -ErrorAction SilentlyContinue}
         Remove-Item $pf -Force;o "Stopped"}else{w "No running processes"};exit 0}
+# 检测端口是否被占用
+$BackendPort=Get-FreePort $BackendPort
+$FrontendPort=Get-FreePort $FrontendPort
 s "Checking deps"
 python -c "import fastapi,uvicorn,pandas,requests; print('ok')" 2>$null
 if($LASTEXITCODE -ne 0){w "Installing Python deps...";pip install -r (Join-Path $r "requirements.txt") 2>&1|Out-Null
@@ -18,6 +28,7 @@ if($LASTEXITCODE -ne 0){w "Installing Python deps...";pip install -r (Join-Path 
 $fd=Join-Path $r "frontend"
 if(-not (Test-Path (Join-Path $fd "node_modules"))){w "Installing Node deps...";Push-Location $fd;npm install 2>&1|Out-Null;Pop-Location}
 o "Deps ready"
+if($BackendPort -ne 8000 -or $FrontendPort -ne 5173){w "Ports in use, using Backend=$BackendPort Frontend=$FrontendPort"}
 s "Starting backend"
 $bp=Start-Process -PassThru -WindowStyle Hidden -FilePath "python" -ArgumentList "-m","uvicorn","api.main:app","--host","127.0.0.1","--port","$BackendPort","--log-level","warning" -WorkingDirectory $r
 Start-Sleep -Seconds 3

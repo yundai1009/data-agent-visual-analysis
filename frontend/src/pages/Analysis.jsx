@@ -92,6 +92,13 @@ export default function Analysis() {
         <h1 className="text-lg font-semibold text-gray-900">智能分析</h1>
         <p className="text-xs text-gray-400 mt-1">用自然语言描述分析需求，AI 自动生成报表</p>
         {dataset && <p className="text-xs text-indigo-500 mt-1">当前数据集：{dataset.文件名}</p>}
+        {error && (
+          <div className="mt-3 px-4 py-2.5 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700 flex items-center gap-2">
+            <span>⚠</span>
+            <span>{error}</span>
+            <button className="ml-auto text-red-400 hover:text-red-600 text-xs" onClick={() => setError('')}>✕</button>
+          </div>
+        )}
       </div>
 
       {/* Input */}

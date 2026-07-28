@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict
+from pathlib import Path
 from uuid import uuid4
 import io
 
@@ -32,15 +33,18 @@ async def upload_dataset(
     content = await file.read()
     if not content:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="上传文件为空")
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="文件超过 50MB 限制")
 
     dataset_id = uuid4().hex
-    file_name = file.filename or "upload"
-    stored_name = f"{dataset_id}_{file_name}"
+    # 只使用文件名末尾组件，防止路径穿越
+    safe_name = Path(file.filename or "upload").name
+    stored_name = f"{dataset_id}_{safe_name}"
     stored_path = _UPLOAD_DIR / stored_name
     stored_path.write_bytes(content)
 
     uploaded_proxy = io.BytesIO(content)
-    uploaded_proxy.name = file_name
+    uploaded_proxy.name = safe_name
     try:
         df = 读取上传表格(uploaded_proxy)
         画像 = 生成数据画像(df)

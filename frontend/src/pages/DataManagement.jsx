@@ -100,9 +100,11 @@ export default function DataManagement() {
       });
       setCleanResult(res);
       setProfile(res.数据画像);
-      setDataset(prev => ({ ...prev, 行数: res.清洗后行数 }));
+      setDataset(prev => ({ ...prev, 行数: res.清洗后行数, 数据画像: res.数据画像 }));
+      // 同步 AppContext，让分析页使用清洗后数据
+      setAppDataset(prev => prev ? { ...prev, 行数: res.清洗后行数, 数据画像: res.数据画像 } : prev);
     } catch (e) {
-      alert('清洗失败: ' + e.message);
+      setError('清洗失败: ' + e.message);
     }
     setCleaning(false);
   }

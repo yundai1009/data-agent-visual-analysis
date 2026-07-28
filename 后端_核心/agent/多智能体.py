@@ -112,23 +112,57 @@ def 多智能体分析(
         trace.记录观察(轮次=1, 说明="数据分析师执行失败，降级到关键词匹配", 状态="失败")
         return _降级(画像, 分析需求, trace)
 
-    # ── 第 2 步：图表设计师（推荐图表 + 结论） ──
-    chart_prompt = f"基于以下数据画像和分析结果进行图表推荐：\n画像摘要：{_画像摘要(画像)}\n数据分析结果：{data_agent_result['摘要']}\n\n用户需求：{分析需求}"
-    chart_result = _运行_agent("图表设计师", chart_prompt, tools, context, trace, 轮次起始=3)
+    # ── 第 2 步：图表设计师（推荐图表 + 结论），带质量审查重试闭环 ──
+    data_summary = data_agent_result["摘要"]
+    chart_result = None
+    passed = False
+    last_review_feedback = ""
 
-    if not chart_result["成功"]:
-        logger.warning("图表设计师失败，降级")
-        trace.记录观察(轮次=3, 说明="图表设计师执行失败，降级到关键词匹配", 状态="失败")
-        return _降级(画像, 分析需求, trace)
+    for attempt in range(max_retries + 1):
+        轮次图表 = 3 + attempt * 2
 
-    # ── 第 3 步：质量审查员 ──
-    quality_prompt = f"请检查以下分析结果：\n数据画像：{_画像摘要(画像)}\n用户需求：{分析需求}\n图表设计师推荐：{chart_result.get('摘要', '')}\n\n请判断结果是否合理。"
-    quality_result = _运行_agent("质量审查员", quality_prompt, tools, context, trace, 轮次起始=5)
+        if attempt == 0:
+            chart_prompt = f"基于以下数据画像和分析结果进行图表推荐：\n画像摘要：{_画像摘要(画像)}\n数据分析结果：{data_summary}\n\n用户需求：{分析需求}"
+        else:
+            chart_prompt = (
+                f"基于以下数据画像和分析结果进行图表推荐：\n画像摘要：{_画像摘要(画像)}\n数据分析结果：{data_summary}\n\n"
+                f"用户需求：{分析需求}\n\n"
+                f"【上一版审查意见】\n{last_review_feedback}\n\n"
+                f"请根据审查意见修正分析方案后重新推荐。"
+            )
 
-    passed = quality_result["成功"] and ("不通过" not in quality_result.get("摘要", ""))
+        chart_result = _运行_agent("图表设计师", chart_prompt, tools, context, trace, 轮次起始=轮次图表)
+        if not chart_result["成功"]:
+            logger.warning(f"图表设计师第 {attempt+1} 次尝试失败")
+            trace.记录观察(轮次=轮次图表, 说明=f"图表设计师第 {attempt+1} 次尝试失败", 状态="失败")
+            if attempt < max_retries:
+                continue
+            return _降级(画像, 分析需求, trace)
+
+        # ── 质量审查员 ──
+        quality_prompt = (
+            f"请检查以下分析结果：\n数据画像：{_画像摘要(画像)}\n"
+            f"用户需求：{分析需求}\n"
+            f"图表设计师推荐：{chart_result.get('摘要', '')}\n\n"
+            f"请判断结果是否合理。如果发现问题，请明确说明具体原因和改进方向。"
+        )
+        quality_result = _运行_agent("质量审查员", quality_prompt, tools, context, trace, 轮次起始=轮次图表 + 1)
+
+        if not quality_result["成功"]:
+            trace.记录观察(轮次=轮次图表 + 1, 说明="质量审查员执行失败，跳过审查", 状态="失败")
+            passed = True
+            break
+
+        passed = "不通过" not in quality_result.get("摘要", "")
+        if passed:
+            trace.记录观察(轮次=轮次图表 + 1, 说明=f"质量审查通过（第 {attempt+1} 次）", 状态="成功")
+            break
+        else:
+            last_review_feedback = quality_result.get("摘要", "")
+            trace.记录观察(轮次=轮次图表 + 1, 说明=f"质量审查不通过，准备第 {attempt+2} 次重试：{last_review_feedback[:100]}", 状态="需关注")
 
     if not passed:
-        trace.记录观察(轮次=5, 说明=f"质量审查不通过：{quality_result.get('摘要', '')}", 状态="需关注")
+        trace.记录观察(轮次=轮次图表 + 1, 说明="重试次数用尽，接受当前结果", 状态="需关注")
 
     # ── 提取意图 ──
     intent = _从消息提取意图(chart_result["消息"], 画像)
