@@ -77,8 +77,9 @@ export default function Analysis() {
         agent_mode: agentMode,
         model: selectedModel || undefined,
       });
-      setReport(res);
-      navigate('/report');
+      // 用整页跳转代替 React Router navigate，避免 DOM reconcilation 冲突
+      sessionStorage.setItem('report_cache', JSON.stringify(res));
+      window.location.href = '/report';
     } catch (e) {
       alert('分析失败: ' + e.message);
     }

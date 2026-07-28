@@ -20,9 +20,9 @@ function inferType(field, profile) {
 
 export default function DataManagement() {
   const navigate = useNavigate();
-  const { setDataset: setAppDataset } = useApp();
-  const [dataset, setDataset] = useState(null);
-  const [profile, setProfile] = useState(null);
+  const { dataset: globalDataset, setDataset: setAppDataset } = useApp();
+  const [dataset, setDataset] = useState(globalDataset);
+  const [profile, setProfile] = useState(globalDataset?.数据画像 || null);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
@@ -168,7 +168,7 @@ export default function DataManagement() {
               <span className="text-sm text-gray-700">已加载数据集：{dataset.文件名}（{profile?.行数} 行）</span>
             </div>
             <div className="flex gap-2">
-              <button className="text-xs px-2.5 py-1 rounded border border-gray-200 text-gray-500 hover:bg-white" onClick={(e) => { e.stopPropagation(); setDataset(null); setProfile(null); }}>重新上传</button>
+              <button className="text-xs px-2.5 py-1 rounded border border-gray-200 text-gray-500 hover:bg-white" onClick={(e) => { e.stopPropagation(); setDataset(null); setProfile(null); setAppDataset(null); }}>重新上传</button>
             </div>
           </div>
         ) : (

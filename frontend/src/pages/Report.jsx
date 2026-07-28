@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Download, DownloadCloud, Sparkles } from 'lucide-react';
 import { useApp } from '../AppContext';
@@ -6,8 +6,22 @@ import EChartsChart from '../components/EChartsChart';
 
 export default function Report() {
   const navigate = useNavigate();
-  const { report } = useApp();
+  const { report, setReport } = useApp();
   const [tab, setTab] = useState('conclusion');
+
+  // 从 sessionStorage 恢复报表数据（整页跳转后）
+  useEffect(() => {
+    if (!report) {
+      const cached = sessionStorage.getItem('report_cache');
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          setReport(parsed);
+          sessionStorage.removeItem('report_cache');
+        } catch { /* ignore */ }
+      }
+    }
+  }, []);
 
   if (!report) {
     return (
