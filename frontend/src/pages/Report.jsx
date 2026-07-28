@@ -1,18 +1,12 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Download, DownloadCloud, Sparkles, Loader2 } from 'lucide-react';
+import { Download, DownloadCloud, Sparkles } from 'lucide-react';
 import { useApp } from '../AppContext';
 import EChartsChart from '../components/EChartsChart';
 
-const CHART_TYPE_LABELS = {
-  bar: '柱状图', line: '折线图', pie: '饼图', scatter: '散点图',
-  heatmap: '热力图', stacked_bar: '堆积图', area: '面积图',
-  radar: '雷达图', histogram: '直方图', auto: '自动', table: '表格',
-};
-
 export default function Report() {
   const navigate = useNavigate();
-  const { report, loading } = useApp();
+  const { report } = useApp();
   const [tab, setTab] = useState('conclusion');
 
   if (!report) {
@@ -27,7 +21,6 @@ export default function Report() {
   }
 
   const chartConfig = report.图表配置 || {};
-  const chartData = chartConfig.数据 || [];
   const recommendations = report.推荐说明?.理由 || [];
   const trace = report['Agent Trace'] || report.Agent_Trace || [];
   const conclusion = report.结论 || '';
@@ -52,24 +45,9 @@ export default function Report() {
         </div>
       </div>
 
-      {/* Loading */}
-      {loading && (
-        <div className="bg-white rounded-xl border border-gray-200 p-6 mb-5 text-center">
-          <div className="flex items-center justify-center gap-3 mb-3">
-            <Loader2 className="w-5 h-5 text-indigo-500 animate-spin" />
-            <span className="text-sm text-gray-500">AI 正在分析数据，请稍候…</span>
-          </div>
-          <div className="max-w-md mx-auto space-y-2">
-            <div className="h-3 bg-gray-100 rounded animate-pulse w-3/4" />
-            <div className="h-3 bg-gray-100 rounded animate-pulse w-1/2" />
-            <div className="h-3 bg-gray-100 rounded animate-pulse w-5/6" />
-          </div>
-        </div>
-      )}
-
       {/* ECharts Chart */}
       <div className="bg-white rounded-xl border border-gray-200 p-5">
-        <EChartsChart key={report.报表ID || 'chart'} chartType={chartTypeKey} chartConfig={chartConfig} height={360} />
+        <EChartsChart chartType={chartTypeKey} chartConfig={chartConfig} height={360} />
       </div>
 
       {/* Recommendation */}
@@ -103,27 +81,23 @@ export default function Report() {
 
         {tab === 'conclusion' && (
           <div className="px-5 py-4 text-sm text-gray-600 leading-relaxed">
-            {conclusion ? (
-              <div className="whitespace-pre-wrap">{conclusion}</div>
-            ) : (
-              <p className="text-gray-400">暂无结论</p>
-            )}
+            {conclusion ? <div className="whitespace-pre-wrap">{conclusion}</div> : <p className="text-gray-400">暂无结论</p>}
           </div>
         )}
 
         {tab === 'table' && (
           <div className="overflow-auto max-h-56">
-            {chartData.length > 0 ? (
+            {chartConfig.数据?.length > 0 ? (
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-xs text-gray-400 border-b border-gray-100">
-                    {Object.keys(chartData[0]).map((k) => (
+                    {Object.keys(chartConfig.数据[0]).map((k) => (
                       <th key={k} className="text-left px-5 py-3 font-medium">{k}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {chartData.slice(0, 50).map((row, i) => (
+                  {chartConfig.数据.map((row, i) => (
                     <tr key={i} className="hover:bg-gray-50 transition-colors">
                       {Object.values(row).map((v, j) => (
                         <td key={j} className="px-5 py-2.5 font-mono">{String(v ?? '')}</td>
