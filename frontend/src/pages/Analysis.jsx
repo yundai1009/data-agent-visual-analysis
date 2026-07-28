@@ -36,7 +36,7 @@ const models = [
 
 export default function Analysis() {
   const navigate = useNavigate();
-  const { dataset, setReport, setLoading } = useApp();
+  const { dataset, setReport } = useApp();
   const [nlInput, setNlInput] = useState('');
   const [chartType, setChartType] = useState('bar');
   const [generating, setGenerating] = useState(false);
@@ -65,7 +65,6 @@ export default function Analysis() {
       return;
     }
     setGenerating(true);
-    setLoading(true);
     try {
       const res = await generateReport({
         数据集ID: dataset.数据集ID,
@@ -84,7 +83,6 @@ export default function Analysis() {
       alert('分析失败: ' + e.message);
     }
     setGenerating(false);
-    setLoading(false);
   }
 
   return (
