@@ -129,23 +129,29 @@ def chat_completion(
     tools: Optional[List[Dict[str, Any]]] = None,
     tool_choice: Optional[str] = None,
     timeout: Optional[int] = None,
+    # 用户自配 LLM 覆盖（来自前端请求头）
+    user_base_url: Optional[str] = None,
+    user_api_key: Optional[str] = None,
+    user_model: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """调用 OpenAI 兼容 ``chat/completions`` 接口。
 
     成功返回完整响应 dict；失败统一返回 None，由调用方回退兜底。
     不会抛网络异常给上层。
     """
-    if not is_llm_configured():
+    if not is_llm_configured() and not user_api_key:
         return None
 
-    base_url = (EnvConfig.LLM_BASE_URL or "").rstrip("/")
+    base_url = ((user_base_url or EnvConfig.LLM_BASE_URL) or "").rstrip("/")
     url = f"{base_url}{_CHAT_COMPLETIONS_PATH}"
+    api_key = user_api_key or EnvConfig.LLM_API_KEY
+    model = user_model or EnvConfig.LLM_MODEL
     headers = {
-        "Authorization": f"Bearer {EnvConfig.LLM_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     payload: Dict[str, Any] = {
-        "model": EnvConfig.LLM_MODEL,
+        "model": model,
         "messages": messages,
         "temperature": EnvConfig.LLM_TEMPERATURE,
         "stream": False,

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Zap, Sparkles, BarChart3, LineChart, PieChart, ScatterChart, Table, Layers, Loader2, Cpu, GitBranch } from 'lucide-react';
+import LLMConfig from '../components/LLMConfig';
 import { generateReport } from '../api';
 import { useApp } from '../AppContext';
 
@@ -160,8 +161,8 @@ export default function Analysis() {
       </div>
 
       {/* Input */}
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div className="px-5 py-4">
+      <div className="bg-white rounded-xl border border-gray-200">
+        <div className="px-5 py-4 rounded-t-xl">
           <textarea
             rows={3}
             className="w-full bg-transparent border-0 text-sm text-gray-700 resize-none focus:outline-none placeholder:text-gray-300 leading-relaxed"
@@ -170,17 +171,20 @@ export default function Analysis() {
             onChange={(e) => setNlInput(e.target.value)}
           />
         </div>
-        <div className="flex items-center justify-between px-5 py-3 bg-gray-50/80 border-t border-gray-100">
-          <div className="flex gap-1.5 flex-wrap">
-            {templates.map((t) => (
-              <span
-                key={t.label}
-                className="px-3 py-1.5 rounded-lg bg-white text-xs text-gray-500 cursor-pointer hover:bg-gray-100 hover:text-gray-700 transition-all border border-gray-200"
-                onClick={() => setNlInput(t.text)}
-              >
-                {t.label}
-              </span>
-            ))}
+        <div className="flex items-center justify-between px-5 py-3 bg-gray-50/80 border-t border-gray-100 rounded-b-xl">
+          <div className="flex items-center gap-3 flex-wrap">
+            <LLMConfig />
+            <div className="hidden sm:flex gap-1.5 flex-wrap">
+              {templates.map((t) => (
+                <span
+                  key={t.label}
+                  className="px-3 py-1.5 rounded-lg bg-white text-xs text-gray-500 cursor-pointer hover:bg-gray-100 hover:text-gray-700 transition-all border border-gray-200"
+                  onClick={() => setNlInput(t.text)}
+                >
+                  {t.label}
+                </span>
+              ))}
+            </div>
           </div>
           <button
             disabled={generating}

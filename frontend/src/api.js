@@ -1,8 +1,23 @@
 const BASE = '';
 
+// 从 localStorage 加载用户自配的 LLM 配置
+function getLLMHeaders() {
+  try {
+    const raw = localStorage.getItem('llm_config');
+    if (!raw) return {};
+    const config = JSON.parse(raw);
+    const headers = {};
+    if (config.baseUrl) headers['X-LLM-Base-URL'] = config.baseUrl;
+    if (config.apiKey) headers['X-LLM-API-Key'] = config.apiKey;
+    if (config.model) headers['X-LLM-Model'] = config.model;
+    return headers;
+  } catch { return {}; }
+}
+
 async function request(url, options = {}) {
+  const llmHeaders = getLLMHeaders();
   const res = await fetch(`${BASE}${url}`, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
+    headers: { 'Content-Type': 'application/json', ...llmHeaders, ...options.headers },
     ...options,
   });
   if (!res.ok) {
@@ -15,7 +30,8 @@ async function request(url, options = {}) {
 export async function uploadFile(file) {
   const form = new FormData();
   form.append('file', file);
-  const res = await fetch(`${BASE}/datasets/upload`, { method: 'POST', body: form });
+  const llmHeaders = getLLMHeaders();
+  const res = await fetch(`${BASE}/datasets/upload`, { method: 'POST', body: form, headers: llmHeaders });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }

@@ -4,7 +4,7 @@ import logging
 from typing import Any, Dict
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from api.contracts import ReportGenerateRequest, ReportGenerateResponse
 from api.dependencies import get_current_user
@@ -21,6 +21,7 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 @router.post("/generate", response_model=ReportGenerateResponse)
 async def generate_report(
     payload: ReportGenerateRequest,
+    request: Request,
     user: dict = Depends(get_current_user),
 ) -> ReportGenerateResponse:
     item = _仓储.读取(payload.数据集ID)
@@ -28,10 +29,22 @@ async def generate_report(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在")
 
     df = item["数据"]
-    # 临时模型覆盖
+
+    # 用户自配 LLM 配置（从前端请求头传入）
+    user_base_url = request.headers.get("x-llm-base-url")
+    user_api_key = request.headers.get("x-llm-api-key")
+    user_model = request.headers.get("x-llm-model") or payload.model
+
+    # 临时覆盖 EnvConfig
+    original_base_url = getattr(EnvConfig, "LLM_BASE_URL", None)
+    original_key = getattr(EnvConfig, "LLM_API_KEY", None)
     original_model = getattr(EnvConfig, "LLM_MODEL", None)
-    if payload.model:
-        EnvConfig.LLM_MODEL = payload.model
+    if user_base_url:
+        EnvConfig.LLM_BASE_URL = user_base_url
+    if user_api_key:
+        EnvConfig.LLM_API_KEY = user_api_key
+    if user_model:
+        EnvConfig.LLM_MODEL = user_model
 
     try:
         if payload.agent_mode == "multi":
@@ -39,7 +52,11 @@ async def generate_report(
         else:
             report = _单Agent报表(df, payload)
     finally:
-        if payload.model and original_model:
+        if user_base_url and original_base_url:
+            EnvConfig.LLM_BASE_URL = original_base_url
+        if user_api_key and original_key:
+            EnvConfig.LLM_API_KEY = original_key
+        if user_model and original_model:
             EnvConfig.LLM_MODEL = original_model
 
     return _构建响应(payload, report)
