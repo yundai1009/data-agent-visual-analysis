@@ -1,6 +1,7 @@
 """API 集成测试：认证、上传、隔离、报表、LLM 安全、错误响应。
 
 用 FastAPI TestClient + 临时 SQLite，不依赖真实网络和 LLM Key。
+注册走邮箱验证码：测试内 monkeypatch 邮件发送函数捕获验证码。
 运行：
     python -m pytest tests/test_api_integration.py -v
 """
@@ -10,6 +11,7 @@ from __future__ import annotations
 import io
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -21,24 +23,55 @@ if PROJECT_ROOT not in sys.path:
 # 测试环境：开启认证、用临时数据库
 os.environ["AUTH_ENABLED"] = "true"
 
+# 捕获 dry-run 验证码：monkeypatch 邮件发送函数
+_SENT_CODES: dict = {}
+
 
 @pytest.fixture(scope="module")
 def client(tmp_path_factory):
-    """TestClient + 临时 SQLite。"""
+    """TestClient + 临时 SQLite + 验证码捕获。"""
     tmp_dir = tmp_path_factory.mktemp("api_test")
     os.environ["DAA_SQLITE_PATH"] = str(tmp_dir / "test.db")
     from config import settings
     settings.EnvConfig.SQLITE_PATH = str(tmp_dir / "test.db")
     settings.EnvConfig.AUTH_ENABLED = True
 
-    from fastapi.testclient import TestClient
-    from api.main import app
-    with TestClient(app) as c:
-        yield c
+    from services import email_service
+
+    def _fake_send(email: str, code: str) -> bool:
+        _SENT_CODES[email] = code
+        return True
+
+    _orig_send = email_service.发送验证码邮件
+    email_service.发送验证码邮件 = _fake_send
+    try:
+        from fastapi.testclient import TestClient
+        from api.main import app
+        with TestClient(app) as c:
+            yield c
+    finally:
+        email_service.发送验证码邮件 = _orig_send
 
 
-def _register(client, username, password="secret123", role="analyst"):
-    r = client.post("/auth/register", json={"username": username, "password": password, "role": role})
+def _send_and_get_code(client, email: str) -> str:
+    """调 send-code 并返回捕获的验证码。"""
+    r = client.post("/auth/send-code", json={"email": email})
+    assert r.status_code == 200, r.text
+    code = _SENT_CODES.get(email)
+    assert code, f"未捕获到 {email} 的验证码"
+    return code
+
+
+def _register(client, username, password="secret123", email=None):
+    """发送验证码 → 取码 → 注册（固定 analyst 角色）。"""
+    email = email or f"{username}@test.com"
+    code = _send_and_get_code(client, email)
+    r = client.post("/auth/register", json={
+        "username": username,
+        "email": email,
+        "code": code,
+        "password": password,
+    })
     assert r.status_code == 200, r.text
     return r.json()["access_token"]
 
@@ -76,9 +109,117 @@ def test_无token_401(client):
 
 def test_普通用户访问admin_403(client):
     tok = _register(client, "carol")
-    r = client.post("/admin/golden/", json={"问题": "x", "预期SQL": "y"},
-                    headers={"Authorization": f"Bearer {tok}"})
-    assert r.status_code in (403, 404)  # 路由可能不存在则 404
+    r = client.get("/admin/golden-set", headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 403
+
+
+# ---- 8.1.5 阶段十三：种子管理员 + 邮箱验证码注册 ----
+
+def test_种子admin登录_并访问admin(client):
+    # lifespan 启动时幂等创建 admin / admin123
+    r = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
+    assert r.status_code == 200
+    tok = r.json()["access_token"]
+    r = client.get("/admin/golden-set", headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200
+
+
+def test_注册带role字段_422(client):
+    email = "role_hack@test.com"
+    code = _send_and_get_code(client, email)
+    # extra="forbid"：携带 role 等多余字段直接 422，杜绝自注册提权
+    r = client.post("/auth/register", json={
+        "username": "hacker", "email": email, "code": code,
+        "password": "secret123", "role": "admin",
+    })
+    assert r.status_code == 422
+    # 注册被拒 → 账号未创建（登录失败），且邮箱未被占用
+    r3 = client.post("/auth/login", json={"username": "hacker", "password": "secret123"})
+    assert r3.status_code == 401
+
+
+def test_注册成功固定analyst(client):
+    tok = _register(client, "molly")
+    r = client.get("/admin/golden-set", headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 403  # 普通注册用户无 admin 权限
+
+
+def test_验证码错误_400(client):
+    email = "wrong_code@test.com"
+    _send_and_get_code(client, email)
+    r = client.post("/auth/register", json={
+        "username": "wrongcode", "email": email, "code": "000000", "password": "secret123",
+    })
+    assert r.status_code == 400
+    assert "验证码错误" in r.json()["message"]
+
+
+def test_验证码过期_400(client):
+    from repositories import email_code_repo
+    email = "expired_code@test.com"
+    _send_and_get_code(client, email)
+    # 直接把过期时间改为过去，模拟验证码过期
+    past = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    email_code_repo.保存验证码(email, "stale-hash", past)
+    r = client.post("/auth/register", json={
+        "username": "expired", "email": email, "code": "123456", "password": "secret123",
+    })
+    assert r.status_code == 400
+    assert "过期" in r.json()["message"]
+
+
+def test_验证码重放_400(client):
+    email = "replay@test.com"
+    code = _send_and_get_code(client, email)
+    r = client.post("/auth/register", json={
+        "username": "replay1", "email": email, "code": code, "password": "secret123",
+    })
+    assert r.status_code == 200
+    # 同一验证码再次注册 → 已使用
+    r2 = client.post("/auth/register", json={
+        "username": "replay2", "email": email, "code": code, "password": "secret123",
+    })
+    assert r2.status_code == 400
+    assert "已使用" in r2.json()["message"]
+
+
+def test_邮箱重复注册_400(client):
+    email = "dup@test.com"
+    _register(client, "dupa", email=email)
+    r = client.post("/auth/send-code", json={"email": email})
+    assert r.status_code == 400
+    assert "已被注册" in r.json()["message"]
+
+
+def test_邮箱格式非法_422(client):
+    r = client.post("/auth/send-code", json={"email": "not-an-email"})
+    assert r.status_code == 422
+
+
+def test_用户名含at_422(client):
+    email = "at_user@test.com"
+    _send_and_get_code(client, email)
+    r = client.post("/auth/register", json={
+        "username": "bad@name", "email": email, "code": "123456", "password": "secret123",
+    })
+    assert r.status_code == 422  # 用户名禁止 @，避免与邮箱登录歧义
+
+
+def test_邮箱登录_200(client):
+    email = "maillogin@test.com"
+    _register(client, "mailuser", email=email)
+    r = client.post("/auth/login", json={"username": email, "password": "secret123"})
+    assert r.status_code == 200
+    assert r.json()["user"]["email"] == email
+
+
+def test_sendcode限频_429(client):
+    email = "ratelimit@test.com"
+    r1 = client.post("/auth/send-code", json={"email": email})
+    assert r1.status_code == 200
+    r2 = client.post("/auth/send-code", json={"email": email})
+    assert r2.status_code == 429
+    assert "频繁" in r2.json()["message"]
 
 
 # ---- 8.2 上传 ----

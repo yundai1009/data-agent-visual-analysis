@@ -69,10 +69,17 @@ export async function login(username, password) {
   });
 }
 
-export async function register(username, password, role = 'analyst') {
+export async function sendCode(email) {
+  return request('/auth/send-code', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function register(username, email, code, password) {
   return request('/auth/register', {
     method: 'POST',
-    body: JSON.stringify({ username, password, role }),
+    body: JSON.stringify({ username, email, code, password }),
   });
 }
 

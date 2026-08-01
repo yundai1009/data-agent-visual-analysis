@@ -40,6 +40,19 @@ class EnvConfig:
     # 认证开关：开发阶段设为 false 可免 token 访问
     AUTH_ENABLED = os.getenv("AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
 
+    # SMTP 邮件（阶段十三：邮箱验证码注册）
+    # 未配置 SMTP_HOST 或 SMTP_DRY_RUN=true 时，验证码不真发邮件，打印到后端日志（本地调试可用）
+    SMTP_HOST = os.getenv("SMTP_HOST", "")
+    SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
+    SMTP_USER = os.getenv("SMTP_USER", "")
+    SMTP_PASS = os.getenv("SMTP_PASS", "")
+    SMTP_FROM = os.getenv("SMTP_FROM", "")
+    SMTP_DRY_RUN = os.getenv("SMTP_DRY_RUN", "false").lower() in ("true", "1", "yes")
+
+    # 种子管理员（阶段十三）：启动时幂等创建；生产环境务必通过 SEED_ADMIN_PASSWORD 覆盖默认密码
+    SEED_ADMIN_USERNAME = os.getenv("SEED_ADMIN_USERNAME", "admin")
+    SEED_ADMIN_PASSWORD = os.getenv("SEED_ADMIN_PASSWORD", "admin123")
+
     # JWT 认证配置（阶段 3）
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "change-me-in-production")
     JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")

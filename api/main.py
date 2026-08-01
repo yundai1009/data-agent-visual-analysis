@@ -9,6 +9,7 @@ sys.path.insert(0, project_root)
 
 from contextlib import asynccontextmanager
 from datetime import datetime
+import logging
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,8 +18,10 @@ from fastapi.responses import FileResponse, HTMLResponse
 from api.contracts import HealthResponse
 from api.error_handlers import register_error_handlers
 from api.middleware import RequestIDMiddleware
-from api.routes import datasets, reports, clean, examples, auth
+from api.routes import datasets, reports, clean, examples, auth, admin
 from config.settings import EnvConfig
+
+logger = logging.getLogger(__name__)
 
 # 前端静态产物目录：启动器通过 FRONTEND_DIST 环境变量选择
 # - 正式构建 frontend/dist（AUTH_REQUIRED=true）
@@ -28,7 +31,20 @@ FRONTEND_DIST = os.getenv("FRONTEND_DIST", str(Path(project_root) / "frontend" /
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # TODO: 启动时加载配置、初始化 DB/Redis/Chroma 连接
+    # 阶段十三：启动时幂等创建种子管理员（密码来自 EnvConfig，生产务必覆盖默认值）
+    try:
+        from repositories import user_repo
+        from services import auth_service
+        user_repo.确保管理员存在(
+            EnvConfig.SEED_ADMIN_USERNAME,
+            auth_service.hash_password(EnvConfig.SEED_ADMIN_PASSWORD),
+        )
+        if EnvConfig.SEED_ADMIN_PASSWORD == "admin123":
+            logger.warning(
+                "种子管理员 %s 正在使用默认密码 admin123，生产环境请通过 "
+                "SEED_ADMIN_PASSWORD 环境变量修改！", EnvConfig.SEED_ADMIN_USERNAME)
+    except Exception as exc:
+        logger.error("创建种子管理员失败：%s", exc)
     yield
     # TODO: 关闭时清理连接
 
@@ -68,6 +84,7 @@ app.include_router(reports.router)
 app.include_router(clean.router)
 app.include_router(examples.router)
 app.include_router(auth.router)
+app.include_router(admin.router)
 
 
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"], include_in_schema=False)
