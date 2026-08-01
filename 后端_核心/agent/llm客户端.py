@@ -169,7 +169,7 @@ def chat_completion(
         return None
 
     if response.status_code != 200:
-        logger.warning("LLM HTTP %s: %s", response.status_code, response.text[:200])
+        logger.warning("LLM HTTP %s（响应内容已脱敏，仅记录状态码）", response.status_code)
         return None
 
     try:
@@ -246,7 +246,7 @@ def embed_text(text: str) -> Optional[List[float]]:
         return None
 
     if response.status_code != 200:
-        logger.warning("Embedding HTTP %s: %s", response.status_code, response.text[:200])
+        logger.warning("Embedding HTTP %s（响应内容已脱敏，仅记录状态码）", response.status_code)
         return None
 
     try:

@@ -28,7 +28,11 @@ export default function EChartsChart({ chartType, chartConfig, height = 320 }) {
     }
 
     return () => {
-      // 组件卸载时清理
+      // 组件卸载或参数变化时释放实例，避免内存泄漏
+      if (chartRef.current) {
+        chartRef.current.dispose();
+        chartRef.current = null;
+      }
     };
   }, [chartType, chartConfig]);
 

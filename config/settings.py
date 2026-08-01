@@ -38,3 +38,28 @@ class EnvConfig:
 
     # 认证开关：开发阶段设为 false 可免 token 访问
     AUTH_ENABLED = os.getenv("AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
+
+    # JWT 认证配置（阶段 3）
+    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "change-me-in-production")
+    JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+    JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
+
+    # LLM provider 白名单（阶段 5）：用户只能选 provider+model，不能传任意 URL/Key
+    # 结构：provider -> {base_url, default_model, models: [可选模型列表]}
+    LLM_PROVIDERS = {
+        "deepseek": {
+            "base_url": "https://api.deepseek.com/v1",
+            "default_model": "deepseek-chat",
+            "models": ["deepseek-chat", "deepseek-reasoner"],
+        },
+        "openai": {
+            "base_url": "https://api.openai.com/v1",
+            "default_model": "gpt-4o-mini",
+            "models": ["gpt-4o-mini", "gpt-4o"],
+        },
+        "siliconflow": {
+            "base_url": "https://api.siliconflow.cn/v1",
+            "default_model": "Qwen/Qwen2.5-7B-Instruct",
+            "models": [],
+        },
+    }

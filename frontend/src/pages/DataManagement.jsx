@@ -1,4 +1,4 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Upload, Download, Database, FileText, AlertTriangle, Search, Sparkles, Loader2 } from 'lucide-react';
 import { uploadFile, loadExample, cleanDataset } from '../api';
@@ -32,6 +32,13 @@ export default function DataManagement() {
   const [showMissing, setShowMissing] = useState(false);
   const [cleaning, setCleaning] = useState(false);
   const [cleanResult, setCleanResult] = useState(null);
+  // 清洗选项（阶段 7：可配置）
+  const [cleanOps, setCleanOps] = useState({
+    deduplicate: true,
+    fill_missing: true,
+    fill_strategy: 'auto',
+    drop_empty_rows: true,
+  });
 
   async function handleUpload(file) {
     setError('');
@@ -93,10 +100,10 @@ export default function DataManagement() {
     setCleaning(true);
     try {
       const res = await cleanDataset(dataset.数据集ID, {
-        deduplicate: true,
-        fill_missing: true,
-        fill_strategy: 'auto',
-        drop_empty_rows: true,
+        deduplicate: cleanOps.deduplicate,
+        fill_missing: cleanOps.fill_missing,
+        fill_strategy: cleanOps.fill_strategy,
+        drop_empty_rows: cleanOps.drop_empty_rows,
       });
       setCleanResult(res);
       setProfile(res.数据画像);
@@ -185,7 +192,7 @@ export default function DataManagement() {
 
       {/* Stats */}
       {profile && (
-        <div className="grid grid-cols-4 gap-4 mt-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
           <div className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-sm transition-shadow">
             <div className="flex items-center gap-2"><Database className="w-4 h-4 text-gray-400" /><span className="text-xs text-gray-400">总行数</span></div>
             <p className="text-2xl font-medium text-gray-900 mt-1">{profile.行数.toLocaleString()}</p>
@@ -253,7 +260,7 @@ export default function DataManagement() {
 
       {/* Quick actions */}
       {profile && (
-        <div className="grid grid-cols-3 gap-4 mt-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
           <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3 cursor-pointer hover:bg-gray-50/50 transition-all hover:shadow-sm" onClick={handleNewAnalysis}>
             <div className="w-10 h-10 rounded-lg bg-indigo-50 flex items-center justify-center text-lg">📊</div>
             <div><p className="text-sm font-medium text-gray-700">基于此数据集新建分析</p><p className="text-xs text-gray-400 mt-0.5">自动带入当前数据集上下文</p></div>

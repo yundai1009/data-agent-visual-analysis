@@ -13,7 +13,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.contracts import HealthResponse
-from api.routes import datasets, reports, clean, examples
+from api.error_handlers import register_error_handlers
+from api.middleware import RequestIDMiddleware
+from api.routes import datasets, reports, clean, examples, auth
 from config.settings import EnvConfig
 
 
@@ -39,6 +41,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# request_id 中间件：放在最外层，保证所有请求都有 request_id
+app.add_middleware(RequestIDMiddleware)
+
+# 统一错误响应：注册异常处理器
+register_error_handlers(app)
+
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
@@ -52,6 +60,7 @@ app.include_router(datasets.router)
 app.include_router(reports.router)
 app.include_router(clean.router)
 app.include_router(examples.router)
+app.include_router(auth.router)
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(

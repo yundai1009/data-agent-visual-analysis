@@ -23,7 +23,7 @@ async def clean_dataset(
     user: dict = Depends(get_current_user),
 ) -> CleanDatasetResponse:
     """对数据集执行清洗操作，保存清洗后版本并返回摘要。"""
-    item = _仓储.读取(dataset_id)
+    item = _仓储.读取(user["user_id"], dataset_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在")
 
@@ -46,6 +46,7 @@ async def clean_dataset(
 
     new_profile = 生成数据画像(cleaned_df)
     _仓储.保存(
+        user_id=user["user_id"],
         dataset_id=dataset_id,
         文件名=item["文件名"] + "（已清洗）",
         存储路径=item.get("存储路径", ""),

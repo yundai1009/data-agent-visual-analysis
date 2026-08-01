@@ -42,6 +42,7 @@ async def load_example_dataset(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     _仓储.保存(
+        user_id=user["user_id"],
         dataset_id=dataset_id,
         文件名="sales_2024.csv",
         存储路径=str(example_path),

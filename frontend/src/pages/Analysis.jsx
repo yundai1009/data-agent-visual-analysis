@@ -1,4 +1,4 @@
-import { useState } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Zap, Sparkles, BarChart3, LineChart, PieChart, ScatterChart, Table, Layers, Loader2, Cpu, GitBranch } from 'lucide-react';
 import LLMConfig from '../components/LLMConfig';
@@ -53,6 +53,7 @@ export default function Analysis() {
   const [agentMode, setAgentMode] = useState('single');
   const [selectedModel, setSelectedModel] = useState('');
   const [error, setError] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const profile = dataset?.数据画像;
   const fields = profile?.字段列表 || [];
@@ -60,12 +61,15 @@ export default function Analysis() {
   const catFields = profile?.分类字段 || [];
   const dateFields = profile?.日期字段 || [];
 
-  // Auto-fill based on profile
-  if (profile && !xAxis) {
-    setXAxis((profile.分类字段?.[0] || profile.日期字段?.[0] || fields[0] || ''));
-    setYAxis(numFields[0] || '');
-    setGroupField('无');
-  }
+  // Auto-fill based on profile（useEffect 中执行，避免 render 阶段 setState）
+  useEffect(() => {
+    if (profile && !xAxis) {
+      setXAxis((profile.分类字段?.[0] || profile.日期字段?.[0] || fields[0] || ''));
+      setYAxis(numFields[0] || '');
+      setGroupField('无');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile]);
 
   async function handleGenerate() {
     if (!dataset) {
@@ -197,8 +201,22 @@ export default function Analysis() {
         </div>
       </div>
 
+      {/* 高级选项开关 */}
+      <div className="flex items-center justify-between mt-4">
+        <button
+          className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+          onClick={() => setShowAdvanced(!showAdvanced)}
+        >
+          <span className={`inline-block transition-transform ${showAdvanced ? 'rotate-90' : ''}`}>▶</span>
+          高级选项{showAdvanced ? '（点击收起）' : ''}
+        </button>
+        {!showAdvanced && <span className="text-[11px] text-gray-300">图表、字段、Agent 模式等高级配置</span>}
+      </div>
+
       {/* 模型选择 + Agent 模式 */}
-      <div className="flex items-center gap-4 mt-5">
+      {showAdvanced && (
+      <>
+      <div className="flex items-center gap-4 mt-3">
         <div className="flex items-center gap-2">
           <Cpu className="w-4 h-4 text-gray-400" />
           <select className="border border-gray-200 rounded-lg px-3 py-2 text-xs bg-white focus:outline-none focus:border-indigo-400" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
@@ -242,7 +260,7 @@ export default function Analysis() {
       </div>
 
       {/* Config fields */}
-      <div className="grid grid-cols-4 gap-3 mt-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
         <div>
           <label className="text-xs text-gray-400 mb-1.5 block">X 轴</label>
           <select className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 focus:outline-none focus:border-indigo-400" value={xAxis} onChange={(e) => setXAxis(e.target.value)}>
@@ -270,6 +288,8 @@ export default function Analysis() {
           </select>
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }

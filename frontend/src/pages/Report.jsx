@@ -2,40 +2,65 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Download, DownloadCloud, Sparkles, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useApp } from '../AppContext';
+import { listReports, getReport, deleteReport } from '../api';
 import EChartsChart from '../components/EChartsChart';
 
 export default function Report() {
   const navigate = useNavigate();
-  const { reports, addReport } = useApp();
+  const { addReport } = useApp();
+  const [reportMeta, setReportMeta] = useState([]); // [{报表ID, 标题, 图表类型}]
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [localReport, setLocalReport] = useState(null);
   const [tab, setTab] = useState('conclusion');
 
-  // 从 reports 列表取当前报表，如果列表为空则尝试 sessionStorage
-  const [localReport, setLocalReport] = useState(() => {
-    if (reports.length > 0) return reports[0];
-    try {
-      const cached = sessionStorage.getItem('report_cache');
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        sessionStorage.removeItem('report_cache');
-        // 首次加载时同步到历史列表
-        setTimeout(() => addReport(parsed), 0);
-        return parsed;
-      }
-    } catch { /* ignore */ }
-    return null;
-  });
-
-  // reports 列表变化时同步当前报表
+  // 挂载时：先读 sessionStorage 的刚生成报表，再拉后端历史列表
   useEffect(() => {
-    if (reports.length > 0 && currentIndex < reports.length) {
-      setLocalReport(reports[currentIndex]);
-    }
-  }, [reports, currentIndex]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await listReports(50);
+        const items = res?.报表列表 || [];
+        if (cancelled) return;
+        setReportMeta(items);
+        // 若本地没有当前报表，从 sessionStorage 恢复刚生成的
+        const cached = sessionStorage.getItem('report_cache');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          sessionStorage.removeItem('report_cache');
+          setLocalReport(parsed);
+          addReport(parsed); // 同步到前端缓存
+        } else if (items.length > 0) {
+          const detail = await getReport(items[0].报表ID);
+          if (!cancelled && detail?.报表) setLocalReport(detail.报表);
+        }
+      } catch { /* 后端不可用时静默 */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
-  // 上一份 / 下一份
-  const prevReport = () => setCurrentIndex(i => Math.max(0, i - 1));
-  const nextReport = () => setCurrentIndex(i => Math.min(reports.length - 1, i + 1));
+  // 翻页时从后端拉详情
+  const switchTo = async (index) => {
+    if (index < 0 || index >= reportMeta.length) return;
+    setCurrentIndex(index);
+    try {
+      const detail = await getReport(reportMeta[index].报表ID);
+      if (detail?.报表) setLocalReport(detail.报表);
+    } catch { /* ignore */ }
+  };
+
+  const prevReport = () => switchTo(currentIndex - 1);
+  const nextReport = () => switchTo(currentIndex + 1);
+
+  // 清空历史：删除后端全部报表
+  const handleClearHistory = async () => {
+    if (reportMeta.length === 0) return;
+    for (const item of reportMeta) {
+      try { await deleteReport(item.报表ID); } catch { /* ignore */ }
+    }
+    setReportMeta([]);
+    setLocalReport(null);
+    localStorage.removeItem('reports_cache');
+  };
 
   const report = localReport;
 
@@ -61,14 +86,6 @@ export default function Report() {
   const exportData = report.导出数据 || {};
   const dataProfile = report.数据画像 || {};
 
-  // 清空历史报表
-  const handleClearHistory = () => {
-    if (reports.length === 0) return;
-    setReports([]);
-    localStorage.removeItem('reports_cache');
-    setLocalReport(null);
-  };
-
   return (
     <div className="p-8 max-w-5xl mx-auto">
       {/* Header */}
@@ -82,14 +99,14 @@ export default function Report() {
         </div>
         <div className="flex items-center gap-2">
           {/* 历史报表导航 */}
-          {reports.length > 1 && (
+          {reportMeta.length > 1 && (
             <div className="flex items-center gap-1 mr-2">
               <button onClick={prevReport} disabled={currentIndex === 0}
                 className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed">
                 <ChevronLeft className="w-4 h-4 text-gray-500" />
               </button>
-              <span className="text-xs text-gray-400 select-none">{currentIndex + 1} / {reports.length}</span>
-              <button onClick={nextReport} disabled={currentIndex >= reports.length - 1}
+              <span className="text-xs text-gray-400 select-none">{currentIndex + 1} / {reportMeta.length}</span>
+              <button onClick={nextReport} disabled={currentIndex >= reportMeta.length - 1}
                 className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed">
                 <ChevronRight className="w-4 h-4 text-gray-500" />
               </button>
@@ -208,8 +225,14 @@ export default function Report() {
         )}
       </div>
 
-      {/* Export */}
+      {/* Export + 继续分析 */}
       <div className="flex gap-3 justify-end mt-4">
+        <button
+          className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gray-900 text-white text-xs font-medium hover:bg-gray-800 transition-all"
+          onClick={() => navigate('/analysis')}
+        >
+          继续分析
+        </button>
         {exportData.HTML && (
           <button className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all" onClick={() => {
             const blob = new Blob([exportData.HTML], { type: 'text/html' });

@@ -4,7 +4,7 @@ import logging
 from typing import Any, Dict
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from api.contracts import ReportGenerateRequest, ReportGenerateResponse
 from api.dependencies import get_current_user
@@ -24,25 +24,35 @@ async def generate_report(
     request: Request,
     user: dict = Depends(get_current_user),
 ) -> ReportGenerateResponse:
-    item = _仓储.读取(payload.数据集ID)
+    item = _仓储.读取(user["user_id"], payload.数据集ID)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在")
 
     df = item["数据"]
 
-    # 用户自配 LLM 配置（从前端请求头传入）
-    user_base_url = request.headers.get("x-llm-base-url")
-    user_api_key = request.headers.get("x-llm-api-key")
-    user_model = request.headers.get("x-llm-model") or payload.model
+    # LLM 配置：只允许用户选 provider + model（白名单校验），禁止传任意 URL/Key
+    user_provider = (request.headers.get("x-llm-provider") or "deepseek").strip().lower()
+    user_model = (request.headers.get("x-llm-model") or "").strip() or payload.model or ""
 
-    # 临时覆盖 EnvConfig
+    providers = getattr(EnvConfig, "LLM_PROVIDERS", {})
+    provider_conf = providers.get(user_provider)
+    if not provider_conf:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"不支持的 LLM provider：{user_provider}",
+        )
+
+    allowed_models = provider_conf.get("models") or [provider_conf.get("default_model", "")]
+    if user_model and user_model not in allowed_models:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"provider {user_provider} 不支持模型：{user_model}",
+        )
+
+    # 临时覆盖 EnvConfig（仅 base_url 和 model；api_key 始终用服务端 .env，不接收用户传入）
     original_base_url = getattr(EnvConfig, "LLM_BASE_URL", None)
-    original_key = getattr(EnvConfig, "LLM_API_KEY", None)
     original_model = getattr(EnvConfig, "LLM_MODEL", None)
-    if user_base_url:
-        EnvConfig.LLM_BASE_URL = user_base_url
-    if user_api_key:
-        EnvConfig.LLM_API_KEY = user_api_key
+    EnvConfig.LLM_BASE_URL = provider_conf["base_url"]
     if user_model:
         EnvConfig.LLM_MODEL = user_model
 
@@ -52,14 +62,51 @@ async def generate_report(
         else:
             report = _单Agent报表(df, payload)
     finally:
-        if user_base_url and original_base_url:
+        if original_base_url is not None:
             EnvConfig.LLM_BASE_URL = original_base_url
-        if user_api_key and original_key:
-            EnvConfig.LLM_API_KEY = original_key
-        if user_model and original_model:
+        if original_model is not None:
             EnvConfig.LLM_MODEL = original_model
 
-    return _构建响应(payload, report)
+    # 报表持久化到后端（阶段 6）
+    from repositories import report_repo
+    report_id = report_repo.保存报表(
+        user_id=user["user_id"],
+        dataset_id=payload.数据集ID,
+        title=report.get("标题", ""),
+        chart_type=report.get("图表类型", ""),
+        report=report,
+    )
+
+    return _构建响应(payload, report, report_id)
+
+
+@router.get("/")
+def list_reports(
+    limit: int = Query(50, ge=1, le=100),
+    user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """列出当前用户的报表历史。"""
+    from repositories import report_repo
+    return {"报表列表": report_repo.列出报表(user["user_id"], limit=limit)}
+
+
+@router.get("/{report_id}")
+def get_report(report_id: str, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
+    """读取一份报表详情（仅限归属用户）。"""
+    from repositories import report_repo
+    item = report_repo.读取报表(user["user_id"], report_id)
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报表不存在")
+    return item
+
+
+@router.delete("/{report_id}")
+def delete_report(report_id: str, user: dict = Depends(get_current_user)) -> Dict[str, str]:
+    """删除一份报表（仅限归属用户）。"""
+    from repositories import report_repo
+    if not report_repo.删除报表(user["user_id"], report_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报表不存在")
+    return {"message": "已删除"}
 
 
 def _单Agent报表(df: Any, payload: ReportGenerateRequest) -> Dict[str, Any]:
@@ -105,10 +152,10 @@ def _多智能体报表(df: Any, payload: ReportGenerateRequest) -> Dict[str, An
     )
 
 
-def _构建响应(payload: ReportGenerateRequest, report: Dict[str, Any]) -> ReportGenerateResponse:
+def _构建响应(payload: ReportGenerateRequest, report: Dict[str, Any], report_id: str = "") -> ReportGenerateResponse:
     报告_rows = report["报表数据"]
     return ReportGenerateResponse(
-        报表ID=uuid4().hex,
+        报表ID=report_id or uuid4().hex,
         数据集ID=payload.数据集ID,
         标题=report["标题"],
         图表类型=report["图表类型"],

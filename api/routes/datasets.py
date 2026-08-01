@@ -6,7 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 import io
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 
 from api.contracts import DatasetPreviewResponse, DatasetUploadResponse
 from api.dependencies import get_current_user
@@ -54,12 +54,15 @@ async def upload_dataset(
         df = 读取上传表格(uploaded_proxy)
         画像 = 生成数据画像(df)
     except ValueError as exc:
+        # 解析失败：清理已写入的文件，避免残留
+        stored_path.unlink(missing_ok=True)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     # 持久化到 SQLite。进程重启后仍可凭 dataset_id 取回数据。
     _仓储.保存(
+        user_id=user["user_id"],
         dataset_id=dataset_id,
-        文件名=file_name,
+        文件名=safe_name,
         存储路径=str(stored_path),
         df=df,
         画像=画像,
@@ -67,7 +70,7 @@ async def upload_dataset(
 
     return DatasetUploadResponse(
         数据集ID=dataset_id,
-        文件名=file_name,
+        文件名=safe_name,
         行数=画像["行数"],
         列数=画像["列数"],
         字段列表=画像["字段列表"],
@@ -76,8 +79,8 @@ async def upload_dataset(
 
 
 @router.get("/{dataset_id}", response_model=DatasetPreviewResponse)
-async def get_dataset(dataset_id: str) -> DatasetPreviewResponse:
-    item = _仓储.读取(dataset_id)
+async def get_dataset(dataset_id: str, user: dict = Depends(get_current_user)) -> DatasetPreviewResponse:
+    item = _仓储.读取(user["user_id"], dataset_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在")
 
@@ -93,6 +96,9 @@ async def get_dataset(dataset_id: str) -> DatasetPreviewResponse:
 
 
 @router.get("/", response_model=Dict[str, Any])
-async def list_datasets(limit: int = 50) -> Dict[str, Any]:
+async def list_datasets(
+    limit: int = Query(50, ge=1, le=100),
+    user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
     """列出最近的数据集（阶段 2 新增；前端不依赖此接口）。"""
-    return {"数据集列表": _仓储.列表(limit=limit)}
+    return {"数据集列表": _仓储.列表(user["user_id"], limit=limit)}

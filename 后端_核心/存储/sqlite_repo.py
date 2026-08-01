@@ -101,6 +101,7 @@ def 初始化数据库() -> None:
             """
             CREATE TABLE IF NOT EXISTS datasets (
                 dataset_id    TEXT PRIMARY KEY,
+                user_id       TEXT NOT NULL DEFAULT 'demo',
                 file_name     TEXT NOT NULL,
                 stored_path   TEXT NOT NULL,
                 rows_count    INTEGER NOT NULL,
@@ -118,7 +119,38 @@ def 初始化数据库() -> None:
             ON datasets (created_at)
             """
         )
+        # 迁移：旧表没有 user_id 列时，补列并将旧数据归到 demo 用户
+        _迁移_datasets_user_id(conn)
+        # 用户表（阶段 3 认证体系）
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                user_id       TEXT PRIMARY KEY,
+                username      TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                role          TEXT NOT NULL,
+                created_at    TEXT NOT NULL,
+                updated_at    TEXT NOT NULL
+            )
+            """
+        )
     logger.info("SQLite 数据库已初始化: %s", _resolve_db_path())
+
+
+def _迁移_datasets_user_id(conn: sqlite3.Connection) -> None:
+    """兼容旧库：datasets 表缺少 user_id 列时补列，旧数据归 demo 用户。
+
+    SQLite 的 ALTER TABLE ADD COLUMN 不能加带非空默认值的列，
+    所以先加可空列，再 UPDATE 填充默认值。
+    """
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(datasets)")}
+    if "user_id" not in cols:
+        conn.execute("ALTER TABLE datasets ADD COLUMN user_id TEXT")
+        conn.execute("UPDATE datasets SET user_id = 'demo' WHERE user_id IS NULL")
+        logger.info("datasets 表已迁移：新增 user_id 列，旧数据归入 demo 用户")
+    else:
+        # 已有列但部分行可能为 NULL（极端情况），兜底填充
+        conn.execute("UPDATE datasets SET user_id = 'demo' WHERE user_id IS NULL")
 
 
 # ---- 序列化辅助 --------------------------------------------------------------
@@ -146,13 +178,14 @@ def _now_iso() -> str:
 
 
 def 保存数据集(
+    user_id: str,
     dataset_id: str,
     文件名: str,
     存储路径: str,
     df: pd.DataFrame,
     画像: Dict[str, Any],
 ) -> None:
-    """新增或覆盖保存一个数据集。"""
+    """新增或覆盖保存一个数据集（归属指定用户）。"""
     df_json = _df_to_json(df)
     profile_json = json.dumps(画像, ensure_ascii=False, default=str)
     rows_count = int(len(df))
@@ -164,10 +197,11 @@ def 保存数据集(
         conn.execute(
             """
             INSERT INTO datasets
-                (dataset_id, file_name, stored_path, rows_count, cols_count,
+                (dataset_id, user_id, file_name, stored_path, rows_count, cols_count,
                  df_json, profile_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(dataset_id) DO UPDATE SET
+                user_id       = excluded.user_id,
                 file_name     = excluded.file_name,
                 stored_path   = excluded.stored_path,
                 rows_count    = excluded.rows_count,
@@ -176,20 +210,20 @@ def 保存数据集(
                 profile_json  = excluded.profile_json,
                 updated_at    = excluded.updated_at
             """,
-            (dataset_id, 文件名, 存储路径, rows_count, cols_count,
+            (dataset_id, user_id, 文件名, 存储路径, rows_count, cols_count,
              df_json, profile_json, now, now),
         )
-    logger.info("保存数据集 %s (%s, %d 行)", dataset_id, 文件名, rows_count)
+    logger.info("保存数据集 %s（用户 %s, %s, %d 行）", dataset_id, user_id, 文件名, rows_count)
 
 
-def 读取数据集(dataset_id: str) -> Optional[Dict[str, Any]]:
-    """读取一个数据集。不存在返回 None。"""
+def 读取数据集(user_id: str, dataset_id: str) -> Optional[Dict[str, Any]]:
+    """读取一个数据集（仅限归属用户）。不存在或不属于该用户返回 None。"""
     with _get_conn() as conn:
         row = conn.execute(
-            "SELECT dataset_id, file_name, stored_path, rows_count, cols_count, "
+            "SELECT dataset_id, user_id, file_name, stored_path, rows_count, cols_count, "
             "df_json, profile_json, created_at, updated_at "
-            "FROM datasets WHERE dataset_id = ?",
-            (dataset_id,),
+            "FROM datasets WHERE dataset_id = ? AND user_id = ?",
+            (dataset_id, user_id),
         ).fetchone()
 
     if row is None:
@@ -197,6 +231,7 @@ def 读取数据集(dataset_id: str) -> Optional[Dict[str, Any]]:
 
     return {
         "数据集ID": row["dataset_id"],
+        "用户ID": row["user_id"],
         "文件名": row["file_name"],
         "路径": row["stored_path"],
         "行数": row["rows_count"],
@@ -208,22 +243,22 @@ def 读取数据集(dataset_id: str) -> Optional[Dict[str, Any]]:
     }
 
 
-def 数据集是否存在(dataset_id: str) -> bool:
+def 数据集是否存在(user_id: str, dataset_id: str) -> bool:
     with _get_conn() as conn:
         row = conn.execute(
-            "SELECT 1 FROM datasets WHERE dataset_id = ?",
-            (dataset_id,),
+            "SELECT 1 FROM datasets WHERE dataset_id = ? AND user_id = ?",
+            (dataset_id, user_id),
         ).fetchone()
     return row is not None
 
 
-def 列出数据集(limit: int = 50) -> List[Dict[str, Any]]:
-    """列出最近的数据集（按创建时间倒序）。"""
+def 列出数据集(user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    """列出某用户最近的数据集（按创建时间倒序）。"""
     with _get_conn() as conn:
         rows = conn.execute(
             "SELECT dataset_id, file_name, rows_count, cols_count, created_at "
-            "FROM datasets ORDER BY created_at DESC LIMIT ?",
-            (limit,),
+            "FROM datasets WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+            (user_id, limit),
         ).fetchall()
     return [
         {
@@ -237,16 +272,16 @@ def 列出数据集(limit: int = 50) -> List[Dict[str, Any]]:
     ]
 
 
-def 删除数据集(dataset_id: str) -> bool:
-    """删除一个数据集。返回是否真的删除了。"""
+def 删除数据集(user_id: str, dataset_id: str) -> bool:
+    """删除一个数据集（仅限归属用户）。返回是否真的删除了。"""
     with _write_lock, _get_conn() as conn:
         cur = conn.execute(
-            "DELETE FROM datasets WHERE dataset_id = ?",
-            (dataset_id,),
+            "DELETE FROM datasets WHERE dataset_id = ? AND user_id = ?",
+            (dataset_id, user_id),
         )
         deleted = cur.rowcount > 0
     if deleted:
-        logger.info("删除数据集 %s", dataset_id)
+        logger.info("删除数据集 %s（用户 %s）", dataset_id, user_id)
     return deleted
 
 
@@ -259,18 +294,18 @@ class 数据集仓储:
     def __init__(self) -> None:
         初始化数据库()
 
-    def 保存(self, dataset_id: str, 文件名: str, 存储路径: str,
+    def 保存(self, user_id: str, dataset_id: str, 文件名: str, 存储路径: str,
             df: pd.DataFrame, 画像: Dict[str, Any]) -> None:
-        保存数据集(dataset_id, 文件名, 存储路径, df, 画像)
+        保存数据集(user_id, dataset_id, 文件名, 存储路径, df, 画像)
 
-    def 读取(self, dataset_id: str) -> Optional[Dict[str, Any]]:
-        return 读取数据集(dataset_id)
+    def 读取(self, user_id: str, dataset_id: str) -> Optional[Dict[str, Any]]:
+        return 读取数据集(user_id, dataset_id)
 
-    def 存在(self, dataset_id: str) -> bool:
-        return 数据集是否存在(dataset_id)
+    def 存在(self, user_id: str, dataset_id: str) -> bool:
+        return 数据集是否存在(user_id, dataset_id)
 
-    def 列表(self, limit: int = 50) -> List[Dict[str, Any]]:
-        return 列出数据集(limit=limit)
+    def 列表(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        return 列出数据集(user_id, limit=limit)
 
-    def 删除(self, dataset_id: str) -> bool:
-        return 删除数据集(dataset_id)
+    def 删除(self, user_id: str, dataset_id: str) -> bool:
+        return 删除数据集(user_id, dataset_id)
