@@ -25,6 +25,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 PORT = "8000"
 URL = f"http://127.0.0.1:{PORT}"
 
+# 桌面快捷方式传 --autostart：打开窗口后自动启动正式模式（跳转登录页），无需再点按钮
+AUTOSTART = "--autostart" in sys.argv
+
 
 class LauncherApp:
     def __init__(self, root: tk.Tk):
@@ -33,22 +36,42 @@ class LauncherApp:
         self.log_q: queue.Queue = queue.Queue()
 
         root.title("数据分析 Agent 平台 · 启动器")
-        root.geometry("620x460")
-        root.minsize(560, 400)
+        root.geometry("680x560")
+        root.minsize(600, 480)
         root.configure(bg="#F7F8FA")
+
+        # 应用图标（logo.ico，与桌面快捷方式一致）
+        try:
+            root.iconbitmap(str(PROJECT_ROOT / "logo.ico"))
+        except tk.TclError:
+            pass
 
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(120, self._poll_logs)
+        if AUTOSTART:
+            # 快捷方式双击场景：自动启动正式模式，跳转登录页
+            self.root.after(400, lambda: self.start("normal"))
 
     # ── UI ──────────────────────────────────────────────
     def _build_ui(self):
         pad = {"padx": 16, "pady": 8}
         header = tk.Frame(self.root, bg="#F7F8FA")
         header.pack(fill="x", **pad)
-        tk.Label(header, text="📊 数据分析 Agent 平台", font=("Microsoft YaHei", 15, "bold"),
+        # Logo 图片（logo.png，subsample 缩小显示；缺失时优雅降级为纯文字）
+        self.logo_img = None
+        logo_path = PROJECT_ROOT / "logo.png"
+        if logo_path.exists():
+            try:
+                self.logo_img = tk.PhotoImage(file=str(logo_path)).subsample(2)
+                tk.Label(header, image=self.logo_img, bg="#F7F8FA").pack(side="left", padx=(0, 12))
+            except tk.TclError:
+                self.logo_img = None
+        title_box = tk.Frame(header, bg="#F7F8FA")
+        title_box.pack(side="left", anchor="w")
+        tk.Label(title_box, text="数据分析 Agent 平台", font=("Microsoft YaHei", 15, "bold"),
                  bg="#F7F8FA", fg="#111827").pack(anchor="w")
-        tk.Label(header, text="选择一个模式启动，浏览器会自动打开", font=("Microsoft YaHei", 9),
+        tk.Label(title_box, text="选择一个模式启动，浏览器会自动打开", font=("Microsoft YaHei", 9),
                  bg="#F7F8FA", fg="#6B7280").pack(anchor="w", pady=(2, 0))
 
         btns = tk.Frame(self.root, bg="#F7F8FA")
