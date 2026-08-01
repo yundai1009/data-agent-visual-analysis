@@ -80,7 +80,8 @@ def 发送验证码邮件(email: str, code: str) -> bool:
     - 真实发送：成功返回 True；失败打日志返回 False（验证码仍入库，可重发）
     """
     if EnvConfig.SMTP_DRY_RUN or not EnvConfig.SMTP_HOST:
-        logger.info("[SMTP_DRY_RUN] 验证码邮件 收件人=%s 验证码=%s（仅本地调试，未真实发送）", email, code)
+        # 用 warning 级别：保证在 --log-level warning 的默认配置下也可见（dry-run 仅调试用）
+        logger.warning("[SMTP_DRY_RUN] 验证码邮件 收件人=%s 验证码=%s（未配置 SMTP，验证码未真实发送）", email, code)
         return True
     try:
         _send_smtp(email, code)
