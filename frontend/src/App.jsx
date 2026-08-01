@@ -8,8 +8,9 @@ import Analysis from './pages/Analysis';
 import Report from './pages/Report';
 import { AppProvider, useApp } from './AppContext';
 
-// 是否强制登录。生产环境设为 true；本地演示想免登录可改 false。
-const AUTH_REQUIRED = true;
+// 是否强制登录。生产/正式构建默认 true；演示构建（vite --mode demo）注入 false。
+// 构建时通过 .env.demo 的 VITE_AUTH_REQUIRED=false 控制，零基础演示无需注册账号。
+const AUTH_REQUIRED = import.meta.env.VITE_AUTH_REQUIRED !== 'false';
 
 // 路由守卫：未登录访问受保护页面时跳转登录页
 function ProtectedRoute({ children }) {

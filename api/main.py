@@ -9,14 +9,21 @@ sys.path.insert(0, project_root)
 
 from contextlib import asynccontextmanager
 from datetime import datetime
-from fastapi import FastAPI
+from pathlib import Path
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse
 
 from api.contracts import HealthResponse
 from api.error_handlers import register_error_handlers
 from api.middleware import RequestIDMiddleware
 from api.routes import datasets, reports, clean, examples, auth
 from config.settings import EnvConfig
+
+# 前端静态产物目录：启动器通过 FRONTEND_DIST 环境变量选择
+# - 正式构建 frontend/dist（AUTH_REQUIRED=true）
+# - 演示构建 frontend/dist-demo（AUTH_REQUIRED=false + 自动加载示例数据）
+FRONTEND_DIST = os.getenv("FRONTEND_DIST", str(Path(project_root) / "frontend" / "dist"))
 
 
 @asynccontextmanager
@@ -61,6 +68,34 @@ app.include_router(reports.router)
 app.include_router(clean.router)
 app.include_router(examples.router)
 app.include_router(auth.router)
+
+
+@app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"], include_in_schema=False)
+async def spa_fallback(full_path: str, request: Request):
+    """托管前端构建产物 + SPA 路由回退。
+
+    放在所有 API 路由之后注册，因此 /health、/auth、/datasets、/reports 等
+    具体路由优先匹配；其余 GET 路径（/data、/analysis、/report/xxx 等）返回
+    前端 index.html，由 React Router 接管。非 GET 方法且未命中任何路由时
+    返回 404（与无 catch-all 时的行为一致）。这样只需要一个后端进程即可
+    完整运行，零基础用户无需安装 Node。
+    """
+    if request.method != "GET":
+        raise HTTPException(status_code=404, detail="Not Found")
+    dist = Path(FRONTEND_DIST).resolve()
+    if not dist.is_dir():
+        raise HTTPException(status_code=404, detail="前端构建产物不存在，请先运行构建")
+    if full_path:
+        target = (dist / full_path).resolve()
+        # 路径穿越防护：只允许读取 dist 目录内的文件
+        if target.is_file() and str(target).startswith(str(dist)):
+            return FileResponse(target)
+    index = dist / "index.html"
+    if not index.exists():
+        raise HTTPException(status_code=404, detail="前端构建产物不存在，请先运行构建")
+    return HTMLResponse(index.read_text(encoding="utf-8"), media_type="text/html")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(

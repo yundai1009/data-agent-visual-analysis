@@ -1,8 +1,11 @@
-﻿import { useState } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Upload, Download, Database, FileText, AlertTriangle, Search, Sparkles, Loader2 } from 'lucide-react';
 import { uploadFile, loadExample, cleanDataset } from '../api';
 import { useApp } from '../AppContext';
+
+// 演示模式（vite --mode demo 构建）：打开页面自动加载示例数据，零基础用户无需上传即可体验
+const DEMO_MODE = import.meta.env.VITE_DEMO === '1';
 
 const typeColors = {
   date: 'bg-cyan-50 text-cyan-600 border-cyan-200',
@@ -39,6 +42,14 @@ export default function DataManagement() {
     fill_strategy: 'auto',
     drop_empty_rows: true,
   });
+
+  // 演示模式：挂载时若还没有数据集，自动加载内置示例数据（sales_2024.csv）
+  useEffect(() => {
+    if (DEMO_MODE && !dataset) {
+      handleLoadExample();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleUpload(file) {
     setError('');
