@@ -1,5 +1,6 @@
-import { NavLink } from 'react-router-dom';
-import { Database, Zap, BarChart3, ChevronLeft, ChevronRight } from 'lucide-react';
+import { NavLink, useNavigate } from 'react-router-dom';
+import { Database, Zap, BarChart3, ChevronLeft, ChevronRight, LogOut } from 'lucide-react';
+import { useApp } from '../AppContext';
 
 const navItems = [
   { to: '/data', icon: Database, label: '数据管理' },
@@ -8,6 +9,13 @@ const navItems = [
 ];
 
 export default function Sidebar({ collapsed, onToggle }) {
+  const navigate = useNavigate();
+  const { logout } = useApp();
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
   return (
     <aside
       className={`bg-white border-r border-gray-200 flex flex-col shrink-0 transition-all duration-250 ease-in-out overflow-hidden ${
@@ -66,6 +74,15 @@ export default function Sidebar({ collapsed, onToggle }) {
           </div>
           <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 ml-auto" />
         </div>
+
+        <button
+          onClick={handleLogout}
+          className="flex items-center justify-center w-full py-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-all"
+          title="登出"
+        >
+          <LogOut className="w-4 h-4 shrink-0" />
+          {!collapsed && <span className="ml-2 text-xs">登出</span>}
+        </button>
 
         <button
           onClick={onToggle}
