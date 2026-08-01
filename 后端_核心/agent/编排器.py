@@ -20,6 +20,7 @@ from 后端_核心.agent.llm客户端 import (
     extract_tool_call,
     is_llm_configured,
 )
+from config.settings import LLMRequestConfig
 from 后端_核心.agent.工具集 import (
     TOOL_SCHEMAS_FULL,
     execute_tool,
@@ -51,9 +52,10 @@ def 解析自然语言需求(
     画像: Dict[str, Any],
     *,
     enable_llm: Optional[bool] = None,
+    llm_config: Optional[LLMRequestConfig] = None,
 ) -> Optional[Dict[str, Any]]:
     """兼容接口：从编排结果中提取标准化意图。"""
-    agent_result = 编排Agent(画像, 分析需求, df=None, enable_llm=enable_llm)
+    agent_result = 编排Agent(画像, 分析需求, df=None, enable_llm=enable_llm, llm_config=llm_config)
     if agent_result is None:
         return None
     return {
@@ -71,6 +73,7 @@ def 编排Agent(
     分析需求: str,
     df: Any = None,
     enable_llm: Optional[bool] = None,
+    llm_config: Optional[LLMRequestConfig] = None,
 ) -> Optional[Dict[str, Any]]:
     """多轮 ReAct 编排：感知 → 推理 → 行动 → 观察 → 再推理。
 
@@ -79,6 +82,7 @@ def 编排Agent(
         分析需求: 用户自然语言需求
         df: 原始 DataFrame（用于聚合分析 tool 的实际执行）
         enable_llm: 是否启用 LLM
+        llm_config: 请求级 LLM 配置（provider/base_url/model），并发安全
 
     Returns:
         标准化意图 dict（含 Agent_Trace），失败返回 None
@@ -109,19 +113,19 @@ def 编排Agent(
         tools = [s for s in TOOL_SCHEMAS_FULL if s["function"]["name"] != "解析为报表意图"]
 
         # ── 第 1 轮：获取数据画像 ──
-        round1_ok = _执行一轮(messages, tools, context, 轮次=1, trace=trace)
+        round1_ok = _执行一轮(messages, tools, context, 轮次=1, trace=trace, llm_config=llm_config)
         if not round1_ok:
             logger.warning("第 1 轮（数据画像）失败，降级")
             trace.记录观察(轮次=1, 说明="数据画像获取失败，降级到关键词匹配", 状态="失败")
         else:
             # ── 第 2 轮：聚合分析 ──
-            round2_ok = _执行一轮(messages, tools, context, 轮次=2, trace=trace)
+            round2_ok = _执行一轮(messages, tools, context, 轮次=2, trace=trace, llm_config=llm_config)
             if not round2_ok:
                 logger.warning("第 2 轮（聚合分析）失败，降级")
                 trace.记录观察(轮次=2, 说明="聚合分析失败，降级到关键词匹配", 状态="失败")
             else:
                 # ── 第 3 轮：推荐图表 + 生成结论 ──
-                round3_ok = _执行一轮(messages, tools, context, 轮次=3, trace=trace)
+                round3_ok = _执行一轮(messages, tools, context, 轮次=3, trace=trace, llm_config=llm_config)
                 if round3_ok:
                     # 从多轮消息中提取最终意图
                     intent_override = _从消息提取意图(messages, 画像)
@@ -168,6 +172,7 @@ def _执行一轮(
     context: Dict[str, Any],
     轮次: int,
     trace: TraceRecorder,
+    llm_config: Optional[LLMRequestConfig] = None,
 ) -> bool:
     """执行一轮 LLM 推理 + 工具调用。
 
@@ -177,7 +182,7 @@ def _执行一轮(
     4. 返回 True/False
     """
     with 计时() as timer:
-        resp = chat_completion(messages=messages, tools=tools, tool_choice="auto")
+        resp = chat_completion(messages=messages, tools=tools, tool_choice="auto", llm_config=llm_config)
     token_usage = 提取token(resp)
     tc = extract_tool_call(resp)
 

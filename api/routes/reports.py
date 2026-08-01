@@ -11,7 +11,7 @@ from api.dependencies import get_current_user
 from api.routes.datasets import _仓储
 from 后端_核心.上传报表生成器 import 生成报表数据
 from 后端_核心.agent.多智能体 import 多智能体分析
-from config.settings import EnvConfig
+from config.settings import EnvConfig, LLMRequestConfig
 
 logger = logging.getLogger(__name__)
 
@@ -49,23 +49,19 @@ async def generate_report(
             detail=f"provider {user_provider} 不支持模型：{user_model}",
         )
 
-    # 临时覆盖 EnvConfig（仅 base_url 和 model；api_key 始终用服务端 .env，不接收用户传入）
-    original_base_url = getattr(EnvConfig, "LLM_BASE_URL", None)
-    original_model = getattr(EnvConfig, "LLM_MODEL", None)
-    EnvConfig.LLM_BASE_URL = provider_conf["base_url"]
-    if user_model:
-        EnvConfig.LLM_MODEL = user_model
+    # 请求级 LLM 配置：显式传递，不修改全局 EnvConfig（并发安全）。
+    # api_key 始终取服务端 .env，不接收用户传入。
+    llm_config = LLMRequestConfig(
+        provider=user_provider,
+        base_url=provider_conf["base_url"],
+        model=user_model or provider_conf.get("default_model", ""),
+        api_key=EnvConfig.LLM_API_KEY,
+    )
 
-    try:
-        if payload.agent_mode == "multi":
-            report = _多智能体报表(df, payload)
-        else:
-            report = _单Agent报表(df, payload)
-    finally:
-        if original_base_url is not None:
-            EnvConfig.LLM_BASE_URL = original_base_url
-        if original_model is not None:
-            EnvConfig.LLM_MODEL = original_model
+    if payload.agent_mode == "multi":
+        report = _多智能体报表(df, payload, llm_config)
+    else:
+        report = _单Agent报表(df, payload, llm_config)
 
     # 报表持久化到后端（阶段 6）
     from repositories import report_repo
@@ -109,7 +105,7 @@ def delete_report(report_id: str, user: dict = Depends(get_current_user)) -> Dic
     return {"message": "已删除"}
 
 
-def _单Agent报表(df: Any, payload: ReportGenerateRequest) -> Dict[str, Any]:
+def _单Agent报表(df: Any, payload: ReportGenerateRequest, llm_config: LLMRequestConfig) -> Dict[str, Any]:
     """标准单 Agent 生成报表。"""
     return 生成报表数据(
         df=df,
@@ -119,14 +115,15 @@ def _单Agent报表(df: Any, payload: ReportGenerateRequest) -> Dict[str, Any]:
         y轴=payload.y轴,
         分组字段=payload.分组字段,
         聚合方式=payload.聚合方式,
+        llm_config=llm_config,
     )
 
 
-def _多智能体报表(df: Any, payload: ReportGenerateRequest) -> Dict[str, Any]:
+def _多智能体报表(df: Any, payload: ReportGenerateRequest, llm_config: LLMRequestConfig) -> Dict[str, Any]:
     """多智能体模式生成报表。"""
     from 后端_核心.数据画像 import 生成数据画像
     画像 = 生成数据画像(df)
-    result = 多智能体分析(画像, payload.分析需求, df)
+    result = 多智能体分析(画像, payload.分析需求, df, llm_config=llm_config)
     if not result:
         # 降级到单 Agent
         logger.warning("多智能体失败，降级到单 Agent")
@@ -138,6 +135,7 @@ def _多智能体报表(df: Any, payload: ReportGenerateRequest) -> Dict[str, An
             y轴=payload.y轴,
             分组字段=payload.分组字段,
             聚合方式=payload.聚合方式,
+            llm_config=llm_config,
         )
 
     # 用多智能体返回的意图走标准报表链路
@@ -149,6 +147,7 @@ def _多智能体报表(df: Any, payload: ReportGenerateRequest) -> Dict[str, An
         y轴=result.get("y轴", []),
         分组字段=result.get("分组字段"),
         聚合方式=result.get("聚合方式", "求和"),
+        llm_config=llm_config,
     )
 
 

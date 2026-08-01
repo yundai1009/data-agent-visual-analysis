@@ -10,6 +10,7 @@ import pandas as pd
 from 后端_核心.数据画像 import 生成数据画像
 from 后端_核心.agent.编排器 import 编排Agent
 from 后端_核心.agent.结论润色 import 润色结论
+from config.settings import LLMRequestConfig
 
 logger = logging.getLogger(__name__)
 
@@ -144,14 +145,19 @@ def _受控语句配置(画像: Dict[str, Any], 分析需求: str) -> Dict[str, 
     return {}
 
 
-def _解析自然语言意图(画像: Dict[str, Any], 分析需求: str, df=None) -> Tuple[Dict[str, Any], str, List[Dict[str, Any]]]:
+def _解析自然语言意图(
+    画像: Dict[str, Any],
+    分析需求: str,
+    df=None,
+    llm_config: Optional[LLMRequestConfig] = None,
+) -> Tuple[Dict[str, Any], str, List[Dict[str, Any]]]:
     """优先用 LLM 解析; 失败降级回规则匹配. 返回 (override, source, trace)。
     source: LLM / 规则 / 无
     trace: 多轮 ReAct 决策记录，或空列表
     """
     if 分析需求 and 分析需求.strip():
         try:
-            agent_result = 编排Agent(画像, 分析需求, df=df)
+            agent_result = 编排Agent(画像, 分析需求, df=df, llm_config=llm_config)
             if agent_result:
                 override = {
                     "图表类型": agent_result["图表类型"],
@@ -527,8 +533,12 @@ def 生成报表数据(
     y轴: Optional[List[str] | str] = None,
     分组字段: Optional[str] = None,
     聚合方式: str = "求和",
+    llm_config: Optional[LLMRequestConfig] = None,
 ) -> Dict[str, Any]:
-    """根据上传数据和页面选择生成可渲染的报表配置。"""
+    """根据上传数据和页面选择生成可渲染的报表配置。
+
+    llm_config: 请求级 LLM 配置（并发安全）；为 None 时回退 EnvConfig 全局值。
+    """
     if df.empty:
         raise ValueError("没有可用于生成报表的数据")
 
@@ -542,7 +552,7 @@ def 生成报表数据(
     else:
         y轴列表 = [field for field in (y轴 or []) if field]
 
-    intent_override, intent_source, agent_trace = _解析自然语言意图(画像, 分析需求, df)
+    intent_override, intent_source, agent_trace = _解析自然语言意图(画像, 分析需求, df, llm_config=llm_config)
     if intent_override:
         图表类型 = intent_override["图表类型"]
         x轴 = intent_override.get("x轴") or x轴
@@ -620,7 +630,7 @@ def _生成结论_含来源(
     """
     if agent_trace:
         try:
-            llm_结论 = 润色结论(分析需求, 画像, report_df, 推荐说明, 风险提示)
+            llm_结论 = 润色结论(分析需求, 画像, report_df, 推荐说明, 风险提示, llm_config=llm_config)
             if llm_结论:
                 return llm_结论, "LLM"
         except Exception:

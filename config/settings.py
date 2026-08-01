@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -63,3 +64,20 @@ class EnvConfig:
             "models": [],
         },
     }
+
+
+@dataclass(frozen=True)
+class LLMRequestConfig:
+    """请求级 LLM 配置（并发安全，阶段 12 收尾）。
+
+    每次生成报表时由服务端根据用户选择的 provider+model 构建，并沿调用链显式传递，
+    取代「临时覆盖全局 EnvConfig.LLM_BASE_URL / LLM_MODEL」的旧做法：
+    - 无并发污染：不同请求互不干扰，也不依赖 try/finally 还原全局变量；
+    - 显式传参：调用链上每个环节都能看到本次请求实际使用的配置；
+    - api_key 始终来自服务端 .env（EnvConfig.LLM_API_KEY），不接收用户输入。
+    """
+
+    provider: str
+    base_url: str
+    model: str = ""
+    api_key: str = ""

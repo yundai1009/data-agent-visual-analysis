@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from 后端_核心.agent.llm客户端 import chat_completion, is_llm_configured, parse_llm_json
+from config.settings import LLMRequestConfig
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,7 @@ def 润色结论(
     report_df: pd.DataFrame,
     推荐说明: Dict[str, Any],
     风险提示: List[str],
+    llm_config: Optional["LLMRequestConfig"] = None,
 ) -> Optional[str]:
     """LLM 润色结论；失败返回 None，调用方回退到模板拼接。"""
     if not is_llm_configured():
@@ -110,7 +112,7 @@ def 润色结论(
         {"role": "user", "content": user_content},
     ]
 
-    response = chat_completion(messages=messages, tools=_TOOL_SCHEMA, tool_choice="auto")
+    response = chat_completion(messages=messages, tools=_TOOL_SCHEMA, tool_choice="auto", llm_config=llm_config)
     if response is None:
         logger.warning("结论润色 LLM 调用失败/未配置，回退模板")
         return None

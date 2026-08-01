@@ -275,13 +275,13 @@ def test_validate_intent_aggregation_invalid_falls_back_default(画像):
 
 def test_解析自然语言需求_编排Agent返回None则返回None(画像, monkeypatch):
     """编排Agent 失败时，解析自然语言需求 返回 None"""
-    monkeypatch.setattr(编排器_mod, "编排Agent", lambda 画像, 分析需求, df=None, enable_llm=None: None)
+    monkeypatch.setattr(编排器_mod, "编排Agent", lambda 画像, 分析需求, df=None, enable_llm=None, **kw: None)
     assert 编排器_mod.解析自然语言需求("按地区看占比", 画像) is None
 
 
 def test_解析自然语言需求_编排Agent返回合法意图(画像, monkeypatch):
     """编排Agent 返回合法意图时，正确解析为 dict"""
-    monkeypatch.setattr(编排器_mod, "编排Agent", lambda 画像, 分析需求, df=None, enable_llm=None: {
+    monkeypatch.setattr(编排器_mod, "编排Agent", lambda 画像, 分析需求, df=None, enable_llm=None, **kw: {
         "图表类型": "饼图",
         "x轴": "地区",
         "y轴": ["销售额"],
@@ -299,7 +299,7 @@ def test_解析自然语言需求_编排Agent返回合法意图(画像, monkeypa
 
 def test_解析自然语言需求_编排Agent返回规则意图(画像, monkeypatch):
     """编排Agent 返回规则意图，解析自然语言需求 照常返回"""
-    monkeypatch.setattr(编排器_mod, "编排Agent", lambda 画像, 分析需求, df=None, enable_llm=None: {
+    monkeypatch.setattr(编排器_mod, "编排Agent", lambda 画像, 分析需求, df=None, enable_llm=None, **kw: {
         "图表类型": "自动推荐",
         "x轴": None,
         "y轴": [],

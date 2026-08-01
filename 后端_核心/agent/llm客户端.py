@@ -34,7 +34,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-from config.settings import EnvConfig
+from config.settings import EnvConfig, LLMRequestConfig
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,9 @@ def chat_completion(
     tools: Optional[List[Dict[str, Any]]] = None,
     tool_choice: Optional[str] = None,
     timeout: Optional[int] = None,
-    # 用户自配 LLM 覆盖（来自前端请求头）
+    # 请求级 LLM 配置（并发安全，优先于 user_* 与 EnvConfig 全局配置）
+    llm_config: Optional["LLMRequestConfig"] = None,
+    # 用户自配 LLM 覆盖（来自前端请求头）——旧签名，优先级低于 llm_config
     user_base_url: Optional[str] = None,
     user_api_key: Optional[str] = None,
     user_model: Optional[str] = None,
@@ -138,13 +140,23 @@ def chat_completion(
 
     成功返回完整响应 dict；失败统一返回 None，由调用方回退兜底。
     不会抛网络异常给上层。
+
+    配置优先级：``llm_config`` > ``user_base_url/user_api_key/user_model`` > ``EnvConfig``。
+    注意：api_key 只接受服务端来源（``llm_config.api_key`` 或 ``EnvConfig.LLM_API_KEY``），
+    前端无法通过请求头传入。
     """
-    if not is_llm_configured() and not user_api_key:
+    # 请求级配置优先合并；未显式提供的字段继续回退 EnvConfig 全局值
+    if llm_config is not None:
+        user_base_url = user_base_url or llm_config.base_url
+        user_api_key = user_api_key or llm_config.api_key
+        user_model = user_model or llm_config.model
+
+    api_key = (user_api_key or EnvConfig.LLM_API_KEY or "").strip()
+    if api_key.lower() in _UNCONFIGURED_KEY_PLACEHOLDERS:
         return None
 
     base_url = ((user_base_url or EnvConfig.LLM_BASE_URL) or "").rstrip("/")
     url = f"{base_url}{_CHAT_COMPLETIONS_PATH}"
-    api_key = user_api_key or EnvConfig.LLM_API_KEY
     model = user_model or EnvConfig.LLM_MODEL
     headers = {
         "Authorization": f"Bearer {api_key}",

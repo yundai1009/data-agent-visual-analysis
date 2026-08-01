@@ -25,6 +25,7 @@ from 后端_核心.agent.llm客户端 import chat_completion, extract_tool_call,
 from 后端_核心.agent.工具集 import TOOL_SCHEMAS_FULL, execute_tool
 from 后端_核心.agent.执行器注册 import 注册所有执行器
 from 后端_核心.agent.trace import TraceRecorder
+from config.settings import LLMRequestConfig
 
 logger = logging.getLogger(__name__)
 注册所有执行器()
@@ -82,6 +83,7 @@ def 多智能体分析(
     分析需求: str,
     df: Any = None,
     max_retries: int = 1,
+    llm_config: Optional[LLMRequestConfig] = None,
 ) -> Dict[str, Any]:
     """多智能体方式执行数据分析。
 
@@ -90,6 +92,7 @@ def 多智能体分析(
         分析需求: 用户需求
         df: DataFrame（用于工具执行）
         max_retries: 质量审查打回后的最大重试次数
+        llm_config: 请求级 LLM 配置（并发安全）
 
     Returns:
         标准化意图 dict（含 Agent_Trace）
@@ -106,7 +109,7 @@ def 多智能体分析(
         return _降级(画像, 分析需求, trace)
 
     # ── 第 1 步：数据分析师（画像 + 聚合） ──
-    data_agent_result = _运行_agent("数据分析师", 分析需求, tools, context, trace, 轮次起始=1)
+    data_agent_result = _运行_agent("数据分析师", 分析需求, tools, context, trace, 轮次起始=1, llm_config=llm_config)
     if not data_agent_result["成功"]:
         logger.warning("数据分析师失败，降级")
         trace.记录观察(轮次=1, 说明="数据分析师执行失败，降级到关键词匹配", 状态="失败")
@@ -131,7 +134,7 @@ def 多智能体分析(
                 f"请根据审查意见修正分析方案后重新推荐。"
             )
 
-        chart_result = _运行_agent("图表设计师", chart_prompt, tools, context, trace, 轮次起始=轮次图表)
+        chart_result = _运行_agent("图表设计师", chart_prompt, tools, context, trace, 轮次起始=轮次图表, llm_config=llm_config)
         if not chart_result["成功"]:
             logger.warning(f"图表设计师第 {attempt+1} 次尝试失败")
             trace.记录观察(轮次=轮次图表, 说明=f"图表设计师第 {attempt+1} 次尝试失败", 状态="失败")
@@ -146,7 +149,7 @@ def 多智能体分析(
             f"图表设计师推荐：{chart_result.get('摘要', '')}\n\n"
             f"请判断结果是否合理。如果发现问题，请明确说明具体原因和改进方向。"
         )
-        quality_result = _运行_agent("质量审查员", quality_prompt, tools, context, trace, 轮次起始=轮次图表 + 1)
+        quality_result = _运行_agent("质量审查员", quality_prompt, tools, context, trace, 轮次起始=轮次图表 + 1, llm_config=llm_config)
 
         if not quality_result["成功"]:
             trace.记录观察(轮次=轮次图表 + 1, 说明="质量审查员执行失败，跳过审查", 状态="失败")
@@ -191,6 +194,7 @@ def _运行_agent(
     context: Dict[str, Any],
     trace: TraceRecorder,
     轮次起始: int = 1,
+    llm_config: Optional[LLMRequestConfig] = None,
 ) -> Dict[str, Any]:
     """运行一个 Agent，返回执行结果。"""
     messages = [
@@ -202,7 +206,7 @@ def _运行_agent(
     for i in range(max_rounds):
         轮次 = 轮次起始 + i
         from 后端_核心.agent.编排器 import _执行一轮 as _一轮
-        ok = _一轮(messages, tools, context, 轮次, trace)
+        ok = _一轮(messages, tools, context, 轮次, trace, llm_config=llm_config)
         if not ok:
             return {"成功": False, "消息": messages, "摘要": "执行失败"}
 
