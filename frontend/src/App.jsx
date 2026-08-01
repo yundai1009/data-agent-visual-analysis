@@ -39,6 +39,7 @@ export default function App() {
                       <Route path="/data" element={<ProtectedRoute><DataManagement /></ProtectedRoute>} />
                       <Route path="/analysis" element={<ProtectedRoute><Analysis /></ProtectedRoute>} />
                       <Route path="/report" element={<ProtectedRoute><Report /></ProtectedRoute>} />
+                      <Route path="/report/:reportId" element={<ProtectedRoute><Report /></ProtectedRoute>} />
                       <Route path="*" element={<Navigate to="/data" replace />} />
                     </Routes>
                   </ErrorBoundary>

@@ -97,10 +97,8 @@ export default function Analysis() {
         agent_mode: agentMode,
         model: selectedModel || undefined,
       });
-      // 存入 sessionStorage，整页跳转到 Report 页
-      sessionStorage.setItem('report_cache', JSON.stringify(res));
-      // 用整页跳转避免 React Router + Vite HMR 的 DOM 冲突
-      window.location.href = '/report?_=' + Date.now();
+      // 报表已由后端持久化（阶段 6），直接跳转到报表详情页，不再写 sessionStorage 缓存
+      window.location.href = '/report/' + res.报表ID;
     } catch (e) {
       // 区分错误类型
       if (e.message?.includes('401') || e.message?.includes('UNAUTHORIZED')) {

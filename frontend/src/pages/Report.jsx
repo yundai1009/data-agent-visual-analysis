@@ -1,19 +1,19 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Download, DownloadCloud, Sparkles, ChevronLeft, ChevronRight } from 'lucide-react';
-import { useApp } from '../AppContext';
 import { listReports, getReport, deleteReport } from '../api';
 import EChartsChart from '../components/EChartsChart';
 
 export default function Report() {
   const navigate = useNavigate();
-  const { addReport } = useApp();
+  const { reportId } = useParams();
   const [reportMeta, setReportMeta] = useState([]); // [{报表ID, 标题, 图表类型}]
   const [currentIndex, setCurrentIndex] = useState(0);
   const [localReport, setLocalReport] = useState(null);
   const [tab, setTab] = useState('conclusion');
 
-  // 挂载时：先读 sessionStorage 的刚生成报表，再拉后端历史列表
+  // 挂载时：报表状态只来自后端 —— 历史列表 GET /reports/，详情 GET /reports/{id}
+  // reportId（路由参数）优先展示指定报表，否则展示最新一张
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -22,21 +22,19 @@ export default function Report() {
         const items = res?.报表列表 || [];
         if (cancelled) return;
         setReportMeta(items);
-        // 若本地没有当前报表，从 sessionStorage 恢复刚生成的
-        const cached = sessionStorage.getItem('report_cache');
-        if (cached) {
-          const parsed = JSON.parse(cached);
-          sessionStorage.removeItem('report_cache');
-          setLocalReport(parsed);
-          addReport(parsed); // 同步到前端缓存
-        } else if (items.length > 0) {
-          const detail = await getReport(items[0].报表ID);
-          if (!cancelled && detail?.报表) setLocalReport(detail.报表);
+        const targetId = reportId || items[0]?.报表ID;
+        if (targetId) {
+          const detail = await getReport(targetId);
+          if (!cancelled && detail?.报表) {
+            setLocalReport(detail.报表);
+            const idx = items.findIndex((i) => i.报表ID === targetId);
+            if (idx >= 0) setCurrentIndex(idx);
+          }
         }
       } catch { /* 后端不可用时静默 */ }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [reportId]);
 
   // 翻页时从后端拉详情
   const switchTo = async (index) => {
@@ -51,7 +49,7 @@ export default function Report() {
   const prevReport = () => switchTo(currentIndex - 1);
   const nextReport = () => switchTo(currentIndex + 1);
 
-  // 清空历史：删除后端全部报表
+  // 清空历史：删除后端全部报表（前端无缓存可清）
   const handleClearHistory = async () => {
     if (reportMeta.length === 0) return;
     for (const item of reportMeta) {
@@ -59,7 +57,6 @@ export default function Report() {
     }
     setReportMeta([]);
     setLocalReport(null);
-    localStorage.removeItem('reports_cache');
   };
 
   const report = localReport;
