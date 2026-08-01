@@ -44,9 +44,11 @@ def _register(client, username, password="secret123", role="analyst"):
 
 
 def _upload(client, token, filename="test.csv", content="地区,销售额\n华东,100\n华南,200\n"):
+    if isinstance(content, str):
+        content = content.encode()
     return client.post(
         "/datasets/upload",
-        files={"file": (filename, content.encode(), "text/csv")},
+        files={"file": (filename, content, "text/csv")},
         headers={"Authorization": f"Bearer {token}"},
     )
 
@@ -100,11 +102,15 @@ def test_上传空文件_400(client):
     r = _upload(client, tok, filename="empty.csv", content="")
     assert r.status_code == 400
 
-def test_上传非法内容_400且不残留(client, tmp_path):
+def test_上传非法内容_400且不残留(client):
     tok = _register(client, "grace")
-    # 非法内容（单列无法成表）→ 400
-    r = _upload(client, tok, filename="bad.csv", content="justoneline")
-    assert r.status_code in (400, 200)  # pandas 可能容忍单列
+    # 真正损坏的 .xlsx（非法二进制，非合法 zip/xlsx）→ 解析必然失败 → 400
+    r = _upload(client, tok, filename="broken.xlsx", content=b"\x00\x01\x02PK\x03\x04this-is-not-an-xlsx")
+    assert r.status_code == 400
+    # 不残留：上传失败的数据集不应出现在列表中
+    lst = client.get("/datasets/", headers={"Authorization": f"Bearer {tok}"})
+    assert lst.status_code == 200
+    assert lst.json()["数据集列表"] == []
 
 
 # ---- 8.3 用户隔离 ----
