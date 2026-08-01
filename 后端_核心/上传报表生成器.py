@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
     "堆积柱状图": "stacked_bar",
     "面积图": "area",
     "雷达图": "radar",
+    "词云图": "wordcloud",
 }
 
 聚合映射 = {
@@ -142,6 +143,8 @@ def _受控语句配置(画像: Dict[str, Any], 分析需求: str) -> Dict[str, 
         return {"图表类型": "柱状图", "x轴": first or (分类字段[0] if 分类字段 else None), "y轴": ["记录数"], "聚合方式": "计数"}
     if "比较" in 文本 or "对比" in 文本:
         return {"图表类型": "柱状图", "x轴": first or (分类字段[0] if 分类字段 else None), "y轴": [metric] if metric else ["记录数"], "聚合方式": "计数" if metric == "记录数" else "求和"}
+    if "词云" in 文本:
+        return {"图表类型": "词云图", "x轴": first or (分类字段[0] if 分类字段 else None), "y轴": [], "聚合方式": "计数"}
     return {}
 
 
@@ -435,6 +438,46 @@ def _生成直方图数据(df: pd.DataFrame, field: Optional[str]) -> pd.DataFra
     return grouped
 
 
+# 词云常用中文停用词（轻量集合，够用即可）
+_中文停用词 = {
+    "的", "了", "和", "与", "在", "是", "我", "你", "他", "她", "它", "有", "也", "就",
+    "都", "而", "及", "或", "等", "对", "把", "被", "这", "那", "不", "一个", "我们",
+    "你们", "他们", "这个", "那个", "一些", "一下", "因为", "所以", "但是", "如果",
+    "并且", "或者", "还是", "已经", "可以", "进行", "没有", "不是", "通过", "对于",
+    "以及", "其中", "然后", "什么", "怎么", "如何", "为什么",
+}
+
+
+def _生成词云数据(df: pd.DataFrame, text_field: Optional[str]) -> pd.DataFrame:
+    """从文本字段分词统计词频，返回 [name, value] DataFrame（词云专用）。
+
+    中文分词用 jieba；过滤停用词、单字词、纯数字。
+    无文本字段或未提取到词时抛 ValueError，由接口转 400。
+    """
+    import jieba
+    from collections import Counter
+
+    field = _可选字段(text_field)
+    if field is None or field not in df.columns:
+        raise ValueError("词云图需要选择一个文本字段作为 X 轴")
+    texts = df[field].dropna().astype(str)
+    if texts.empty:
+        raise ValueError("所选字段没有可分词的内容，请换一个文本字段")
+
+    counter: Counter = Counter()
+    for text in texts:
+        for word in jieba.cut(text):
+            word = word.strip()
+            if not word or word in _中文停用词 or len(word) == 1 or word.isdigit():
+                continue
+            counter[word] += 1
+    if not counter:
+        raise ValueError("所选字段未提取到有效词（可能全是数字/停用词），请换一个文本字段")
+
+    top = counter.most_common(60)
+    return pd.DataFrame(top, columns=["name", "value"])
+
+
 def _生成热力图数据(df: pd.DataFrame, x轴: Optional[str], 分组字段: Optional[str], y轴列表: List[str], 聚合方式: str) -> pd.DataFrame:
     if not x轴 or not 分组字段 or x轴 not in df.columns or 分组字段 not in df.columns:
         return df.head(200).copy()
@@ -574,6 +617,8 @@ def 生成报表数据(
         report_df = _生成直方图数据(df, x轴)
     elif effective_chart == "热力图":
         report_df = _生成热力图数据(df, x轴, 分组字段, y轴列表, 聚合方式)
+    elif effective_chart == "词云图":
+        report_df = _生成词云数据(df, x轴)
     else:
         report_df = _聚合数据(df, x轴, y轴列表, 分组字段, 聚合方式)
 
@@ -591,6 +636,9 @@ def 生成报表数据(
     if plotly_type == "pie" and x轴 and y轴列表:
         chart_config["名称"] = x轴
         chart_config["值"] = y轴列表[0]
+    if plotly_type == "wordcloud":
+        chart_config["名称"] = "name"
+        chart_config["值"] = "value"
 
     推荐说明 = _生成推荐说明(画像, effective_chart, x轴, y轴列表, 分组字段, 聚合方式, 是否自动推荐, 分析需求)
     风险提示 = _字段问题提示(画像, effective_chart, x轴, y轴列表, 分析需求)

@@ -21,3 +21,4 @@ plotly
 # 测试
 pytest
 pytest-timeout
+jieba

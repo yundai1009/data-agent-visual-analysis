@@ -8,7 +8,7 @@ import { useApp } from '../AppContext';
 const chartMap = {
   auto: '自动推荐', bar: '柱状图', line: '折线图', pie: '饼图', scatter: '散点图',
   heatmap: '热力图', table: '表格', stacked: '堆积柱状图',
-  histogram: '直方图', area: '面积图', radar: '雷达图',
+  histogram: '直方图', area: '面积图', radar: '雷达图', wordcloud: '词云图',
 };
 
 const chartTypes = [
@@ -21,6 +21,7 @@ const chartTypes = [
   { id: 'area', icon: LineChart, label: '面积图' },
   { id: 'radar', icon: Layers, label: '雷达图' },
   { id: 'heatmap', icon: Layers, label: '热力图' },
+  { id: 'wordcloud', icon: Layers, label: '词云图' },
   { id: 'table', icon: Table, label: '表格' },
   { id: 'stacked', icon: Layers, label: '堆积图' },
 ];

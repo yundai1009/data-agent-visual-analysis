@@ -233,6 +233,28 @@ def test_上传合法CSV(client):
     assert body["行数"] == 2
     assert "地区" in body["字段列表"]
 
+
+def test_生成词云图(client):
+    """文本字段 → 词云图：jieba 分词统计词频，返回 name/value 数据。"""
+    tok = _register(client, "cloud")
+    content = "评论\n这个产品非常好用强烈推荐\n产品性价比很高很好用\n推荐给朋友都说好\n这个产品一般般还可以\n强烈推荐这个产品\n性价比一般但好用\n"
+    r = _upload(client, tok, filename="reviews.csv", content=content)
+    assert r.status_code == 200, r.text
+    did = r.json()["数据集ID"]
+    r = client.post("/reports/generate", json={
+        "数据集ID": did, "分析需求": "生成词云图", "图表类型": "词云图",
+        "x轴": "评论", "y轴": [], "分组字段": None, "聚合方式": "计数", "agent_mode": "single",
+    }, headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["图表类型"] == "词云图"
+    assert body["图表配置"]["类型"] == "wordcloud"
+    rows = body["报表数据"]
+    assert len(rows) > 0, "词云数据不应为空"
+    assert all("name" in row and "value" in row for row in rows)
+    # 词频最高的应是"产品"
+    assert rows[0]["name"] == "产品"
+
 def test_上传非法后缀_400(client):
     tok = _register(client, "erin")
     r = _upload(client, tok, filename="evil.txt", content="a,b\n1,2\n")

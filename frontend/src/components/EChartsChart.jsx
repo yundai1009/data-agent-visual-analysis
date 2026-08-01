@@ -1,5 +1,7 @@
 import { useRef, useEffect } from 'react';
 import * as echarts from 'echarts';
+// 词云扩展：echarts-wordcloud 2.x 自动注册（与 echarts 6 的兼容性依赖运行时；若报错回退到 ECharts 自定义 series 或直接文字展示）
+import 'echarts-wordcloud';
 
 const COLORS = ['#6366f1', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
 
@@ -168,6 +170,21 @@ function buildOption(chartType, config) {
       xAxis: { type: 'category', data: rows.map(r => String(r[xField] ?? '')), axisLabel: { rotate: 45 } },
       yAxis: { type: 'value' },
       series: [{ type: 'bar', data: rows.map(r => Number(r[yf]) || 0), barWidth: '99%', itemStyle: { color: '#6366f1' } }],
+    };
+  }
+
+  if (type === 'wordcloud') {
+    const nk = nameField || 'name';
+    const vk = valueField || 'value';
+    return {
+      ...base, tooltip: { show: true },
+      series: [{
+        type: 'wordCloud', shape: 'circle', width: '92%', height: '78%',
+        gridSize: 6, sizeRange: [14, 56], rotationRange: [0, 0],
+        textStyle: { fontFamily: 'Microsoft YaHei, sans-serif' },
+        emphasis: { focus: 'self' },
+        data: rows.map(r => ({ name: String(r[nk] ?? ''), value: Number(r[vk]) || 0 })),
+      }],
     };
   }
 
