@@ -10,7 +10,7 @@ const navItems = [
 
 export default function Sidebar({ collapsed, onToggle }) {
   const navigate = useNavigate();
-  const { logout } = useApp();
+  const { user, logout } = useApp();
 
   const handleLogout = () => {
     logout();
@@ -67,10 +67,10 @@ export default function Sidebar({ collapsed, onToggle }) {
       <div className="p-2 border-t border-gray-100 space-y-1">
         <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg">
           <div className="w-7 h-7 rounded-lg bg-gray-100 flex items-center justify-center text-xs text-gray-500 shrink-0">
-            云
+            {(user?.username || '云').slice(0, 1)}
           </div>
           <div className={`transition-opacity duration-200 ${collapsed ? 'opacity-0 w-0' : 'opacity-100'}`}>
-            <p className="text-xs font-medium text-gray-700 whitespace-nowrap">云端用户</p>
+            <p className="text-xs font-medium text-gray-700 whitespace-nowrap">{user?.username || '未登录'}</p>
           </div>
           <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 ml-auto" />
         </div>
