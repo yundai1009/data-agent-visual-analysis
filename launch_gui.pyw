@@ -105,6 +105,9 @@ class LauncherApp:
         tk.Label(status, text=f"访问地址：{URL}", font=("Microsoft YaHei", 9),
                  bg="#F7F8FA", fg="#6B7280").pack(side="right")
 
+        # 启动等待进度条（indeterminate：后端就绪前滚动，就绪后停止）
+        self.progress = ttk.Progressbar(self.root, mode="indeterminate", length=420)
+
         log_frame = tk.Frame(self.root, bg="#F7F8FA")
         log_frame.pack(fill="both", expand=True, padx=16, pady=(0, 16))
         self.txt_log = tk.Text(log_frame, height=12, font=("Consolas", 9), bg="#111827",
@@ -161,6 +164,8 @@ class LauncherApp:
 
         threading.Thread(target=self._read_output, args=(self.proc,), daemon=True).start()
         self.lbl_status.config(text=f"正在启动（{label}）…", fg="#D97706")
+        self.progress.pack(fill="x", padx=16, pady=(0, 8))
+        self.progress.start(12)
         self.btn_normal.config(state="disabled")
         self.btn_demo.config(state="disabled")
         self.btn_stop.config(state="normal")
@@ -176,13 +181,14 @@ class LauncherApp:
             try:
                 with urllib.request.urlopen(f"{URL}/health", timeout=1) as resp:
                     if resp.status == 200:
-                        self.log_q.put(("status", f"运行中（{label}）"))
+                        self.log_q.put(("ready", f"运行中（{label}）"))
                         self.log_q.put(("log", f"✅ 启动完成，正在打开浏览器：{URL}\n"))
                         webbrowser.open(URL)
                         return
             except Exception:
                 pass
             time.sleep(0.5)
+        self.log_q.put(("done", "已停止"))
         self.log_q.put(("log", "⚠ 等待后端就绪超时，请查看下方日志。\n"))
 
     def stop(self):
@@ -194,6 +200,8 @@ class LauncherApp:
                 self.proc.kill()
             self._log("⏹ 已停止。\n")
         self.proc = None
+        self.progress.stop()
+        self.progress.pack_forget()
         self.lbl_status.config(text="已停止", fg="#9CA3AF")
         self.btn_normal.config(state="normal")
         self.btn_demo.config(state="normal")
@@ -209,6 +217,15 @@ class LauncherApp:
                 kind, text = self.log_q.get_nowait()
                 if kind == "status":
                     self.lbl_status.config(text=text, fg="#059669")
+                elif kind == "ready":
+                    # 后端就绪：进度条完成并收起
+                    self.progress.stop()
+                    self.progress.pack_forget()
+                    self.lbl_status.config(text=text, fg="#059669")
+                elif kind == "done":
+                    self.progress.stop()
+                    self.progress.pack_forget()
+                    self.lbl_status.config(text=text, fg="#9CA3AF")
                 else:
                     self._log(text)
         except queue.Empty:
