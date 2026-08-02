@@ -1,6 +1,7 @@
 const BASE = '';
 
-// 从 localStorage 加载用户选择的 LLM provider + model（不含 Key / Base-URL）
+// 从 localStorage 加载用户选择的 LLM provider + model + 可选自带 Key（BYOK）
+// URL/Base-URL 永不从前端传；Key 仅用于服务端 Authorization 头
 function getLLMHeaders() {
   try {
     const raw = localStorage.getItem('llm_config');
@@ -9,6 +10,7 @@ function getLLMHeaders() {
     const headers = {};
     if (config.provider) headers['X-LLM-Provider'] = config.provider;
     if (config.model) headers['X-LLM-Model'] = config.model;
+    if (config.apiKey) headers['X-LLM-API-Key'] = config.apiKey;
     return headers;
   } catch { return {}; }
 }

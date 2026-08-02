@@ -50,12 +50,19 @@ async def generate_report(
         )
 
     # 请求级 LLM 配置：显式传递，不修改全局 EnvConfig（并发安全）。
-    # api_key 始终取服务端 .env，不接收用户传入。
+    # 可选 BYOK：用户可通过 X-LLM-API-Key 传自己的 Key（仅用于 Authorization 头，
+    # 不存后端、不上日志）；不传则回退服务端 .env。URL 始终白名单，不允许用户指定。
+    user_api_key = (request.headers.get("x-llm-api-key") or "").strip()
+    if len(user_api_key) > 200:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="API Key 格式不合法",
+        )
     llm_config = LLMRequestConfig(
         provider=user_provider,
         base_url=provider_conf["base_url"],
         model=user_model or provider_conf.get("default_model", ""),
-        api_key=EnvConfig.LLM_API_KEY,
+        api_key=user_api_key or EnvConfig.LLM_API_KEY,
     )
 
     try:

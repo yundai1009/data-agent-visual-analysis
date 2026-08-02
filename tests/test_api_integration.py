@@ -404,6 +404,68 @@ def test_词云单列数值_400提示(client):
     assert r.status_code == 400, r.text[:200]
     assert "文本字段" in r.json()["message"]
 
+
+def test_BYOK用户Key优先于服务端(client):
+    """用户传 X-LLM-API-Key → llm_config.api_key 用用户 Key（BYOK）。"""
+    import 后端_核心.agent.编排器 as orc_mod
+    captured = {}
+    orig_cc = orc_mod.chat_completion
+    orig_configured = orc_mod.is_llm_configured
+
+    def fake_chat(messages, **kw):
+        captured["llm_config"] = kw.get("llm_config")
+        return None  # LLM 失败 → 规则兜底，报表仍生成
+
+    orc_mod.chat_completion = fake_chat
+    orc_mod.is_llm_configured = lambda: True
+    try:
+        tok = _register(client, "byok")
+        content = "地区,销售额\n华东,100\n华南,200\n华北,150\n"
+        r = _upload(client, tok, filename="d.csv", content=content)
+        assert r.status_code == 200, r.text
+        did = r.json()["数据集ID"]
+        r = client.post("/reports/generate", json={
+            "数据集ID": did, "分析需求": "各地区销售额对比", "图表类型": "自动推荐",
+            "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
+        }, headers={"Authorization": f"Bearer {tok}", "X-LLM-API-Key": "sk-user-123"})
+        assert r.status_code == 200, r.text[:200]
+        assert captured.get("llm_config") is not None
+        assert captured["llm_config"].api_key == "sk-user-123"
+    finally:
+        orc_mod.chat_completion = orig_cc
+        orc_mod.is_llm_configured = orig_configured
+
+
+def test_BYOK不填Key回退服务端(client):
+    """不带 X-LLM-API-Key → llm_config.api_key 用服务端 EnvConfig。"""
+    import 后端_核心.agent.编排器 as orc_mod
+    from config.settings import EnvConfig
+    captured = {}
+    orig_cc = orc_mod.chat_completion
+    orig_configured = orc_mod.is_llm_configured
+
+    def fake_chat(messages, **kw):
+        captured["llm_config"] = kw.get("llm_config")
+        return None
+
+    orc_mod.chat_completion = fake_chat
+    orc_mod.is_llm_configured = lambda: True
+    try:
+        tok = _register(client, "byok2")
+        content = "地区,销售额\n华东,100\n华南,200\n"
+        r = _upload(client, tok, filename="d.csv", content=content)
+        did = r.json()["数据集ID"]
+        r = client.post("/reports/generate", json={
+            "数据集ID": did, "分析需求": "各地区销售额对比", "图表类型": "自动推荐",
+            "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
+        }, headers={"Authorization": f"Bearer {tok}"})
+        assert r.status_code == 200, r.text[:200]
+        assert captured.get("llm_config") is not None
+        assert captured["llm_config"].api_key == EnvConfig.LLM_API_KEY
+    finally:
+        orc_mod.chat_completion = orig_cc
+        orc_mod.is_llm_configured = orig_configured
+
 def test_上传非法后缀_400(client):
     tok = _register(client, "erin")
     r = _upload(client, tok, filename="evil.txt", content="a,b\n1,2\n")

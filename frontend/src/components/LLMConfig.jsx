@@ -19,6 +19,7 @@ export function loadLLMConfig() {
 export default function LLMConfig() {
   const [open, setOpen] = useState(false);
   const [config, setConfig] = useState(() => loadLLMConfig() || DEFAULTS);
+  const [apiKey, setApiKey] = useState(() => loadLLMConfig()?.apiKey || '');
   const [saved, setSaved] = useState(!!loadLLMConfig());
 
   useEffect(() => { setSaved(!!loadLLMConfig()); }, []);
@@ -29,7 +30,7 @@ export default function LLMConfig() {
   const handleSave = () => {
     // 若当前模型不在新 provider 的模型列表里，回退到该 provider 默认
     const finalModel = modelOptions.includes(config.model) ? config.model : (activeProvider.models[0] || '');
-    const final = { provider: config.provider, model: finalModel };
+    const final = { provider: config.provider, model: finalModel, apiKey: apiKey.trim() };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(final));
     setConfig(final);
     setSaved(true);
@@ -39,6 +40,7 @@ export default function LLMConfig() {
   const handleClear = () => {
     localStorage.removeItem(STORAGE_KEY);
     setConfig(DEFAULTS);
+    setApiKey('');
     setSaved(false);
     setOpen(false);
   };
@@ -55,7 +57,7 @@ export default function LLMConfig() {
         }`}
       >
         <span className={`w-1.5 h-1.5 rounded-full ${saved ? 'bg-emerald-500' : 'bg-gray-300'}`} />
-        {saved ? `AI: ${config.model}` : '+ AI 模型'}
+        {saved ? `AI: ${config.model}${config.apiKey ? ' · 自带Key' : ''}` : '+ AI 模型'}
         {saved && (
           <span className="ml-1 text-emerald-400 hover:text-red-500" onClick={(e) => { e.stopPropagation(); handleClear(); }}>✕</span>
         )}
@@ -88,7 +90,18 @@ export default function LLMConfig() {
                 {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             </div>
-            <p className="text-[11px] text-gray-300">API Key 由服务端统一配置，无需在此输入</p>
+            <div>
+              <label className="text-[11px] text-gray-400 block mb-1">API Key（可选）</label>
+              <input
+                type="password"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-gray-50 focus:outline-none focus:border-indigo-400"
+                value={apiKey}
+                onChange={e => setApiKey(e.target.value)}
+                placeholder="留空则使用服务端配置的 Key"
+                autoComplete="off"
+              />
+            </div>
+            <p className="text-[11px] text-gray-300">填写自己的 Key 时，生成报表消耗你自己的额度；留空使用服务端统一配置。Key 仅保存在本机浏览器。</p>
             <div className="flex gap-2">
               <button className="flex-1 py-2 rounded-lg bg-gray-900 text-white text-xs font-medium hover:bg-gray-800 transition-all" onClick={handleSave}>保存</button>
               <button className="px-3 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all" onClick={() => setOpen(false)}>取消</button>
