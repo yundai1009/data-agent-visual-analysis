@@ -60,6 +60,9 @@ def 清洗数据集(
 
     # 2. 填充缺失
     if fill_missing:
+        # 策略白名单校验：非法策略直接拒绝，避免"静默不填充却记录执行成功"
+        if fill_strategy not in ("auto", "mean", "median", "mode", "zero"):
+            raise ValueError(f"不支持的填充策略：{fill_strategy}（可选 auto/mean/median/mode/zero）")
         filled_columns = []
         for column in result.columns:
             if result[column].isna().sum() > 0:
@@ -67,13 +70,15 @@ def 清洗数据集(
                     if pd.api.types.is_numeric_dtype(result[column]):
                         result[column] = result[column].fillna(result[column].median())
                     else:
-                        result[column] = result[column].fillna(result[column].mode().iloc[0] if not result[column].mode().empty else "未知")
+                        mode_val = result[column].mode()
+                        result[column] = result[column].fillna(mode_val.iloc[0] if not mode_val.empty else "未知")
                 elif fill_strategy == "mean" and pd.api.types.is_numeric_dtype(result[column]):
                     result[column] = result[column].fillna(result[column].mean())
                 elif fill_strategy == "median" and pd.api.types.is_numeric_dtype(result[column]):
                     result[column] = result[column].fillna(result[column].median())
                 elif fill_strategy == "mode":
-                    result[column] = result[column].fillna(result[column].mode().iloc[0] if not result[column].mode().empty else "未知")
+                    mode_val = result[column].mode()
+                    result[column] = result[column].fillna(mode_val.iloc[0] if not mode_val.empty else "未知")
                 elif fill_strategy == "zero":
                     result[column] = result[column].fillna(0 if pd.api.types.is_numeric_dtype(result[column]) else "")
                 filled_columns.append(column)

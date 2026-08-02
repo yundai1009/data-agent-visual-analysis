@@ -23,17 +23,32 @@ function getAuthHeaders() {
   } catch { return {}; }
 }
 
+// 请求超时：LLM 分析链路可能挂起，默认 30s 中止（上传单独 60s）
+const REQUEST_TIMEOUT_MS = 30000;
+const UPLOAD_TIMEOUT_MS = 60000;
+
 async function request(url, options = {}) {
   const llmHeaders = getLLMHeaders();
   const authHeaders = getAuthHeaders();
-  const res = await fetch(`${BASE}${url}`, {
-    headers: { 'Content-Type': 'application/json', ...authHeaders, ...llmHeaders, ...options.headers },
-    ...options,
-  });
-  if (!res.ok) {
-    throw await parseError(res);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${BASE}${url}`, {
+      headers: { 'Content-Type': 'application/json', ...authHeaders, ...llmHeaders, ...options.headers },
+      signal: controller.signal,
+      ...options,
+    });
+    if (!res.ok) {
+      throw await parseError(res);
+    }
+    try {
+      return await res.json();
+    } catch {
+      return {};
+    }
+  } finally {
+    clearTimeout(timer);
   }
-  return res.json();
 }
 
 // 统一错误解析：后端返回 {code, message, request_id}，前端展示 message
@@ -48,7 +63,6 @@ async function parseError(res) {
   const err = new Error(message);
   err.status = res.status;
   err.requestId = requestId;
-  err.code = null;
   return err;
 }
 
@@ -57,9 +71,17 @@ export async function uploadFile(file) {
   form.append('file', file);
   const llmHeaders = getLLMHeaders();
   const authHeaders = getAuthHeaders();
-  const res = await fetch(`${BASE}/datasets/upload`, { method: 'POST', body: form, headers: { ...authHeaders, ...llmHeaders } });
-  if (!res.ok) throw await parseError(res);
-  return res.json();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${BASE}/datasets/upload`, {
+      method: 'POST', body: form, headers: { ...authHeaders, ...llmHeaders }, signal: controller.signal,
+    });
+    if (!res.ok) throw await parseError(res);
+    return res.json();
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ---- 认证 ----

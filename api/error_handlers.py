@@ -45,6 +45,8 @@ def register_error_handlers(app: FastAPI) -> None:
         else:
             code = f"HTTP_{exc.status_code}"
             message = str(detail)
+        logger.info("HTTP %s %s %s (request_id=%s)", exc.status_code, request.method,
+                    request.url.path, _request_id(request))
         return JSONResponse(
             status_code=exc.status_code,
             content=_error_body(request, code, message),
@@ -60,6 +62,8 @@ def register_error_handlers(app: FastAPI) -> None:
             message = f"参数错误：{loc} {msg}"
         else:
             message = "参数校验失败"
+        logger.info("VALIDATION_ERROR %s %s (request_id=%s): %s", request.method,
+                    request.url.path, _request_id(request), message)
         return JSONResponse(
             status_code=422,
             content=_error_body(request, "VALIDATION_ERROR", message),
@@ -67,8 +71,9 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-        # 兜底 500：不把异常细节暴露给用户，只记录到日志
-        logger.error("Unhandled exception on %s %s: %s", request.method, request.url.path, exc, exc_info=True)
+        # 兜底 500：不把异常细节暴露给用户，只记录到日志（含 request_id 便于按请求排查）
+        logger.error("Unhandled exception on %s %s (request_id=%s): %s",
+                     request.method, request.url.path, _request_id(request), exc, exc_info=True)
         return JSONResponse(
             status_code=500,
             content=_error_body(request, "INTERNAL_ERROR", "服务内部错误，请稍后重试"),

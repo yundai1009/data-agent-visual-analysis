@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -50,7 +51,7 @@ def 初始化用户表() -> None:
 def 创建用户(username: str, password_hash: str, role: str = "analyst", email: Optional[str] = None) -> Dict[str, Any]:
     """创建用户，返回用户信息。用户名或邮箱冲突抛 ValueError（含具体原因）。"""
     初始化用户表()
-    user_id = f"u_{__import__('secrets').token_hex(8)}"
+    user_id = f"u_{secrets.token_hex(8)}"
     now = _now_iso()
     try:
         with _write_lock, _get_conn() as conn:

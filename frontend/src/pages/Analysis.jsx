@@ -47,7 +47,6 @@ const models = [
   { id: 'gpt-4o-mini', label: 'GPT-4o Mini' },
   { id: 'gpt-4o', label: 'GPT-4o' },
   { id: 'deepseek-chat', label: 'DeepSeek Chat' },
-  { id: 'deepseek-v4', label: 'DeepSeek V4' },
 ];
 
 export default function Analysis() {
@@ -144,13 +143,15 @@ export default function Analysis() {
       // 报表已由后端持久化（阶段 6），直接跳转到报表详情页，不再写 sessionStorage 缓存
       window.location.href = '/report/' + res.报表ID;
     } catch (e) {
-      // 区分错误类型
-      if (e.message?.includes('401') || e.message?.includes('UNAUTHORIZED')) {
-        setError('认证配置不正确，请检查 AUTH_ENABLED 设置');
-      } else if (e.message?.includes('413') || e.message?.includes('large')) {
+      // 用结构化 err.status 判断（api.js parseError 已填充），而非字符串匹配
+      if (e.status === 401) {
+        setError('认证已过期或无效，请重新登录');
+      } else if (e.status === 413) {
         setError('文件超过大小限制（最大 50MB）');
-      } else if (e.message?.includes('Failed to fetch') || e.message?.includes('NetworkError')) {
-        setError('后端服务不可用，请检查后端是否启动');
+      } else if (e.status === 400) {
+        setError(e.message || '分析失败：参数或字段不满足要求');
+      } else if (e.message?.includes('Failed to fetch') || e.name === 'AbortError') {
+        setError('后端服务不可用或请求超时，请检查后端是否启动');
       } else {
         setError('分析失败：' + e.message);
       }

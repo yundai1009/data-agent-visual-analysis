@@ -43,6 +43,10 @@ async def lifespan(app: FastAPI):
             logger.warning(
                 "种子管理员 %s 正在使用默认密码 admin123，生产环境请通过 "
                 "SEED_ADMIN_PASSWORD 环境变量修改！", EnvConfig.SEED_ADMIN_USERNAME)
+        if EnvConfig.JWT_SECRET_KEY in ("change-me-in-production", ""):
+            logger.error(
+                "JWT_SECRET_KEY 为默认值，token 可被伪造！生产环境必须通过 "
+                "JWT_SECRET_KEY 环境变量配置强随机密钥！")
     except Exception as exc:
         logger.error("创建种子管理员失败：%s", exc)
     yield

@@ -24,6 +24,10 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 # OpenAI Function Calling tools schema（DeepSeek 兼容）
 意图识别_tool_schema: Dict[str, Any] = {
     "type": "function",
@@ -39,7 +43,9 @@ from typing import Any, Callable, Dict, List, Optional
                 "图表类型": {
                     "type": "string",
                     "enum": ["自动推荐", "柱状图", "折线图", "饼图", "散点图",
-                             "表格", "直方图", "热力图", "堆积柱状图", "面积图", "雷达图"],
+                             "表格", "直方图", "热力图", "堆积柱状图", "面积图", "雷达图",
+                             "词云图", "漏斗图", "桑基图", "箱线图", "环形图",
+                             "瀑布图", "旭日图", "K线图"],
                     "description": "图表类型；当没有明确指向时用「自动推荐」",
                 },
                 "X轴": {
@@ -120,7 +126,9 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [意图识别_tool_schema]
                 "图表类型": {
                     "type": "string",
                     "enum": ["柱状图", "折线图", "饼图", "散点图", "表格",
-                             "直方图", "热力图", "堆积柱状图", "面积图", "雷达图"],
+                             "直方图", "热力图", "堆积柱状图", "面积图", "雷达图",
+                             "词云图", "漏斗图", "桑基图", "箱线图", "环形图",
+                             "瀑布图", "旭日图", "K线图"],
                     "description": "推荐的图表类型",
                 },
                 "理由": {"type": "string", "description": "为什么推荐这个图表（一句话）"},
@@ -173,7 +181,8 @@ def execute_tool(name: str, arguments: Dict[str, Any], context: Dict[str, Any]) 
         return None
     try:
         return executor(arguments, context)
-    except Exception:  # noqa: BLE001 工具执行器异常一律交给上层降级处理
+    except Exception as exc:  # noqa: BLE001 工具执行器异常一律交给上层降级处理，但记录原因便于排查
+        logger.warning("工具 %s 执行失败: %s", name, exc)
         return None
 
 
@@ -232,7 +241,9 @@ def validate_intent_against_profile(
 
 # 与 ``上传报表生成器.图表类型映射`` 同步增长时也要更新这里。
 _VALID_CHART_TYPES = {"自动推荐", "柱状图", "折线图", "饼图", "散点图",
-                      "表格", "直方图", "热力图", "堆积柱状图", "面积图", "雷达图"}
+                      "表格", "直方图", "热力图", "堆积柱状图", "面积图", "雷达图",
+                      "词云图", "漏斗图", "桑基图", "箱线图", "环形图",
+                      "瀑布图", "旭日图", "K线图"}
 _VALID_AGGREGATIONS = {"求和", "平均值", "计数", "最大值", "最小值"}
 
 

@@ -22,16 +22,20 @@ export function AppProvider({ children }) {
 
   // 设置认证状态（登录/注册成功后调用）
   const setAuth = useCallback((token, userInfo) => {
-    if (token) localStorage.setItem('access_token', token);
-    if (userInfo) localStorage.setItem('user_cache', JSON.stringify(userInfo));
+    try {
+      if (token) localStorage.setItem('access_token', token);
+      if (userInfo) localStorage.setItem('user_cache', JSON.stringify(userInfo));
+    } catch { /* localStorage 不可用时忽略，仅本次会话有效 */ }
     if (userInfo) setUser(userInfo);
     setIsAuthed(!!token);
   }, []);
 
   // 登出
   const logout = useCallback(() => {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('user_cache');
+    try {
+      localStorage.removeItem('access_token');
+      localStorage.removeItem('user_cache');
+    } catch { /* ignore */ }
     setUser(null);
     setIsAuthed(false);
   }, []);

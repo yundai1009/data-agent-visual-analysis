@@ -24,6 +24,7 @@ export default function EChartsChart({ chartType, chartConfig, height = 320 }) {
         chart.resize();
       }
     } catch (e) {
+      console.error('图表渲染异常:', chartType, e);
       chart.setOption({
         title: { text: `图表渲染异常: ${e.message}`, left: 'center', textStyle: { fontSize: 13, color: '#ef4444' } },
       });
@@ -38,11 +39,9 @@ export default function EChartsChart({ chartType, chartConfig, height = 320 }) {
     };
   }, [chartType, chartConfig]);
 
-  // resize 监听
+  // resize 监听：handler 动态读取最新 chartRef，避免图表重建后调用已 dispose 的旧实例
   useEffect(() => {
-    const chart = chartRef.current;
-    if (!chart) return;
-    const handler = () => chart.resize();
+    const handler = () => { if (chartRef.current) chartRef.current.resize(); };
     window.addEventListener('resize', handler);
     return () => window.removeEventListener('resize', handler);
   }, []);

@@ -11,6 +11,7 @@ export default function Report() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [localReport, setLocalReport] = useState(null);
   const [tab, setTab] = useState('conclusion');
+  const [loadError, setLoadError] = useState('');
 
   // 挂载时：报表状态只来自后端 —— 历史列表 GET /reports/，详情 GET /reports/{id}
   // reportId（路由参数）优先展示指定报表，否则展示最新一张
@@ -31,7 +32,10 @@ export default function Report() {
             if (idx >= 0) setCurrentIndex(idx);
           }
         }
-      } catch { /* 后端不可用时静默 */ }
+      } catch (e) {
+        console.error('报表列表加载失败:', e);
+        setLoadError('报表加载失败，请检查后端服务是否可用');
+      }
     })();
     return () => { cancelled = true; };
   }, [reportId]);
@@ -43,20 +47,30 @@ export default function Report() {
     try {
       const detail = await getReport(reportMeta[index].报表ID);
       if (detail?.报表) setLocalReport(detail.报表);
-    } catch { /* ignore */ }
+    } catch (e) {
+      console.error('报表详情加载失败:', e);
+      setLoadError('报表详情加载失败，请稍后重试');
+    }
   };
 
   const prevReport = () => switchTo(currentIndex - 1);
   const nextReport = () => switchTo(currentIndex + 1);
 
-  // 清空历史：删除后端全部报表（前端无缓存可清）
+  // 清空历史：删除后端全部报表；删除失败项保留（不误清 UI），带确认框
   const handleClearHistory = async () => {
     if (reportMeta.length === 0) return;
+    if (!window.confirm(`确定删除全部 ${reportMeta.length} 份报表？此操作不可恢复。`)) return;
+    const failed = [];
     for (const item of reportMeta) {
-      try { await deleteReport(item.报表ID); } catch { /* ignore */ }
+      try { await deleteReport(item.报表ID); } catch (e) { failed.push(item.报表ID); console.error('报表删除失败:', item.报表ID, e); }
     }
-    setReportMeta([]);
-    setLocalReport(null);
+    if (failed.length > 0) {
+      setLoadError(`有 ${failed.length} 份报表删除失败，已保留`);
+      setReportMeta(prev => prev.filter(item => !failed.includes(item.报表ID)));
+    } else {
+      setReportMeta([]);
+      setLocalReport(null);
+    }
   };
 
   const report = localReport;
@@ -93,6 +107,7 @@ export default function Report() {
             AI 自动生成的智能分析报告
             {dataProfile.行数 ? ` · 数据集共 ${dataProfile.行数} 行 ${dataProfile.列数} 列` : ''}
           </p>
+          {loadError && <p className="mt-1.5 text-xs text-red-500">{loadError}</p>}
         </div>
         <div className="flex items-center gap-2">
           {/* 历史报表导航 */}

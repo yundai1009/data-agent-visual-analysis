@@ -1,7 +1,7 @@
 ﻿import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Upload, Download, Database, FileText, AlertTriangle, Search, Sparkles, Loader2 } from 'lucide-react';
-import { uploadFile, loadExample, cleanDataset } from '../api';
+import { uploadFile, loadExample, cleanDataset, healthCheck } from '../api';
 import { useApp } from '../AppContext';
 
 // 演示模式（vite --mode demo 构建）：打开页面自动加载示例数据，零基础用户无需上传即可体验
@@ -27,7 +27,7 @@ export default function DataManagement() {
   const [dataset, setDataset] = useState(globalDataset);
   const [profile, setProfile] = useState(globalDataset?.数据画像 || null);
   const [uploading, setUploading] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [backendOk, setBackendOk] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
@@ -51,23 +51,24 @@ export default function DataManagement() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 真实健康检查：替换假的"系统正常"徽章
+  useEffect(() => {
+    let cancelled = false;
+    healthCheck().then(() => { if (!cancelled) setBackendOk(true); })
+      .catch(() => { if (!cancelled) setBackendOk(false); });
+    return () => { cancelled = true; };
+  }, []);
+
   async function handleUpload(file) {
     setError('');
     setUploading(true);
-    setProgress(0);
-    const timer = setInterval(() => setProgress((v) => Math.min(v + Math.random() * 18 + 5, 95)), 200);
     try {
       const res = await uploadFile(file);
-      clearInterval(timer);
-      setProgress(100);
-      setTimeout(() => {
-        setDataset(res);
-        setProfile(res.数据画像);
-        setAppDataset({ 数据集ID: res.数据集ID, 文件名: res.文件名, 行数: res.行数, 数据画像: res.数据画像 });
-        setUploading(false);
-      }, 400);
+      setDataset(res);
+      setProfile(res.数据画像);
+      setAppDataset({ 数据集ID: res.数据集ID, 文件名: res.文件名, 行数: res.行数, 数据画像: res.数据画像 });
+      setUploading(false);
     } catch (e) {
-      clearInterval(timer);
       setError(e.message);
       setUploading(false);
     }
@@ -154,8 +155,8 @@ export default function DataManagement() {
           <button onClick={handleLoadExample} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all">
             <Download className="w-3.5 h-3.5" />导入示例数据
           </button>
-          <span className="flex items-center gap-1.5 text-xs text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded border border-emerald-200">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />系统正常
+          <span className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded border ${backendOk ? 'text-emerald-600 bg-emerald-50 border-emerald-200' : 'text-red-600 bg-red-50 border-red-200'}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${backendOk ? 'bg-emerald-500' : 'bg-red-500'}`} />{backendOk ? '系统正常' : '后端不可用'}
           </span>
           <span className="flex items-center gap-1 text-xs text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded border border-indigo-200 cursor-default" title="开启后自动识别日期/分类/数值字段">
             <Sparkles className="w-3 h-3" /> 自动类型推断
@@ -175,11 +176,10 @@ export default function DataManagement() {
         <input id="file-input" type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={(e) => e.target.files[0] && handleUpload(e.target.files[0])} />
         {uploading ? (
           <div className="max-w-sm mx-auto">
-            <div className="flex items-center gap-3 mb-2">
+            <div className="flex items-center gap-3">
               <svg className="w-5 h-5 text-indigo-500 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
               <span className="text-sm text-gray-500">正在解析文件结构，请稍候...</span>
             </div>
-            <div className="h-1.5 rounded-full bg-gray-200 overflow-hidden"><div className="h-full rounded-full bg-indigo-500 transition-all" style={{ width: `${progress}%` }} /></div>
           </div>
         ) : dataset ? (
           <div className="flex items-center justify-between">

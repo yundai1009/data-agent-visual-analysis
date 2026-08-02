@@ -594,7 +594,7 @@ def _生成桑基图数据(df: pd.DataFrame, x轴: Optional[str], 分组字段: 
         agg = 聚合映射.get(聚合方式, "sum")
         flow = df.groupby([分组字段, x轴], observed=True)[value_field].agg(agg).reset_index(name="value")
     flow.columns = ["源", "目标", "value"]
-    return flow
+    return flow.head(500)  # 高基数字段限流，避免超大结果集
 
 
 def _生成箱线图数据(df: pd.DataFrame, x轴: Optional[str], y轴列表: List[str]) -> pd.DataFrame:
@@ -617,7 +617,7 @@ def _生成箱线图数据(df: pd.DataFrame, x轴: Optional[str], y轴列表: Li
             "value": [round(float(s.min()), 4), round(float(q1), 4), round(float(med), 4),
                       round(float(q3), 4), round(float(s.max()), 4)],
         })
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows).head(500)  # 高基数分组限流
 
 
 def _生成瀑布图数据(df: pd.DataFrame, x轴: Optional[str], y轴列表: List[str], 聚合方式: str) -> pd.DataFrame:
@@ -651,7 +651,7 @@ def _生成旭日图数据(df: pd.DataFrame, x轴: Optional[str], 分组字段: 
         else:
             agg = df.groupby(x轴, observed=True)[value_field].agg(agg).reset_index(name="value")
             agg.columns = ["名称", "value"]
-    return agg
+    return agg.head(500)  # 高基数层级限流
 
 
 def _生成K线数据(df: pd.DataFrame, x轴: Optional[str], y轴列表: List[str]) -> pd.DataFrame:
@@ -673,7 +673,7 @@ def _生成K线数据(df: pd.DataFrame, x轴: Optional[str], y轴列表: List[st
             "value": [round(float(vals.iloc[0]), 4), round(float(vals.iloc[-1]), 4),
                       round(float(vals.min()), 4), round(float(vals.max()), 4)],
         })
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows).head(500)  # 高基数分组限流
 
 
 def _生成热力图数据(df: pd.DataFrame, x轴: Optional[str], 分组字段: Optional[str], y轴列表: List[str], 聚合方式: str) -> pd.DataFrame:
@@ -872,6 +872,10 @@ def 生成报表数据(
 
     推荐说明 = _生成推荐说明(画像, effective_chart, x轴, y轴列表, 分组字段, 聚合方式, 是否自动推荐, 分析需求)
     风险提示 = _字段问题提示(画像, effective_chart, x轴, y轴列表, 分析需求)
+    conclusion, conclusion_source = _生成结论_含来源(
+        分析需求, 画像, report_df, effective_chart, 推荐说明, 风险提示,
+        agent_trace, intent_source, llm_config=llm_config,
+    )
     result = {
         "标题": chart_config["标题"],
         "分析需求": 分析需求,
@@ -883,12 +887,12 @@ def 生成报表数据(
         "风险提示": 风险提示,
         "Agent Trace": agent_trace or _生成_agent_trace(分析需求, 画像, effective_chart, x轴, y轴列表, 分组字段, 聚合方式, 推荐说明, 风险提示, intent_source),
         "意图来源": intent_source,
-        "结论来源": intent_source,
+        "结论来源": conclusion_source,
         "导出数据": {
             "推荐文件名": "analysis-report.html",
             "格式": "html",
         },
-        "结论": _生成结论_含来源(分析需求, 画像, report_df, effective_chart, 推荐说明, 风险提示, agent_trace, intent_source)[0],
+        "结论": conclusion,
     }
     result["导出数据"]["HTML"] = _生成HTML报告(result)
     result["导出数据"]["JSON"] = json.dumps(result, ensure_ascii=False, default=str)
@@ -902,6 +906,7 @@ def _生成结论_含来源(
     风险提示: List[str],
     agent_trace: List[Dict[str, Any]],
     intent_source: str = "",
+    llm_config: Optional[LLMRequestConfig] = None,
 ) -> Tuple[str, str]:
     """优先用 LLM 润色结论，失败回退模板拼接。返回（结论文本, 来源）。
     来源取值："LLM" | "模板"
@@ -911,6 +916,6 @@ def _生成结论_含来源(
             llm_结论 = 润色结论(分析需求, 画像, report_df, 推荐说明, 风险提示, llm_config=llm_config)
             if llm_结论:
                 return llm_结论, "LLM"
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("结论润色异常，回退模板：%s", exc)
     return _生成结论(分析需求, 画像, report_df, 图表类型, 推荐说明, 风险提示), "模板"

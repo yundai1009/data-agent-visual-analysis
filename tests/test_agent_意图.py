@@ -1,4 +1,4 @@
-"""agent 子包单元测试：纯解析层/校验层/降级路径，不依赖网络与 LLM key。
+﻿"""agent 子包单元测试：纯解析层/校验层/降级路径，不依赖网络与 LLM key。
 
 覆盖目标
 ========
@@ -95,17 +95,17 @@ def test_parse_llm_json_empty_returns_none():
 # ============================================================================
 
 def test_is_llm_configured_placeholder(monkeypatch):
-    monkeypatch.setattr(llm客户端_mod.EnvConfig, "LLM_API_KEY", "your_llm_api_key", raising=False)
+    monkeypatch.setattr(llm客户端_mod.EnvConfig, "LLM_API_KEY", "your_llm_api_key")
     assert llm客户端_mod.is_llm_configured() is False
 
 
 def test_is_llm_configured_empty(monkeypatch):
-    monkeypatch.setattr(llm客户端_mod.EnvConfig, "LLM_API_KEY", "", raising=False)
+    monkeypatch.setattr(llm客户端_mod.EnvConfig, "LLM_API_KEY", "")
     assert llm客户端_mod.is_llm_configured() is False
 
 
 def test_is_llm_configured_real_key(monkeypatch):
-    monkeypatch.setattr(llm客户端_mod.EnvConfig, "LLM_API_KEY", "sk-real-key-xxxx", raising=False)
+    monkeypatch.setattr(llm客户端_mod.EnvConfig, "LLM_API_KEY", "sk-real-key-xxxx")
     assert llm客户端_mod.is_llm_configured() is True
 
 
@@ -314,5 +314,6 @@ def test_解析自然语言需求_编排Agent返回规则意图(画像, monkeypa
     assert out["图表类型"] == "自动推荐"
     assert out["x轴"] is None
     assert out["y轴"] == []
+
 
 

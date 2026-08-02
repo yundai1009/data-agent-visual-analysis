@@ -18,8 +18,10 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
     """为每个请求注入 request_id。"""
 
     async def dispatch(self, request: Request, call_next):
-        # 优先沿用外部传入的 request_id；无则生成
-        request_id = request.headers.get("X-Request-ID") or f"req_{uuid.uuid4().hex[:12]}"
+        # 优先沿用外部传入的 request_id；无则生成。限制长度与字符集（字母数字与-_），防日志注入
+        request_id = (request.headers.get("X-Request-ID") or "").strip()
+        if not request_id or len(request_id) > 64 or not all(c.isalnum() or c in "-_" for c in request_id):
+            request_id = f"req_{uuid.uuid4().hex[:12]}"
         request.state.request_id = request_id
 
         response = await call_next(request)

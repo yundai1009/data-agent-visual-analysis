@@ -156,7 +156,9 @@ def 多智能体分析(
             passed = True
             break
 
-        passed = "不通过" not in quality_result.get("摘要", "")
+        # 质量审查判定：明确输出"不通过/打回"才算不通过，避免模型措辞变化误判
+        摘要 = quality_result.get("摘要", "")
+        passed = ("不通过" not in 摘要) and ("打回" not in 摘要) and (bool(摘要.strip()))
         if passed:
             trace.记录观察(轮次=轮次图表 + 1, 说明=f"质量审查通过（第 {attempt+1} 次）", 状态="成功")
             break

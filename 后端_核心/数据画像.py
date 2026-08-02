@@ -91,13 +91,15 @@ def _生成字段建议(df: pd.DataFrame, 字段: Dict[str, List[str]]) -> List[
 def _生成数据质量(df: pd.DataFrame, 缺失值: Dict[str, int]) -> Dict[str, Any]:
     warnings: List[str] = []
     row_count = max(len(df), 1)
+    # 超大表统计采样：duplicated()/nunique() 全表计算在 50MB 级数据上很慢
+    stat_df = df.sample(n=50_000, random_state=42) if len(df) > 100_000 else df
 
     # ── A/B/C 分级 ──
     total_missing = sum(缺失值.values())
     missing_rate = total_missing / (row_count * max(len(df.columns), 1))
 
-    constant_fields = [column for column in df.columns if df[column].nunique(dropna=True) <= 1]
-    duplicate_count = int(df.duplicated().sum())
+    constant_fields = [column for column in stat_df.columns if stat_df[column].nunique(dropna=True) <= 1]
+    duplicate_count = int(stat_df.duplicated().sum())
 
     if missing_rate < 0.05 and not constant_fields:
         level = "A"
