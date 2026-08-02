@@ -533,6 +533,8 @@ def _生成箱线图数据(df: pd.DataFrame, x轴: Optional[str], y轴列表: Li
     """每组五数概括 [min, Q1, median, Q3, max]，用于异常值/分布对比。"""
     if not x轴 or not y轴列表 or x轴 not in df.columns or y轴列表[0] not in df.columns:
         raise ValueError("箱线图需要 X 轴（分类）和 Y 轴（数值）字段")
+    if x轴 == y轴列表[0]:
+        raise ValueError("箱线图的 X 轴与 Y 轴需要选择不同字段")
     num = df[[x轴, y轴列表[0]]].copy()
     num[y轴列表[0]] = pd.to_numeric(num[y轴列表[0]], errors="coerce")
     num = num.dropna()
@@ -588,6 +590,8 @@ def _生成K线数据(df: pd.DataFrame, x轴: Optional[str], y轴列表: List[st
     """按 X 轴分组派生 OHLC：[open=组内首个, close=组内最后, low=最小, high=最大]。"""
     if not x轴 or not y轴列表 or x轴 not in df.columns or y轴列表[0] not in df.columns:
         raise ValueError("K线图需要 X 轴（日期/分类）和 Y 轴（数值）字段")
+    if x轴 == y轴列表[0]:
+        raise ValueError("K线图的 X 轴与 Y 轴需要选择不同字段")
     num = df[[x轴, y轴列表[0]]].copy()
     num[y轴列表[0]] = pd.to_numeric(num[y轴列表[0]], errors="coerce")
     num = num.dropna()

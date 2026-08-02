@@ -311,6 +311,23 @@ def test_图表数据不满足时返回400而非500(client):
     assert r.status_code == 400, r.text[:200]
     assert "两个分类字段" in r.json()["message"]
 
+
+def test_箱线图K线图_XY同列返回400(client):
+    """X 轴与 Y 轴为同一字段（单列/纯数值数据）：应 400 而非 500（重复列会触发 pandas 异常）。"""
+    tok = _register(client, "xy400")
+    content = "销售额\n100\n200\n300\n400\n"
+    r = _upload(client, tok, filename="one.csv", content=content)
+    assert r.status_code == 200, r.text
+    did = r.json()["数据集ID"]
+    for ct in ("箱线图", "K线图"):
+        r = client.post("/reports/generate", json={
+            "数据集ID": did, "分析需求": "", "图表类型": ct,
+            "x轴": "销售额", "y轴": ["销售额"], "分组字段": None,
+            "聚合方式": "求和", "agent_mode": "single",
+        }, headers={"Authorization": f"Bearer {tok}"})
+        assert r.status_code == 400, f"{ct}: {r.text[:200]}"
+        assert "不同字段" in r.json()["message"]
+
 def test_上传非法后缀_400(client):
     tok = _register(client, "erin")
     r = _upload(client, tok, filename="evil.txt", content="a,b\n1,2\n")
