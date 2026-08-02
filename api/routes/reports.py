@@ -58,11 +58,17 @@ async def generate_report(
         api_key=EnvConfig.LLM_API_KEY,
     )
 
-    if payload.agent_mode == "multi":
-        report = _多智能体报表(df, payload, llm_config)
-    else:
-        report = _单Agent报表(df, payload, llm_config)
-
+    try:
+        if payload.agent_mode == "multi":
+            report = _多智能体报表(df, payload, llm_config)
+        else:
+            report = _单Agent报表(df, payload, llm_config)
+    except ValueError as exc:
+        # 数据不满足图表前提（如词云无有效词、桑基缺分组字段）→ 明确 400，而非 500
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
     # 报表持久化到后端（阶段 6）
     from repositories import report_repo
     report_id = report_repo.保存报表(

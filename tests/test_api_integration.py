@@ -286,6 +286,31 @@ def test_七种新增图表生成(client):
         assert body["图表配置"]["类型"] == ctype
         assert len(body["报表数据"]) > 0, f"{label} 数据为空"
 
+
+def test_图表数据不满足时返回400而非500(client):
+    """词云数值列 / 桑基缺分组字段：应 400 明确提示，而非 500。"""
+    tok = _register(client, "chart400")
+    content = ("地区,销售额,备注\n华东,100,优质客户\n华南,200,普通客户\n华北,150,优质客户\n")
+    r = _upload(client, tok, filename="s.csv", content=content)
+    assert r.status_code == 200, r.text
+    did = r.json()["数据集ID"]
+
+    # 词云图 + 数值列 → 400
+    r = client.post("/reports/generate", json={
+        "数据集ID": did, "分析需求": "", "图表类型": "词云图",
+        "x轴": "销售额", "y轴": [], "分组字段": None, "聚合方式": "计数", "agent_mode": "single",
+    }, headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 400, r.text[:200]
+    assert "有效词" in r.json()["message"]
+
+    # 桑基图 + 无分组字段 → 400
+    r = client.post("/reports/generate", json={
+        "数据集ID": did, "分析需求": "", "图表类型": "桑基图",
+        "x轴": "地区", "y轴": ["销售额"], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
+    }, headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 400, r.text[:200]
+    assert "两个分类字段" in r.json()["message"]
+
 def test_上传非法后缀_400(client):
     tok = _register(client, "erin")
     r = _upload(client, tok, filename="evil.txt", content="a,b\n1,2\n")
