@@ -328,6 +328,82 @@ def test_箱线图K线图_XY同列返回400(client):
         assert r.status_code == 400, f"{ct}: {r.text[:200]}"
         assert "不同字段" in r.json()["message"]
 
+
+def test_文本字段识别与词云自然语言自动选字段(client):
+    """画像识别文本字段；输入"生成词云图"自动选文本字段，零手动。"""
+    tok = _register(client, "nlauto")
+    content = ("地区,销售额,评论\n"
+               "华东,100,这个产品非常好用强烈推荐\n"
+               "华南,200,产品性价比很高很好用\n"
+               "华北,150,推荐给朋友都说好\n")
+    r = _upload(client, tok, filename="d.csv", content=content)
+    assert r.status_code == 200, r.text
+    profile = r.json()["数据画像"]
+    assert "评论" in profile.get("文本字段", []), profile.get("文本字段")
+    did = r.json()["数据集ID"]
+    # 自然语言生成词云 → 自动选"评论"
+    r = client.post("/reports/generate", json={
+        "数据集ID": did, "分析需求": "生成词云图", "图表类型": "自动推荐",
+        "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "计数", "agent_mode": "single",
+    }, headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200, r.text[:200]
+    body = r.json()
+    assert body["图表类型"] == "词云图"
+    assert body["图表配置"]["X轴"] == "评论"
+    assert len(body["报表数据"]) > 0
+
+
+def test_旭日不被占比关键词抢先(client):
+    """"多层占比旭日图" 含"占比"也应命中旭日图（具体图表词优先）。"""
+    tok = _register(client, "sunburstnl")
+    content = ("地区,渠道,销售额\n华东,线上,100\n华东,线下,200\n华南,线上,300\n华南,线下,150\n华北,线上,80\n")
+    r = _upload(client, tok, filename="d.csv", content=content)
+    assert r.status_code == 200, r.text
+    did = r.json()["数据集ID"]
+    r = client.post("/reports/generate", json={
+        "数据集ID": did, "分析需求": "多层占比旭日图", "图表类型": "自动推荐",
+        "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "计数", "agent_mode": "single",
+    }, headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200, r.text[:200]
+    assert r.json()["图表类型"] == "旭日图"
+
+
+def test_折线K线自然语言自动用日期(client):
+    """趋势/K线类自然语言需求：X 轴自动选日期字段。"""
+    tok = _register(client, "datenl")
+    content = ("地区,销售额,日期\n华东,100,2024-01-01\n华南,200,2024-01-02\n"
+               "华北,150,2024-01-03\n华东,120,2024-01-04\n")
+    r = _upload(client, tok, filename="d.csv", content=content)
+    assert r.status_code == 200, r.text
+    did = r.json()["数据集ID"]
+    for req, expected_ct, expected_x in [
+        ("按日期看销售额趋势", "折线图", "日期"),
+        ("按日期看销售额K线", "K线图", "日期"),
+    ]:
+        r = client.post("/reports/generate", json={
+            "数据集ID": did, "分析需求": req, "图表类型": "自动推荐",
+            "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
+        }, headers={"Authorization": f"Bearer {tok}"})
+        assert r.status_code == 200, f"{req}: {r.text[:200]}"
+        body = r.json()
+        assert body["图表类型"] == expected_ct, req
+        assert body["图表配置"]["X轴"] == expected_x, req
+
+
+def test_词云单列数值_400提示(client):
+    """仅数值列的数据集生成词云：400 明确提示（换文本字段），而非 500。"""
+    tok = _register(client, "notext")
+    content = "销售额\n100\n200\n300\n"
+    r = _upload(client, tok, filename="one.csv", content=content)
+    assert r.status_code == 200, r.text
+    did = r.json()["数据集ID"]
+    r = client.post("/reports/generate", json={
+        "数据集ID": did, "分析需求": "", "图表类型": "词云图",
+        "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "计数", "agent_mode": "single",
+    }, headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 400, r.text[:200]
+    assert "文本字段" in r.json()["message"]
+
 def test_上传非法后缀_400(client):
     tok = _register(client, "erin")
     r = _upload(client, tok, filename="evil.txt", content="a,b\n1,2\n")

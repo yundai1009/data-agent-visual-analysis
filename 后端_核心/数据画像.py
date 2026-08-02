@@ -32,11 +32,13 @@ def _字段分组(df: pd.DataFrame) -> Dict[str, List[str]]:
         series = df[column]
         non_null = series.dropna()
         unique_count = int(non_null.nunique()) if not non_null.empty else 0
+        # 平均字符长度：用于区分「短枚举」（地区/渠道）与「长文本」（评论/备注，适合分词）
+        avg_len = float(non_null.astype(str).str.len().mean()) if not non_null.empty else 0.0
         if is_numeric_dtype(series):
             数值字段.append(column)
         elif _尝试日期列(series):
             日期字段.append(column)
-        elif unique_count <= min(30, max(10, int(row_count * 0.5))):
+        elif unique_count <= min(30, max(10, int(row_count * 0.5))) and avg_len <= 6:
             分类字段.append(column)
         else:
             文本字段.append(column)

@@ -70,6 +70,40 @@ export default function Analysis() {
   const numFields = profile?.数值字段 || [];
   const catFields = profile?.分类字段 || [];
   const dateFields = profile?.日期字段 || [];
+  const textFields = profile?.文本字段 || [];
+
+  // 选中图表类型时按语义自动重选字段（自然语言/点击图表都不用手动选字段）
+  const handleChartSelect = (id) => {
+    setChartType(id);
+    const set = (x, y, g) => { setXAxis(x || ''); setYAxis(y || ''); setGroupField(g || '无'); };
+    switch (id) {
+      case 'wordcloud':
+        set(textFields[0] || catFields[0] || '', '', '无'); break;
+      case 'scatter':
+        set(numFields[0] || '', numFields[1] || numFields[0] || '', '无'); break;
+      case 'boxplot':
+      case 'candlestick': {
+        let x = (id === 'candlestick' ? dateFields[0] : catFields[0]) || catFields[0] || dateFields[0] || '';
+        const y = numFields[0] || '';
+        if (x === y) x = dateFields[0] || catFields[1] || '';
+        set(x, y, '无'); break;
+      }
+      case 'heatmap':
+      case 'stacked':
+      case 'sankey':
+      case 'sunburst':
+        set(catFields[0] || dateFields[0] || '', numFields[0] || '', catFields[1] || '无'); break;
+      case 'radar':
+        set(catFields[0] || dateFields[0] || '', numFields[0] || '', '无'); break;
+      case 'histogram':
+        set(numFields[0] || '', numFields[0] || '', '无'); break;
+      case 'line':
+      case 'area':
+        set(dateFields[0] || catFields[0] || '', numFields[0] || '', '无'); break;
+      default:
+        set(catFields[0] || dateFields[0] || '', numFields[0] || '', '无');
+    }
+  };
 
   // Auto-fill based on profile（useEffect 中执行，避免 render 阶段 setState）
   useEffect(() => {
@@ -166,6 +200,9 @@ export default function Analysis() {
         break;
       case 'donut':
         if (!xIsCat && x) return '环形图的 X 轴建议选择分类字段';
+        break;
+      case 'wordcloud':
+        if (x && !(profile.文本字段 || []).includes(x) && xIsCat) return '词云图的 X 轴建议选择文本字段（长文本，如评论/备注）';
         break;
       case 'stacked':
       case 'stacked_bar':
@@ -275,7 +312,7 @@ export default function Analysis() {
                     ? 'border-2 border-indigo-500 bg-indigo-50'
                     : 'border border-gray-200 hover:border-indigo-300 hover:bg-gray-50'
                 }`}
-                onClick={() => setChartType(ct.id)}
+                onClick={() => handleChartSelect(ct.id)}
               >
                 <Icon className={`w-6 h-6 mx-auto mb-1 ${active ? 'text-indigo-500' : 'text-gray-300'}`} />
                 <p className={`text-xs ${active ? 'text-indigo-600 font-medium' : 'text-gray-500'}`}>{ct.label}</p>
@@ -290,7 +327,7 @@ export default function Analysis() {
         <div>
           <label className="text-xs text-gray-400 mb-1.5 block">X 轴</label>
           <select className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 focus:outline-none focus:border-indigo-400" value={xAxis} onChange={(e) => setXAxis(e.target.value)}>
-            {fields.map((f) => <option key={f}>{f}</option>)}
+            {fields.map((f) => <option key={f} value={f}>{textFields.includes(f) ? `📝 ${f}` : f}</option>)}
           </select>
         </div>
         <div>

@@ -125,54 +125,122 @@ def _合法字段(画像: Dict[str, Any], field: Optional[str]) -> Optional[str]
     return None
 
 
+def 自动选字段(画像: Dict[str, Any], 图表类型: str) -> Dict[str, Any]:
+    """按图表类型返回语义正确的字段组合（自然语言自动选择，零手动）。
+
+    优先级：文本字段(词云) > 分类 > 日期 > 数值；字段不足时自动降级。
+    返回 {图表类型, x轴, y轴, 分组字段, 聚合方式}。
+    """
+    分类 = 画像.get("分类字段") or []
+    数值 = 画像.get("数值字段") or []
+    日期 = 画像.get("日期字段") or []
+    文本 = 画像.get("文本字段") or []
+    字段列表 = 画像.get("字段列表") or []
+
+    def _x() -> Optional[str]:
+        return 分类[0] if 分类 else (日期[0] if 日期 else (字段列表[0] if 字段列表 else None))
+
+    def _x2() -> Optional[str]:
+        return 分类[1] if len(分类) > 1 else None
+
+    def _y() -> List[str]:
+        return [数值[0]] if 数值 else ["记录数"]
+
+    def _agg() -> str:
+        return "求和" if 数值 else "计数"
+
+    base = {"图表类型": 图表类型}
+
+    if 图表类型 == "词云图":
+        # 文本字段优先；无文本字段取分类里最长的（仍可能分词出词）；再没有则 None（由生成函数兜底提示）
+        x = 文本[0] if 文本 else (max(分类, key=lambda f: len(str(f)), default=None) if 分类 else None)
+        return {**base, "x轴": x, "y轴": [], "分组字段": None, "聚合方式": "计数"}
+    if 图表类型 == "散点图":
+        x = 数值[0] if 数值 else None
+        y = [数值[1]] if len(数值) > 1 else ([数值[0]] if 数值 else [])
+        return {**base, "x轴": x, "y轴": y, "分组字段": None, "聚合方式": "求和"}
+    if 图表类型 in ("箱线图", "K线图"):
+        # K线优先日期（行情看时间轴）；箱线优先分类
+        if 图表类型 == "K线图" and 日期:
+            x = 日期[0]
+        else:
+            x = _x()
+        y = _y()
+        if x == (y[0] if y else None):
+            # X==Y（单列/纯数值）：换另一个日期/分类，避免重复列
+            x = 日期[0] if 日期 else (分类[1] if len(分类) > 1 else None)
+        return {**base, "x轴": x, "y轴": y, "分组字段": None, "聚合方式": "求和"}
+    if 图表类型 in ("热力图", "堆积柱状图", "桑基图", "旭日图"):
+        return {**base, "x轴": _x(), "y轴": _y(), "分组字段": _x2(), "聚合方式": _agg()}
+    if 图表类型 == "雷达图":
+        y = 数值[:3] if 数值 else []
+        return {**base, "x轴": _x(), "y轴": y, "分组字段": None, "聚合方式": "平均值"}
+    if 图表类型 == "直方图":
+        target = 数值[0] if 数值 else None
+        return {**base, "x轴": target, "y轴": [target] if target else [], "分组字段": None, "聚合方式": "计数"}
+    if 图表类型 in ("折线图", "面积图"):
+        # 趋势类图表：日期字段优先作 X 轴
+        x = 日期[0] if 日期 else _x()
+        return {**base, "x轴": x, "y轴": _y(), "分组字段": None, "聚合方式": _agg()}
+    # 柱状/饼/环形/漏斗/瀑布/表格/自动推荐
+    return {**base, "x轴": _x(), "y轴": _y(), "分组字段": None, "聚合方式": _agg()}
+
+
+def _合并显式字段(selected: Dict[str, Any], first: Optional[str], second: Optional[str]) -> Dict[str, Any]:
+    """用户显式指定字段时覆盖自动选择（【字段】模板优先）。"""
+    result = dict(selected)
+    if first:
+        result["x轴"] = first
+    if second:
+        result["y轴"] = [second] if "y轴" in result else [second]
+        if result.get("分组字段") is None:
+            result["分组字段"] = second
+    return result
+
+
 def _受控语句配置(画像: Dict[str, Any], 分析需求: str) -> Dict[str, Any]:
     文本 = 分析需求.strip()
     fields = _提取模板字段(文本)
-    数值字段 = 画像.get("数值字段", [])
-    日期字段 = 画像.get("日期字段", [])
-    分类字段 = 画像.get("分类字段", [])
 
     first = _合法字段(画像, fields[0] if fields else None)
     second = _合法字段(画像, fields[1] if len(fields) > 1 else None)
-    metric = _合法字段(画像, fields[1] if len(fields) > 1 else None) or (数值字段[0] if 数值字段 else "记录数")
 
     if "交叉分布" in 文本 or "热力图" in 文本 or "矩阵" in 文本:
-        return {"图表类型": "热力图", "x轴": first or (分类字段[0] if 分类字段 else None), "分组字段": second or (分类字段[1] if len(分类字段) > 1 else None), "y轴": ["记录数"], "聚合方式": "计数"}
+        return _合并显式字段(自动选字段(画像, "热力图"), first, second)
     if "直方图" in 文本 or "分布情况" in 文本 or "数值分布" in 文本:
-        target = first or (数值字段[0] if 数值字段 else None)
-        return {"图表类型": "直方图", "x轴": target, "y轴": [target] if target else [], "聚合方式": "计数"}
+        return _合并显式字段(自动选字段(画像, "直方图"), first, second)
+    if "堆积" in 文本:
+        return _合并显式字段(自动选字段(画像, "堆积柱状图"), first, second)
+    if "关系" in 文本 or "相关" in 文本 or "散点" in 文本:
+        return _合并显式字段(自动选字段(画像, "散点图"), first, second)
+    if "雷达" in 文本:
+        return _合并显式字段(自动选字段(画像, "雷达图"), first, second)
+    if "词云" in 文本:
+        return _合并显式字段(自动选字段(画像, "词云图"), first, second)
+    if "漏斗" in 文本 or "转化" in 文本:
+        return _合并显式字段(自动选字段(画像, "漏斗图"), first, second)
+    if "桑基" in 文本 or "流向" in 文本:
+        return _合并显式字段(自动选字段(画像, "桑基图"), first, second)
+    if "箱线" in 文本 or "异常" in 文本 or "分布对比" in 文本:
+        return _合并显式字段(自动选字段(画像, "箱线图"), first, second)
+    if "环形" in 文本 or "甜甜圈" in 文本:
+        return _合并显式字段(自动选字段(画像, "环形图"), first, second)
+    if "瀑布" in 文本:
+        return _合并显式字段(自动选字段(画像, "瀑布图"), first, second)
+    if "旭日" in 文本 or "多层" in 文本:
+        return _合并显式字段(自动选字段(画像, "旭日图"), first, second)
+    if "K线" in 文本 or "行情" in 文本 or "蜡烛" in 文本:
+        return _合并显式字段(自动选字段(画像, "K线图"), first, second)
+    # 通用意图词（放在具体图表词之后，避免"多层占比旭日图"等被"占比"抢先命中）
     if "占比" in 文本 or "比例" in 文本 or "构成" in 文本:
-        return {"图表类型": "饼图", "x轴": first or _匹配意图字段(画像, 字段意图关键词), "y轴": ["记录数"], "聚合方式": "计数"}
+        return _合并显式字段(自动选字段(画像, "饼图"), first, second)
     if "趋势" in 文本 or "变化" in 文本 or "面积图" in 文本:
         chart = "面积图" if "面积图" in 文本 else "折线图"
-        return {"图表类型": chart, "x轴": first or (日期字段[0] if 日期字段 else None), "y轴": [metric] if metric else [], "聚合方式": "计数" if metric == "记录数" else "求和"}
-    if "堆积" in 文本:
-        return {"图表类型": "堆积柱状图", "x轴": first or (分类字段[0] if 分类字段 else None), "分组字段": second or (分类字段[1] if len(分类字段) > 1 else None), "y轴": [metric] if metric else ["记录数"], "聚合方式": "计数" if metric == "记录数" else "求和"}
-    if "关系" in 文本 or "相关" in 文本 or "散点" in 文本:
-        return {"图表类型": "散点图", "x轴": first or (数值字段[0] if 数值字段 else None), "y轴": [second or (数值字段[1] if len(数值字段) > 1 else None)], "聚合方式": "求和"}
-    if "雷达" in 文本:
-        metrics = [field for field in fields[1:] if field in 数值字段] or 数值字段[:5]
-        return {"图表类型": "雷达图", "x轴": first or (分类字段[0] if 分类字段 else None), "y轴": metrics, "聚合方式": "平均值"}
+        return _合并显式字段(自动选字段(画像, chart), first, second)
     if "统计" in 文本 and "数量" in 文本:
-        return {"图表类型": "柱状图", "x轴": first or (分类字段[0] if 分类字段 else None), "y轴": ["记录数"], "聚合方式": "计数"}
+        return _合并显式字段(自动选字段(画像, "柱状图"), first, second)
     if "比较" in 文本 or "对比" in 文本:
-        return {"图表类型": "柱状图", "x轴": first or (分类字段[0] if 分类字段 else None), "y轴": [metric] if metric else ["记录数"], "聚合方式": "计数" if metric == "记录数" else "求和"}
-    if "词云" in 文本:
-        return {"图表类型": "词云图", "x轴": first or (分类字段[0] if 分类字段 else None), "y轴": [], "聚合方式": "计数"}
-    if "漏斗" in 文本 or "转化" in 文本:
-        return {"图表类型": "漏斗图", "x轴": first or (分类字段[0] if 分类字段 else None), "y轴": [metric] if metric else ["记录数"], "聚合方式": "计数" if metric == "记录数" else "求和"}
-    if "桑基" in 文本 or "流向" in 文本:
-        return {"图表类型": "桑基图", "x轴": first or (分类字段[0] if 分类字段 else None), "分组字段": second or (分类字段[1] if len(分类字段) > 1 else None), "y轴": [metric] if metric else ["记录数"], "聚合方式": "计数" if metric == "记录数" else "求和"}
-    if "箱线" in 文本 or "异常" in 文本 or "分布对比" in 文本:
-        return {"图表类型": "箱线图", "x轴": first or (分类字段[0] if 分类字段 else None), "y轴": [数值字段[0]] if 数值字段 else ["记录数"], "聚合方式": "求和"}
-    if "环形" in 文本 or "甜甜圈" in 文本:
-        return {"图表类型": "环形图", "x轴": first or (分类字段[0] if 分类字段 else None), "y轴": ["记录数"], "聚合方式": "计数"}
-    if "瀑布" in 文本:
-        return {"图表类型": "瀑布图", "x轴": first or (分类字段[0] if 分类字段 else None), "y轴": [metric] if metric else ["记录数"], "聚合方式": "计数" if metric == "记录数" else "求和"}
-    if "旭日" in 文本 or "多层" in 文本:
-        return {"图表类型": "旭日图", "x轴": first or (分类字段[0] if 分类字段 else None), "分组字段": second or (分类字段[1] if len(分类字段) > 1 else None), "y轴": ["记录数"], "聚合方式": "计数"}
-    if "K线" in 文本 or "行情" in 文本 or "蜡烛" in 文本:
-        return {"图表类型": "K线图", "x轴": first or (日期字段[0] if 日期字段 else (分类字段[0] if 分类字段 else None)), "y轴": [数值字段[0]] if 数值字段 else [], "聚合方式": "求和"}
+        return _合并显式字段(自动选字段(画像, "柱状图"), first, second)
     return {}
 
 

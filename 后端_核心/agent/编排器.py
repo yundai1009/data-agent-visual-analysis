@@ -130,6 +130,13 @@ def 编排Agent(
                     # 从多轮消息中提取最终意图
                     intent_override = _从消息提取意图(messages, 画像)
                     if intent_override:
+                        # LLM 字段兜底：不满足图表语义时用规则选择器修正（如词云必须用文本字段）
+                        from 后端_核心.上传报表生成器 import 自动选字段  # 延迟导入避免循环
+                        chart_type = intent_override.get("图表类型")
+                        if chart_type == "词云图":
+                            文本字段 = 画像.get("文本字段") or []
+                            if intent_override.get("x轴") not in 文本字段:
+                                intent_override["x轴"] = 自动选字段(画像, "词云图").get("x轴")
                         intent_source = "LLM"
                         trace.记录观察(轮次=3, 说明="多轮 ReAct 完成", 状态="成功")
                         # 保存到长期记忆
