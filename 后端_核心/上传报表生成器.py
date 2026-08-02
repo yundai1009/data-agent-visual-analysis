@@ -28,6 +28,13 @@ logger = logging.getLogger(__name__)
     "面积图": "area",
     "雷达图": "radar",
     "词云图": "wordcloud",
+    "漏斗图": "funnel",
+    "桑基图": "sankey",
+    "箱线图": "boxplot",
+    "环形图": "donut",
+    "瀑布图": "waterfall",
+    "旭日图": "sunburst",
+    "K线图": "candlestick",
 }
 
 聚合映射 = {
@@ -40,12 +47,19 @@ logger = logging.getLogger(__name__)
 
 
 def _可_json值(value: Any) -> Any:
-    if pd.isna(value):
+    if value is None:
         return None
-    if hasattr(value, "isoformat"):
-        return value.isoformat()
+    if isinstance(value, (list, tuple, set)):
+        return list(value)  # 嵌套 list 直接返回（箱线五数概括 / K 线 OHLC）
     if hasattr(value, "item"):
         return value.item()
+    try:
+        if pd.isna(value):
+            return None
+    except (ValueError, TypeError):
+        pass
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
     return value
 
 
@@ -145,6 +159,20 @@ def _受控语句配置(画像: Dict[str, Any], 分析需求: str) -> Dict[str, 
         return {"图表类型": "柱状图", "x轴": first or (分类字段[0] if 分类字段 else None), "y轴": [metric] if metric else ["记录数"], "聚合方式": "计数" if metric == "记录数" else "求和"}
     if "词云" in 文本:
         return {"图表类型": "词云图", "x轴": first or (分类字段[0] if 分类字段 else None), "y轴": [], "聚合方式": "计数"}
+    if "漏斗" in 文本 or "转化" in 文本:
+        return {"图表类型": "漏斗图", "x轴": first or (分类字段[0] if 分类字段 else None), "y轴": [metric] if metric else ["记录数"], "聚合方式": "计数" if metric == "记录数" else "求和"}
+    if "桑基" in 文本 or "流向" in 文本:
+        return {"图表类型": "桑基图", "x轴": first or (分类字段[0] if 分类字段 else None), "分组字段": second or (分类字段[1] if len(分类字段) > 1 else None), "y轴": [metric] if metric else ["记录数"], "聚合方式": "计数" if metric == "记录数" else "求和"}
+    if "箱线" in 文本 or "异常" in 文本 or "分布对比" in 文本:
+        return {"图表类型": "箱线图", "x轴": first or (分类字段[0] if 分类字段 else None), "y轴": [数值字段[0]] if 数值字段 else ["记录数"], "聚合方式": "求和"}
+    if "环形" in 文本 or "甜甜圈" in 文本:
+        return {"图表类型": "环形图", "x轴": first or (分类字段[0] if 分类字段 else None), "y轴": ["记录数"], "聚合方式": "计数"}
+    if "瀑布" in 文本:
+        return {"图表类型": "瀑布图", "x轴": first or (分类字段[0] if 分类字段 else None), "y轴": [metric] if metric else ["记录数"], "聚合方式": "计数" if metric == "记录数" else "求和"}
+    if "旭日" in 文本 or "多层" in 文本:
+        return {"图表类型": "旭日图", "x轴": first or (分类字段[0] if 分类字段 else None), "分组字段": second or (分类字段[1] if len(分类字段) > 1 else None), "y轴": ["记录数"], "聚合方式": "计数"}
+    if "K线" in 文本 or "行情" in 文本 or "蜡烛" in 文本:
+        return {"图表类型": "K线图", "x轴": first or (日期字段[0] if 日期字段 else (分类字段[0] if 分类字段 else None)), "y轴": [数值字段[0]] if 数值字段 else [], "聚合方式": "求和"}
     return {}
 
 
@@ -478,6 +506,104 @@ def _生成词云数据(df: pd.DataFrame, text_field: Optional[str]) -> pd.DataF
     return pd.DataFrame(top, columns=["name", "value"])
 
 
+def _生成漏斗图数据(df: pd.DataFrame, x轴: Optional[str], y轴列表: List[str], 聚合方式: str) -> pd.DataFrame:
+    """分类聚合后按值降序，作为漏斗的转化阶段。"""
+    agg = _聚合数据(df, x轴, y轴列表, None, 聚合方式)
+    if len(agg.columns) < 2 or agg.empty:
+        return agg
+    value_col = agg.columns[1]
+    return agg.sort_values(value_col, ascending=False).reset_index(drop=True)
+
+
+def _生成桑基图数据(df: pd.DataFrame, x轴: Optional[str], 分组字段: Optional[str], y轴列表: List[str], 聚合方式: str) -> pd.DataFrame:
+    """两级流向：源=分组字段，目标=X 轴。缺分组字段时抛 ValueError（需两个分类字段）。"""
+    if not x轴 or not 分组字段 or x轴 not in df.columns or 分组字段 not in df.columns:
+        raise ValueError("桑基图需要两个分类字段（X 轴 + 分组字段）构成流向")
+    value_field = y轴列表[0] if y轴列表 else "记录数"
+    if 聚合方式 == "计数" or value_field == "记录数" or value_field not in df.columns:
+        flow = df.groupby([分组字段, x轴], observed=True).size().reset_index(name="value")
+    else:
+        agg = 聚合映射.get(聚合方式, "sum")
+        flow = df.groupby([分组字段, x轴], observed=True)[value_field].agg(agg).reset_index(name="value")
+    flow.columns = ["源", "目标", "value"]
+    return flow
+
+
+def _生成箱线图数据(df: pd.DataFrame, x轴: Optional[str], y轴列表: List[str]) -> pd.DataFrame:
+    """每组五数概括 [min, Q1, median, Q3, max]，用于异常值/分布对比。"""
+    if not x轴 or not y轴列表 or x轴 not in df.columns or y轴列表[0] not in df.columns:
+        raise ValueError("箱线图需要 X 轴（分类）和 Y 轴（数值）字段")
+    num = df[[x轴, y轴列表[0]]].copy()
+    num[y轴列表[0]] = pd.to_numeric(num[y轴列表[0]], errors="coerce")
+    num = num.dropna()
+    if num.empty:
+        raise ValueError("箱线图没有可统计的数据")
+    rows = []
+    for name, grp in num.groupby(x轴, observed=True):
+        s = grp[y轴列表[0]]
+        q1, med, q3 = s.quantile([0.25, 0.5, 0.75])
+        rows.append({
+            "name": str(name),
+            "value": [round(float(s.min()), 4), round(float(q1), 4), round(float(med), 4),
+                      round(float(q3), 4), round(float(s.max()), 4)],
+        })
+    return pd.DataFrame(rows)
+
+
+def _生成瀑布图数据(df: pd.DataFrame, x轴: Optional[str], y轴列表: List[str], 聚合方式: str) -> pd.DataFrame:
+    """分类聚合值（可正可负），前端按累计偏移渲染瀑布。"""
+    agg = _聚合数据(df, x轴, y轴列表, None, 聚合方式)
+    if len(agg.columns) < 2 or agg.empty:
+        return agg
+    agg = agg.reset_index(drop=True)
+    agg.columns = ["name", "value"]
+    return agg
+
+
+def _生成旭日图数据(df: pd.DataFrame, x轴: Optional[str], 分组字段: Optional[str], y轴列表: List[str], 聚合方式: str) -> pd.DataFrame:
+    """两级层级：外层=分组字段，内层=X 轴；无分组时单级。返回 层级,名称,value 或 名称,value。"""
+    if not x轴 or x轴 not in df.columns:
+        raise ValueError("旭日图需要选择 X 轴字段")
+    value_field = y轴列表[0] if y轴列表 else "记录数"
+    has_group = bool(分组字段) and 分组字段 in df.columns and 分组字段 != x轴
+    if 聚合方式 == "计数" or value_field == "记录数" or value_field not in df.columns:
+        if has_group:
+            agg = df.groupby([分组字段, x轴], observed=True).size().reset_index(name="value")
+            agg.columns = ["层级", "名称", "value"]
+        else:
+            agg = df.groupby(x轴, observed=True).size().reset_index(name="value")
+            agg.columns = ["名称", "value"]
+    else:
+        agg = 聚合映射.get(聚合方式, "sum")
+        if has_group:
+            agg = df.groupby([分组字段, x轴], observed=True)[value_field].agg(agg).reset_index(name="value")
+            agg.columns = ["层级", "名称", "value"]
+        else:
+            agg = df.groupby(x轴, observed=True)[value_field].agg(agg).reset_index(name="value")
+            agg.columns = ["名称", "value"]
+    return agg
+
+
+def _生成K线数据(df: pd.DataFrame, x轴: Optional[str], y轴列表: List[str]) -> pd.DataFrame:
+    """按 X 轴分组派生 OHLC：[open=组内首个, close=组内最后, low=最小, high=最大]。"""
+    if not x轴 or not y轴列表 or x轴 not in df.columns or y轴列表[0] not in df.columns:
+        raise ValueError("K线图需要 X 轴（日期/分类）和 Y 轴（数值）字段")
+    num = df[[x轴, y轴列表[0]]].copy()
+    num[y轴列表[0]] = pd.to_numeric(num[y轴列表[0]], errors="coerce")
+    num = num.dropna()
+    if num.empty:
+        raise ValueError("K线图没有可统计的数据")
+    rows = []
+    for name, grp in num.groupby(x轴, observed=True):
+        vals = grp[y轴列表[0]]
+        rows.append({
+            "name": str(name),
+            "value": [round(float(vals.iloc[0]), 4), round(float(vals.iloc[-1]), 4),
+                      round(float(vals.min()), 4), round(float(vals.max()), 4)],
+        })
+    return pd.DataFrame(rows)
+
+
 def _生成热力图数据(df: pd.DataFrame, x轴: Optional[str], 分组字段: Optional[str], y轴列表: List[str], 聚合方式: str) -> pd.DataFrame:
     if not x轴 or not 分组字段 or x轴 not in df.columns or 分组字段 not in df.columns:
         return df.head(200).copy()
@@ -619,6 +745,20 @@ def 生成报表数据(
         report_df = _生成热力图数据(df, x轴, 分组字段, y轴列表, 聚合方式)
     elif effective_chart == "词云图":
         report_df = _生成词云数据(df, x轴)
+    elif effective_chart == "漏斗图":
+        report_df = _生成漏斗图数据(df, x轴, y轴列表, 聚合方式)
+    elif effective_chart == "桑基图":
+        report_df = _生成桑基图数据(df, x轴, 分组字段, y轴列表, 聚合方式)
+    elif effective_chart == "箱线图":
+        report_df = _生成箱线图数据(df, x轴, y轴列表)
+    elif effective_chart == "环形图":
+        report_df = _聚合数据(df, x轴, y轴列表, None, 聚合方式)  # 同饼图数据
+    elif effective_chart == "瀑布图":
+        report_df = _生成瀑布图数据(df, x轴, y轴列表, 聚合方式)
+    elif effective_chart == "旭日图":
+        report_df = _生成旭日图数据(df, x轴, 分组字段, y轴列表, 聚合方式)
+    elif effective_chart == "K线图":
+        report_df = _生成K线数据(df, x轴, y轴列表)
     else:
         report_df = _聚合数据(df, x轴, y轴列表, 分组字段, 聚合方式)
 
@@ -633,10 +773,28 @@ def 生成报表数据(
         "数据": report_rows,
     }
 
-    if plotly_type == "pie" and x轴 and y轴列表:
+    if plotly_type in ("pie", "donut") and x轴 and y轴列表:
         chart_config["名称"] = x轴
         chart_config["值"] = y轴列表[0]
     if plotly_type == "wordcloud":
+        chart_config["名称"] = "name"
+        chart_config["值"] = "value"
+    if plotly_type == "funnel" and len(report_df.columns) >= 2:
+        chart_config["名称"] = report_df.columns[0]
+        chart_config["值"] = report_df.columns[1]
+    if plotly_type == "sankey":
+        chart_config["名称"] = "源"
+        chart_config["值"] = "value"
+    if plotly_type == "boxplot":
+        chart_config["名称"] = "name"
+        chart_config["值"] = "value"
+    if plotly_type == "waterfall":
+        chart_config["名称"] = "name"
+        chart_config["值"] = "value"
+    if plotly_type == "sunburst":
+        chart_config["名称"] = "名称"
+        chart_config["值"] = "value"
+    if plotly_type == "candlestick":
         chart_config["名称"] = "name"
         chart_config["值"] = "value"
 

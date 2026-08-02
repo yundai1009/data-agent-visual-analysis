@@ -83,13 +83,13 @@ function buildOption(chartType, config) {
 
   const type = chartType || 'bar';
 
-  if (type === 'pie') {
+  if (type === 'pie' || type === 'donut') {
     const nk = nameField || xField;
     const vk = valueField || (yFields[0] || Object.keys(rows[0]).find(k => k !== nk) || '');
     return {
       ...base, tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
       series: [{
-        type: 'pie', radius: ['0%', '60%'],
+        type: 'pie', radius: type === 'donut' ? ['45%', '70%'] : ['0%', '60%'],
         data: rows.map(r => ({ name: String(r[nk] ?? ''), value: Number(r[vk]) || 0 })),
         label: { formatter: '{b}\n{d}%' },
       }],
@@ -184,6 +184,104 @@ function buildOption(chartType, config) {
         textStyle: { fontFamily: 'Microsoft YaHei, sans-serif' },
         emphasis: { focus: 'self' },
         data: rows.map(r => ({ name: String(r[nk] ?? ''), value: Number(r[vk]) || 0 })),
+      }],
+    };
+  }
+
+  if (type === 'funnel') {
+    const nk = nameField || xField || Object.keys(rows[0])[0];
+    const vk = valueField || (yFields[0] || Object.keys(rows[0]).find(k => k !== nk) || '');
+    return {
+      ...base, tooltip: { trigger: 'item', formatter: '{b}: {c}' },
+      series: [{
+        type: 'funnel', left: '12%', width: '76%', top: 40, bottom: 20,
+        label: { formatter: '{b} {c}' },
+        data: rows.map(r => ({ name: String(r[nk] ?? ''), value: Number(r[vk]) || 0 })),
+      }],
+    };
+  }
+
+  if (type === 'sankey') {
+    const links = rows.map(r => ({
+      source: String(r.源 ?? r.source ?? ''),
+      target: String(r.目标 ?? r.target ?? ''),
+      value: Number(r.value ?? 0),
+    }));
+    const nodes = [...new Set([...links.map(l => l.source), ...links.map(l => l.target)])].map(name => ({ name }));
+    return {
+      ...base, tooltip: { trigger: 'item' },
+      series: [{
+        type: 'sankey', left: '4%', right: '12%', top: 40, bottom: 20,
+        data: nodes, links, label: { fontSize: 11 },
+        emphasis: { focus: 'adjacency' },
+      }],
+    };
+  }
+
+  if (type === 'boxplot') {
+    const nk = nameField || 'name';
+    return {
+      ...base, tooltip: { trigger: 'item' },
+      xAxis: { type: 'category', data: rows.map(r => String(r[nk] ?? '')) },
+      yAxis: { type: 'value' },
+      series: [{
+        type: 'boxplot', data: rows.map(r => Array.isArray(r.value) ? r.value : []),
+        itemStyle: { color: '#6366f1' },
+      }],
+    };
+  }
+
+  if (type === 'waterfall') {
+    const nk = nameField || 'name';
+    const vk = valueField || 'value';
+    const values = rows.map(r => Number(r[vk]) || 0);
+    const baseData = [];
+    let acc = 0;
+    for (const v of values) { baseData.push(acc); acc += v; }
+    return {
+      ...base, tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      xAxis: { type: 'category', data: [...rows.map(r => String(r[nk] ?? '')), '合计'] },
+      yAxis: { type: 'value' },
+      series: [
+        { name: '占位', type: 'bar', stack: 'wf', itemStyle: { color: 'transparent' }, data: [...baseData, 0] },
+        {
+          name: '值', type: 'bar', stack: 'wf',
+          data: [...values, acc],
+          label: { show: true, position: 'top', formatter: (p) => (p.dataIndex === values.length ? `合计 ${p.value}` : p.value) },
+        },
+      ],
+    };
+  }
+
+  if (type === 'sunburst') {
+    const hasLevel = rows.some(r => r.层级 !== undefined);
+    let data;
+    if (hasLevel) {
+      const map = {};
+      for (const r of rows) {
+        const lv = String(r.层级 ?? '');
+        if (!map[lv]) map[lv] = { name: lv, children: [] };
+        map[lv].children.push({ name: String(r.名称 ?? ''), value: Number(r.value ?? 0) });
+      }
+      data = Object.values(map);
+    } else {
+      data = rows.map(r => ({ name: String(r.名称 ?? r[xField] ?? ''), value: Number(r.value ?? 0) }));
+    }
+    return {
+      ...base, tooltip: { trigger: 'item' },
+      series: [{ type: 'sunburst', radius: ['20%', '85%'], data, label: { fontSize: 11 } }],
+    };
+  }
+
+  if (type === 'candlestick') {
+    const nk = nameField || 'name';
+    return {
+      ...base, tooltip: { trigger: 'axis' },
+      xAxis: { type: 'category', data: rows.map(r => String(r[nk] ?? '')), axisLabel: { rotate: 30 } },
+      yAxis: { type: 'value' },
+      series: [{
+        type: 'candlestick', data: rows.map(r => Array.isArray(r.value) ? r.value : []),
+        itemStyle: { color: '#ef4444', color0: '#10b981', borderColor: '#ef4444', borderColor0: '#10b981' },
       }],
     };
   }

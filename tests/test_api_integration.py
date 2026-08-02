@@ -255,6 +255,37 @@ def test_生成词云图(client):
     # 词频最高的应是"产品"
     assert rows[0]["name"] == "产品"
 
+
+def test_七种新增图表生成(client):
+    """漏斗/桑基/箱线/环形/瀑布/旭日/K线 均可生成且类型映射正确。"""
+    tok = _register(client, "chart7")
+    content = ("地区,渠道,销售额,日期\n"
+               "华东,线上,100,2024-01-01\n华东,线下,200,2024-01-02\n"
+               "华南,线上,300,2024-01-03\n华南,线下,150,2024-01-04\n"
+               "华北,线上,80,2024-01-05\n华北,线下,250,2024-01-06\n")
+    r = _upload(client, tok, filename="sales.csv", content=content)
+    assert r.status_code == 200, r.text
+    did = r.json()["数据集ID"]
+    cases = [
+        ("漏斗图", "funnel", "地区", ["销售额"], None, "求和"),
+        ("桑基图", "sankey", "地区", ["销售额"], "渠道", "求和"),
+        ("箱线图", "boxplot", "地区", ["销售额"], None, "求和"),
+        ("环形图", "donut", "地区", ["销售额"], None, "求和"),
+        ("瀑布图", "waterfall", "地区", ["销售额"], None, "求和"),
+        ("旭日图", "sunburst", "地区", ["记录数"], "渠道", "计数"),
+        ("K线图", "candlestick", "日期", ["销售额"], None, "求和"),
+    ]
+    for label, ctype, x, y, group, agg in cases:
+        r = client.post("/reports/generate", json={
+            "数据集ID": did, "分析需求": "", "图表类型": label,
+            "x轴": x, "y轴": y, "分组字段": group, "聚合方式": agg, "agent_mode": "single",
+        }, headers={"Authorization": f"Bearer {tok}"})
+        assert r.status_code == 200, f"{label}: {r.text[:200]}"
+        body = r.json()
+        assert body["图表类型"] == label
+        assert body["图表配置"]["类型"] == ctype
+        assert len(body["报表数据"]) > 0, f"{label} 数据为空"
+
 def test_上传非法后缀_400(client):
     tok = _register(client, "erin")
     r = _upload(client, tok, filename="evil.txt", content="a,b\n1,2\n")

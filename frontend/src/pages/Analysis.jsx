@@ -9,6 +9,8 @@ const chartMap = {
   auto: '自动推荐', bar: '柱状图', line: '折线图', pie: '饼图', scatter: '散点图',
   heatmap: '热力图', table: '表格', stacked: '堆积柱状图',
   histogram: '直方图', area: '面积图', radar: '雷达图', wordcloud: '词云图',
+  funnel: '漏斗图', sankey: '桑基图', boxplot: '箱线图', donut: '环形图',
+  waterfall: '瀑布图', sunburst: '旭日图', candlestick: 'K线图',
 };
 
 const chartTypes = [
@@ -16,11 +18,18 @@ const chartTypes = [
   { id: 'bar', icon: BarChart3, label: '柱状图' },
   { id: 'line', icon: LineChart, label: '折线图' },
   { id: 'pie', icon: PieChart, label: '饼图' },
+  { id: 'donut', icon: PieChart, label: '环形图' },
   { id: 'scatter', icon: ScatterChart, label: '散点图' },
   { id: 'histogram', icon: BarChart3, label: '直方图' },
+  { id: 'boxplot', icon: BarChart3, label: '箱线图' },
   { id: 'area', icon: LineChart, label: '面积图' },
   { id: 'radar', icon: Layers, label: '雷达图' },
   { id: 'heatmap', icon: Layers, label: '热力图' },
+  { id: 'funnel', icon: Layers, label: '漏斗图' },
+  { id: 'waterfall', icon: BarChart3, label: '瀑布图' },
+  { id: 'sankey', icon: GitBranch, label: '桑基图' },
+  { id: 'sunburst', icon: Layers, label: '旭日图' },
+  { id: 'candlestick', icon: LineChart, label: 'K线图' },
   { id: 'wordcloud', icon: Layers, label: '词云图' },
   { id: 'table', icon: Table, label: '表格' },
   { id: 'stacked', icon: Layers, label: '堆积图' },
@@ -139,6 +148,24 @@ export default function Analysis() {
         break;
       case 'heatmap':
         if (!hasGroup) return '热力图需要设置分组字段';
+        break;
+      case 'sankey':
+        if (!hasGroup) return '桑基图需要设置分组字段（作为流向的源）';
+        break;
+      case 'boxplot':
+        if (!yIsNum) return '箱线图的 Y 轴需要选择数值字段';
+        break;
+      case 'candlestick':
+        if (!yIsNum) return 'K线图的 Y 轴需要选择数值字段';
+        break;
+      case 'waterfall':
+        if (!yIsNum) return '瀑布图的 Y 轴需要选择数值字段';
+        break;
+      case 'funnel':
+        if (!xIsCat && x) return '漏斗图的 X 轴建议选择分类字段';
+        break;
+      case 'donut':
+        if (!xIsCat && x) return '环形图的 X 轴建议选择分类字段';
         break;
       case 'stacked':
       case 'stacked_bar':
