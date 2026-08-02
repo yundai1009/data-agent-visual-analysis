@@ -50,12 +50,13 @@ class LLMError(Exception):
     """LLM 调用相关错误。本模块对外不抛出，仅内部用于日志区分。"""
 
 
-def is_llm_configured() -> bool:
+def is_llm_configured(api_key: Optional[str] = None) -> bool:
     """LLM 是否真的配置了可用 key。
 
     当 ``LLM_API_KEY`` 缺失或为占位字符串时，全链路应静默回退到关键词匹配。
+    可选传 ``api_key``（如 BYOK 用户自带 Key）优先判断，否则查服务端 EnvConfig。
     """
-    key = (EnvConfig.LLM_API_KEY or "").strip()
+    key = (api_key or EnvConfig.LLM_API_KEY or "").strip()
     return key.lower() not in _UNCONFIGURED_KEY_PLACEHOLDERS
 
 

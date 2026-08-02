@@ -406,18 +406,16 @@ def test_词云单列数值_400提示(client):
 
 
 def test_BYOK用户Key优先于服务端(client):
-    """用户传 X-LLM-API-Key → llm_config.api_key 用用户 Key（BYOK）。"""
+    """服务端 Key 为占位符时，用户传 X-LLM-API-Key 仍能启用 LLM，且用用户 Key。"""
     import 后端_核心.agent.编排器 as orc_mod
     captured = {}
     orig_cc = orc_mod.chat_completion
-    orig_configured = orc_mod.is_llm_configured
 
     def fake_chat(messages, **kw):
         captured["llm_config"] = kw.get("llm_config")
         return None  # LLM 失败 → 规则兜底，报表仍生成
 
     orc_mod.chat_completion = fake_chat
-    orc_mod.is_llm_configured = lambda: True
     try:
         tok = _register(client, "byok")
         content = "地区,销售额\n华东,100\n华南,200\n华北,150\n"
@@ -429,27 +427,27 @@ def test_BYOK用户Key优先于服务端(client):
             "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
         }, headers={"Authorization": f"Bearer {tok}", "X-LLM-API-Key": "sk-user-123"})
         assert r.status_code == 200, r.text[:200]
+        # 修复前此处 captured 为空（服务端 Key 占位符时 LLM 不启用）；修复后用户 Key 有效 → 启用
         assert captured.get("llm_config") is not None
         assert captured["llm_config"].api_key == "sk-user-123"
     finally:
         orc_mod.chat_completion = orig_cc
-        orc_mod.is_llm_configured = orig_configured
 
 
 def test_BYOK不填Key回退服务端(client):
-    """不带 X-LLM-API-Key → llm_config.api_key 用服务端 EnvConfig。"""
+    """不带 X-LLM-API-Key → 用服务端 Key（模拟服务端已配真 Key）。"""
     import 后端_核心.agent.编排器 as orc_mod
     from config.settings import EnvConfig
     captured = {}
     orig_cc = orc_mod.chat_completion
-    orig_configured = orc_mod.is_llm_configured
+    orig_key = EnvConfig.LLM_API_KEY
+    EnvConfig.LLM_API_KEY = "sk-server-real"  # 模拟服务端配置了真 Key
 
     def fake_chat(messages, **kw):
         captured["llm_config"] = kw.get("llm_config")
         return None
 
     orc_mod.chat_completion = fake_chat
-    orc_mod.is_llm_configured = lambda: True
     try:
         tok = _register(client, "byok2")
         content = "地区,销售额\n华东,100\n华南,200\n"
@@ -461,10 +459,10 @@ def test_BYOK不填Key回退服务端(client):
         }, headers={"Authorization": f"Bearer {tok}"})
         assert r.status_code == 200, r.text[:200]
         assert captured.get("llm_config") is not None
-        assert captured["llm_config"].api_key == EnvConfig.LLM_API_KEY
+        assert captured["llm_config"].api_key == "sk-server-real"
     finally:
         orc_mod.chat_completion = orig_cc
-        orc_mod.is_llm_configured = orig_configured
+        EnvConfig.LLM_API_KEY = orig_key
 
 def test_上传非法后缀_400(client):
     tok = _register(client, "erin")

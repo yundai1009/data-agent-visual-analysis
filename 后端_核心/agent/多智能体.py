@@ -104,7 +104,7 @@ def 多智能体分析(
     intent = None
     intent_source = "无"
 
-    if not is_llm_configured() or not (分析需求 or "").strip():
+    if not is_llm_configured(llm_config.api_key if llm_config else None) or not (分析需求 or "").strip():
         trace.记录观察(轮次=0, 说明="LLM 未配置，使用关键词匹配降级", 状态="成功")
         return _降级(画像, 分析需求, trace)
 

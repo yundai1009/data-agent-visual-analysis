@@ -91,7 +91,8 @@ def 编排Agent(
     if enable_llm is False:
         enable_llm = False
     else:
-        enable_llm = is_llm_configured()
+        # BYOK：按本次请求的 llm_config.api_key 判断（用户自带 Key 有效即启用 LLM）
+        enable_llm = is_llm_configured(llm_config.api_key if llm_config else None)
 
     intent_override = None
     intent_source = "无"

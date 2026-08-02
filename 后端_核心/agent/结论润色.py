@@ -89,7 +89,7 @@ def 润色结论(
     llm_config: Optional["LLMRequestConfig"] = None,
 ) -> Optional[str]:
     """LLM 润色结论；失败返回 None，调用方回退到模板拼接。"""
-    if not is_llm_configured():
+    if not is_llm_configured(llm_config.api_key if llm_config else None):
         return None
 
     推荐 = 推荐说明 or {}
