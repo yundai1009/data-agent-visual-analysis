@@ -128,7 +128,7 @@ export default function Report() {
               </button>
             </div>
           )}
-          <span className="flex items-center gap-1 px-2.5 py-1 rounded text-xs bg-indigo-50 text-indigo-600 border border-indigo-200">
+          <span className="flex items-center gap-1 px-2.5 py-1 rounded text-xs bg-accent-soft text-accent border border-accent/20">
             <Sparkles className="w-3 h-3" /> {intentSource === 'LLM' ? 'AI 生成' : intentSource === '规则' ? '规则匹配' : '自动'}
           </span>
           <span className="px-2.5 py-1 rounded text-xs bg-gray-50 text-gray-500 border border-gray-200">{chartTypeLabel}</span>
@@ -150,12 +150,12 @@ export default function Report() {
       {recommendations.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 p-4 mt-4">
           <div className="flex items-center gap-2 mb-2.5">
-            <svg className="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
+            <svg className="w-4 h-4 text-accent-soft0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
             <span className="text-xs font-semibold text-gray-500">推荐依据</span>
           </div>
           <div className="flex flex-wrap gap-1.5">
             {recommendations.map((r, i) => (
-              <span key={i} className="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-600 text-xs border border-indigo-200">{r}</span>
+              <span key={i} className="px-2.5 py-1 rounded-full bg-accent-soft text-accent text-xs border border-accent/20">{r}</span>
             ))}
           </div>
         </div>
@@ -223,7 +223,7 @@ export default function Report() {
             {trace.length > 0 ? trace.map((step, i) => (
               <div key={i} className="flex gap-3 py-2.5">
                 <span className={`shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium ${
-                  step.状态 === '成功' || step.状态 === '完成' ? 'bg-emerald-100 text-emerald-600' : 'bg-indigo-100 text-indigo-600'
+                  step.状态 === '成功' || step.状态 === '完成' ? 'bg-emerald-100 text-emerald-600' : 'bg-accent-soft text-accent'
                 }`}>
                   {step.状态 === '成功' || step.状态 === '完成' ? '✓' : i + 1}
                 </span>

@@ -3,7 +3,16 @@ import * as echarts from 'echarts';
 // 词云扩展：echarts-wordcloud 2.x 自动注册（与 echarts 6 的兼容性依赖运行时；若报错回退到 ECharts 自定义 series 或直接文字展示）
 import 'echarts-wordcloud';
 
-const COLORS = ['#6366f1', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
+// 藏青系协调色板 + 主题常量（阶段 13 重设计：与 UI 主色统一）
+const COLORS = ['#0f4c81', '#3d7bb8', '#5b8cb8', '#8aa9c4', '#b45309', '#0f766e', '#64748b', '#334155'];
+const CHART_TEXT_STYLE = { fontFamily: 'Noto Sans SC, Microsoft YaHei, sans-serif', fontSize: 12, color: '#475569' };
+const CHART_TOOLTIP = {
+  backgroundColor: '#ffffff',
+  borderColor: '#e2e8f0',
+  borderWidth: 1,
+  textStyle: { fontFamily: 'Noto Sans SC, Microsoft YaHei, sans-serif', fontSize: 12, color: '#1e293b' },
+  extraCssText: 'box-shadow: 0 8px 16px -8px rgba(15,76,129,.15); border-radius: 8px;',
+};
 
 export default function EChartsChart({ chartType, chartConfig, height = 320 }) {
   const containerRef = useRef(null);
@@ -75,9 +84,12 @@ function buildOption(chartType, config) {
   const valueField = config.值;
 
   const base = {
-    title: { text: title, left: 'center', textStyle: { fontSize: 14 } },
+    title: { text: title, left: 'center', textStyle: { fontSize: 14, fontWeight: 600, color: '#1e293b' } },
     color: COLORS,
+    textStyle: CHART_TEXT_STYLE,
     grid: { left: '3%', right: '4%', bottom: '8%', containLabel: true },
+    animationDuration: 600,
+    animationEasing: 'cubicOut',
   };
 
   const type = chartType || 'bar';
@@ -86,7 +98,7 @@ function buildOption(chartType, config) {
     const nk = nameField || xField;
     const vk = valueField || (yFields[0] || Object.keys(rows[0]).find(k => k !== nk) || '');
     return {
-      ...base, tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+      ...base, tooltip: { ...CHART_TOOLTIP, trigger: 'item', formatter: '{b}: {c} ({d}%)' },
       series: [{
         type: 'pie', radius: type === 'donut' ? ['45%', '70%'] : ['0%', '60%'],
         data: rows.map(r => ({ name: String(r[nk] ?? ''), value: Number(r[vk]) || 0 })),
@@ -150,7 +162,7 @@ function buildOption(chartType, config) {
     const xVals = [...new Set(rows.map(r => String(r[xField] ?? '')))];
     const yf = yFields[0] || Object.keys(rows[0]).find(k => k !== xField && k !== groupField) || '';
     return {
-      ...base, tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      ...base, tooltip: { ...CHART_TOOLTIP, trigger: 'axis', axisPointer: { type: 'shadow' } },
       legend: { data: groups, bottom: 0 },
       xAxis: { type: 'category', data: xVals },
       yAxis: { type: 'value' },
@@ -165,7 +177,7 @@ function buildOption(chartType, config) {
   if (type === 'histogram') {
     const yf = yFields[0] || Object.keys(rows[0]).find(k => k !== xField) || '';
     return {
-      ...base, tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      ...base, tooltip: { ...CHART_TOOLTIP, trigger: 'axis', axisPointer: { type: 'shadow' } },
       xAxis: { type: 'category', data: rows.map(r => String(r[xField] ?? '')), axisLabel: { rotate: 45 } },
       yAxis: { type: 'value' },
       series: [{ type: 'bar', data: rows.map(r => Number(r[yf]) || 0), barWidth: '99%', itemStyle: { color: '#6366f1' } }],
@@ -191,7 +203,7 @@ function buildOption(chartType, config) {
     const nk = nameField || xField || Object.keys(rows[0])[0];
     const vk = valueField || (yFields[0] || Object.keys(rows[0]).find(k => k !== nk) || '');
     return {
-      ...base, tooltip: { trigger: 'item', formatter: '{b}: {c}' },
+      ...base, tooltip: { ...CHART_TOOLTIP, trigger: 'item', formatter: '{b}: {c}' },
       series: [{
         type: 'funnel', left: '12%', width: '76%', top: 40, bottom: 20,
         label: { formatter: '{b} {c}' },
@@ -238,7 +250,7 @@ function buildOption(chartType, config) {
     let acc = 0;
     for (const v of values) { baseData.push(acc); acc += v; }
     return {
-      ...base, tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      ...base, tooltip: { ...CHART_TOOLTIP, trigger: 'axis', axisPointer: { type: 'shadow' } },
       xAxis: { type: 'category', data: [...rows.map(r => String(r[nk] ?? '')), '合计'] },
       yAxis: { type: 'value' },
       series: [

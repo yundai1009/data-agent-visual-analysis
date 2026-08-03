@@ -82,7 +82,7 @@ export default function Login() {
       <div className="w-full max-w-sm">
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-8">
           <div className="text-center mb-6">
-            <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-indigo-50 flex items-center justify-center text-2xl">📊</div>
+            <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-accent-soft flex items-center justify-center text-2xl">📊</div>
             <h1 className="text-lg font-semibold text-gray-900">数据分析 Agent 平台</h1>
             <p className="text-xs text-gray-400 mt-1">{mode === 'login' ? '登录以继续' : '创建新账号'}</p>
           </div>
@@ -97,7 +97,7 @@ export default function Login() {
             <div>
               <label className="text-xs text-gray-400 block mb-1">{mode === 'login' ? '用户名或邮箱' : '用户名'}</label>
               <input
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 focus:outline-none focus:border-indigo-400"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 focus:outline-none focus:border-accent"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder={mode === 'login' ? '输入用户名或邮箱' : '输入用户名'}
@@ -111,7 +111,7 @@ export default function Login() {
                   <label className="text-xs text-gray-400 block mb-1">邮箱</label>
                   <input
                     type="email"
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 focus:outline-none focus:border-indigo-400"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 focus:outline-none focus:border-accent"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="用于接收注册验证码"
@@ -124,7 +124,7 @@ export default function Login() {
                     <input
                       inputMode="numeric"
                       maxLength={6}
-                      className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 focus:outline-none focus:border-indigo-400"
+                      className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 focus:outline-none focus:border-accent"
                       value={code}
                       onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
                       placeholder="6 位数字验证码"
@@ -134,7 +134,7 @@ export default function Login() {
                       type="button"
                       disabled={sending || cooldown > 0}
                       onClick={handleSendCode}
-                      className="shrink-0 px-3 py-2 rounded-lg border border-gray-200 text-xs text-indigo-600 hover:bg-indigo-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="shrink-0 px-3 py-2 rounded-lg border border-gray-200 text-xs text-accent hover:bg-accent-soft transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {cooldown > 0 ? `${cooldown} 秒后重发` : sending ? '发送中…' : '获取验证码'}
                     </button>
@@ -147,7 +147,7 @@ export default function Login() {
               <label className="text-xs text-gray-400 block mb-1">密码</label>
               <input
                 type="password"
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 focus:outline-none focus:border-indigo-400"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 focus:outline-none focus:border-accent"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="至少 6 位"
@@ -166,7 +166,7 @@ export default function Login() {
 
           <p className="text-center text-xs text-gray-400 mt-4">
             {mode === 'login' ? '还没有账号？' : '已有账号？'}
-            <button className="text-indigo-500 hover:text-indigo-700 ml-1" onClick={() => switchMode(mode === 'login' ? 'register' : 'login')}>
+            <button className="text-accent-soft0 hover:text-accent-deep ml-1" onClick={() => switchMode(mode === 'login' ? 'register' : 'login')}>
               {mode === 'login' ? '去注册' : '去登录'}
             </button>
           </p>

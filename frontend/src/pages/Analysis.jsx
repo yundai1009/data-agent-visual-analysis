@@ -218,7 +218,7 @@ export default function Analysis() {
       <div className="mb-7">
         <h1 className="text-lg font-semibold text-gray-900">智能分析</h1>
         <p className="text-xs text-gray-400 mt-1">用自然语言描述分析需求，AI 自动生成报表</p>
-        {dataset && <p className="text-xs text-indigo-500 mt-1">当前数据集：{dataset.文件名}</p>}
+        {dataset && <p className="text-xs text-accent-soft0 mt-1">当前数据集：{dataset.文件名}</p>}
         {error && (
           <div className="mt-3 px-4 py-2.5 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700 flex items-center gap-2">
             <span>⚠</span>
@@ -265,6 +265,21 @@ export default function Analysis() {
         </div>
       </div>
 
+      {/* 意图预览条：输入自然语言后展示系统自动选择的图表/字段，确认后再生成 */}
+      {nlInput.trim().length > 0 && !generating && (
+        <div className="flex items-center gap-2 flex-wrap mt-3 px-4 py-2.5 rounded-xl bg-accent-soft text-xs text-accent">
+          <b className="font-semibold">已自动选择</b>
+          <span className="bg-white border border-accent/20 rounded-md px-2 py-1 font-medium">
+            {nlInput.trim() ? '图表：自动' : (chartMap[chartType] || '自动推荐')}
+          </span>
+          {xAxis && <span className="bg-white border border-accent/20 rounded-md px-2 py-1 font-medium">X {xAxis}</span>}
+          {yAxis && <span className="bg-white border border-accent/20 rounded-md px-2 py-1 font-medium">Y {yAxis}</span>}
+          {groupField && groupField !== '无' && <span className="bg-white border border-accent/20 rounded-md px-2 py-1 font-medium">分组 {groupField}</span>}
+          <span className="bg-white border border-accent/20 rounded-md px-2 py-1 font-medium">{aggMethod}</span>
+          <span className="ml-auto opacity-70">确认无误再生成</span>
+        </div>
+      )}
+
       {/* 高级选项开关 */}
       <div className="flex items-center justify-between mt-4">
         <button
@@ -283,7 +298,7 @@ export default function Analysis() {
       <div className="flex items-center gap-4 mt-3">
         <div className="flex items-center gap-2">
           <Cpu className="w-4 h-4 text-gray-400" />
-          <select className="border border-gray-200 rounded-lg px-3 py-2 text-xs bg-white focus:outline-none focus:border-indigo-400" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
+          <select className="border border-gray-200 rounded-lg px-3 py-2 text-xs bg-white focus:outline-none focus:border-accent" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
             {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
           </select>
         </div>
@@ -291,11 +306,11 @@ export default function Analysis() {
           <button className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${agentMode === 'single' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setAgentMode('single')}>
             单 Agent
           </button>
-          <button className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1 ${agentMode === 'multi' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setAgentMode('multi')}>
+          <button className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1 ${agentMode === 'multi' ? 'bg-white text-accent shadow-sm' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setAgentMode('multi')}>
             <GitBranch className="w-3 h-3" /> 多智能体
           </button>
         </div>
-        {agentMode === 'multi' && <span className="text-[11px] text-indigo-500">Supervisor + 3 个 Worker Agent</span>}
+        {agentMode === 'multi' && <span className="text-[11px] text-accent-soft0">Supervisor + 3 个 Worker Agent</span>}
       </div>
 
       {/* Chart type */}
@@ -310,13 +325,13 @@ export default function Analysis() {
                 key={ct.id}
                 className={`rounded-xl p-3 text-center cursor-pointer transition-all ${
                   active
-                    ? 'border-2 border-indigo-500 bg-indigo-50'
-                    : 'border border-gray-200 hover:border-indigo-300 hover:bg-gray-50'
+                    ? 'border-2 border-accent-soft0 bg-accent-soft'
+                    : 'border border-gray-200 hover:border-accent/60 hover:bg-gray-50'
                 }`}
                 onClick={() => handleChartSelect(ct.id)}
               >
-                <Icon className={`w-6 h-6 mx-auto mb-1 ${active ? 'text-indigo-500' : 'text-gray-300'}`} />
-                <p className={`text-xs ${active ? 'text-indigo-600 font-medium' : 'text-gray-500'}`}>{ct.label}</p>
+                <Icon className={`w-6 h-6 mx-auto mb-1 ${active ? 'text-accent-soft0' : 'text-gray-300'}`} />
+                <p className={`text-xs ${active ? 'text-accent font-medium' : 'text-gray-500'}`}>{ct.label}</p>
               </div>
             );
           })}
@@ -327,27 +342,27 @@ export default function Analysis() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
         <div>
           <label className="text-xs text-gray-400 mb-1.5 block">X 轴</label>
-          <select className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 focus:outline-none focus:border-indigo-400" value={xAxis} onChange={(e) => setXAxis(e.target.value)}>
+          <select className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 focus:outline-none focus:border-accent" value={xAxis} onChange={(e) => setXAxis(e.target.value)}>
             {fields.map((f) => <option key={f} value={f}>{textFields.includes(f) ? `📝 ${f}` : f}</option>)}
           </select>
         </div>
         <div>
           <label className="text-xs text-gray-400 mb-1.5 block">Y 轴</label>
-          <select className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 focus:outline-none focus:border-indigo-400" value={yAxis} onChange={(e) => setYAxis(e.target.value)}>
+          <select className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 focus:outline-none focus:border-accent" value={yAxis} onChange={(e) => setYAxis(e.target.value)}>
             {numFields.map((f) => <option key={f}>{f}</option>)}
             {numFields.length === 0 && fields.map((f) => <option key={f}>{f}</option>)}
           </select>
         </div>
         <div>
           <label className="text-xs text-gray-400 mb-1.5 block">分组字段</label>
-          <select className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 focus:outline-none focus:border-indigo-400" value={groupField} onChange={(e) => setGroupField(e.target.value)}>
+          <select className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 focus:outline-none focus:border-accent" value={groupField} onChange={(e) => setGroupField(e.target.value)}>
             <option>无</option>
             {fields.map((f) => <option key={f}>{f}</option>)}
           </select>
         </div>
         <div>
           <label className="text-xs text-gray-400 mb-1.5 block">聚合方式</label>
-          <select className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 focus:outline-none focus:border-indigo-400" value={aggMethod} onChange={(e) => setAggMethod(e.target.value)}>
+          <select className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 focus:outline-none focus:border-accent" value={aggMethod} onChange={(e) => setAggMethod(e.target.value)}>
             {['求和', '平均值', '计数', '最大值', '最小值'].map((m) => <option key={m}>{m}</option>)}
           </select>
         </div>

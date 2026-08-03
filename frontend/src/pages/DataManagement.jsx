@@ -158,7 +158,7 @@ export default function DataManagement() {
           <span className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded border ${backendOk ? 'text-emerald-600 bg-emerald-50 border-emerald-200' : 'text-red-600 bg-red-50 border-red-200'}`}>
             <span className={`w-1.5 h-1.5 rounded-full ${backendOk ? 'bg-emerald-500' : 'bg-red-500'}`} />{backendOk ? '系统正常' : '后端不可用'}
           </span>
-          <span className="flex items-center gap-1 text-xs text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded border border-indigo-200 cursor-default" title="开启后自动识别日期/分类/数值字段">
+          <span className="flex items-center gap-1 text-xs text-accent bg-accent-soft px-2.5 py-1 rounded border border-accent/20 cursor-default" title="开启后自动识别日期/分类/数值字段">
             <Sparkles className="w-3 h-3" /> 自动类型推断
           </span>
         </div>
@@ -170,14 +170,14 @@ export default function DataManagement() {
         onDragOver={(e) => e.preventDefault()}
         onClick={() => !uploading && document.getElementById('file-input').click()}
         className={`rounded-xl text-center cursor-pointer transition-all ${
-          dataset ? 'border border-emerald-200 bg-emerald-50/50 px-5 py-3' : 'border-2 border-dashed border-gray-300 hover:border-indigo-400 hover:bg-indigo-50/30 px-6 py-10'
+          dataset ? 'border border-emerald-200 bg-emerald-50/50 px-5 py-3' : 'border-2 border-dashed border-gray-300 hover:border-accent hover:bg-accent-soft/30 px-6 py-10'
         }`}
       >
         <input id="file-input" type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={(e) => e.target.files[0] && handleUpload(e.target.files[0])} />
         {uploading ? (
           <div className="max-w-sm mx-auto">
             <div className="flex items-center gap-3">
-              <svg className="w-5 h-5 text-indigo-500 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+              <svg className="w-5 h-5 text-accent-soft0 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
               <span className="text-sm text-gray-500">正在解析文件结构，请稍候...</span>
             </div>
           </div>
@@ -236,7 +236,7 @@ export default function DataManagement() {
             <div className="flex-1 max-w-[200px]">
               <div className="relative">
                 <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input className="w-full pl-8 pr-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-gray-50 focus:outline-none focus:border-indigo-400 focus:bg-white" placeholder="搜索字段名..." value={search} onChange={(e) => setSearch(e.target.value)} />
+                <input className="w-full pl-8 pr-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-gray-50 focus:outline-none focus:border-accent focus:bg-white" placeholder="搜索字段名..." value={search} onChange={(e) => setSearch(e.target.value)} />
               </div>
             </div>
             <select className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-gray-50" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
@@ -259,8 +259,8 @@ export default function DataManagement() {
                   </div>
                   <div className="flex-1 text-xs text-gray-400 truncate hidden md:block">{fieldAdvice?.理由 || ''}</div>
                   <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                    <button className="text-xs text-indigo-600 hover:bg-indigo-50 px-2 py-1 rounded" onClick={(e) => { e.stopPropagation(); setDetailField(field); }}>预览</button>
-                    <button className="text-xs text-indigo-600 hover:bg-indigo-50 px-2 py-1 rounded" onClick={(e) => { e.stopPropagation(); handleJoinAnalysis(field); }}>加入分析</button>
+                    <button className="text-xs text-accent hover:bg-accent-soft px-2 py-1 rounded" onClick={(e) => { e.stopPropagation(); setDetailField(field); }}>预览</button>
+                    <button className="text-xs text-accent hover:bg-accent-soft px-2 py-1 rounded" onClick={(e) => { e.stopPropagation(); handleJoinAnalysis(field); }}>加入分析</button>
                   </div>
                 </div>
               );
@@ -273,7 +273,7 @@ export default function DataManagement() {
       {profile && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
           <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3 cursor-pointer hover:bg-gray-50/50 transition-all hover:shadow-sm" onClick={handleNewAnalysis}>
-            <div className="w-10 h-10 rounded-lg bg-indigo-50 flex items-center justify-center text-lg">📊</div>
+            <div className="w-10 h-10 rounded-lg bg-accent-soft flex items-center justify-center text-lg">📊</div>
             <div><p className="text-sm font-medium text-gray-700">基于此数据集新建分析</p><p className="text-xs text-gray-400 mt-0.5">自动带入当前数据集上下文</p></div>
           </div>
           <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3 cursor-pointer hover:bg-gray-50/50 transition-all hover:shadow-sm" onClick={handleClean}>
@@ -300,7 +300,7 @@ export default function DataManagement() {
                 <div className="bg-gray-50 rounded-lg p-3"><p className="text-xs text-gray-400">字段类型</p><p className="text-sm mt-1 font-medium">{typeLabels[inferType(detailField, profile)]}</p></div>
                 <div className="bg-gray-50 rounded-lg p-3"><p className="text-xs text-gray-400">空值数量</p><p className="text-sm mt-1 font-mono">{(profile.缺失值 || {})[detailField] ?? '0'}</p></div>
               </div>
-              <div className="bg-indigo-50 rounded-lg p-3 text-xs text-indigo-600 leading-relaxed">
+              <div className="bg-accent-soft rounded-lg p-3 text-xs text-accent leading-relaxed">
                 <p className="font-medium mb-1">💡 字段建议</p>
                 <p>{(profile.字段建议 || []).find(a => a.字段 === detailField)?.理由 || '该字段可按需用于分析'}</p>
               </div>
@@ -354,7 +354,7 @@ export default function DataManagement() {
                 <div className="bg-gray-50 rounded-lg p-3"><p className="text-xs text-gray-400">清洗前</p><p className="text-sm mt-1 font-mono">{cleanResult.原行数} 行</p></div>
                 <div className="bg-green-50 rounded-lg p-3"><p className="text-xs text-green-600">清洗后</p><p className="text-sm mt-1 font-mono text-green-700">{cleanResult.清洗后行数} 行</p></div>
               </div>
-              <div className="bg-indigo-50 rounded-lg p-3 text-xs text-indigo-600">
+              <div className="bg-accent-soft rounded-lg p-3 text-xs text-accent">
                 <p className="font-medium mb-1">操作摘要</p>
                 <pre className="text-xs whitespace-pre-wrap">{JSON.stringify(cleanResult.操作摘要, null, 2)}</pre>
               </div>

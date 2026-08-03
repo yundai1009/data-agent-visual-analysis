@@ -1,1 +1,52 @@
 @import "tailwindcss";
+
+/* ============================================================
+   设计令牌（阶段 13 · 重设计）
+   专业数据工具风：藏青单主色 + 统一冷灰，去 AI 紫蓝指纹
+   ============================================================ */
+@theme {
+  /* 字体：Noto Sans SC 优先，中文环境回退系统 */
+  --font-sans: "Noto Sans SC", system-ui, -apple-system, "PingFang SC",
+               "Microsoft YaHei", sans-serif;
+
+  /* 主色：藏青（替代 indigo 紫蓝） */
+  --color-accent: #0f4c81;
+  --color-accent-deep: #0b3f6d;
+  --color-accent-soft: #e8eef5;
+
+  /* 墨色与表面：统一冷灰（slate 系） */
+  --color-ink: #1e293b;
+  --color-surface: #f8fafc;
+  --color-card: #ffffff;
+  --color-line: #e2e8f0;
+
+  /* 语义色（克制使用，仅状态处） */
+  --color-ok: #0f766e;
+  --color-ok-soft: #f0fdf9;
+  --color-amber: #b45309;
+  --color-amber-soft: #fef3c7;
+  --color-err: #b91c1c;
+}
+
+/* 数据工具基本功：数字等宽对齐 */
+body {
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 统一交互基调：过渡 + 按下反馈 + 键盘焦点环 */
+button, a, [role="button"] {
+  transition: all 0.2s ease;
+}
+button:active, [role="button"]:active {
+  transform: scale(0.98);
+}
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* 滚动条细化（可选质感） */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }

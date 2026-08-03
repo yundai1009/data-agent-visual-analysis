@@ -187,14 +187,23 @@ def 自动选字段(画像: Dict[str, Any], 图表类型: str) -> Dict[str, Any]
 
 
 def _合并显式字段(selected: Dict[str, Any], first: Optional[str], second: Optional[str]) -> Dict[str, Any]:
-    """用户显式指定字段时覆盖自动选择（【字段】模板优先）。"""
+    """用户显式指定字段时覆盖自动选择（【字段】模板优先）。
+
+    - first → X 轴
+    - second：需要分组的图表（热力/堆积/桑基/旭日）→ 分组字段；
+      其它图表 → Y 轴指标（避免误设分组导致 pandas 列冲突）
+    """
     result = dict(selected)
     if first:
         result["x轴"] = first
     if second:
-        result["y轴"] = [second] if "y轴" in result else [second]
-        if result.get("分组字段") is None:
+        分组类图表 = ("热力图", "堆积柱状图", "桑基图", "旭日图")
+        if result.get("图表类型") in 分组类图表:
             result["分组字段"] = second
+        else:
+            y_list = result.get("y轴") or []
+            if second not in y_list:
+                result["y轴"] = [second] + [f for f in y_list if f != second]
     return result
 
 
@@ -205,7 +214,7 @@ def _受控语句配置(画像: Dict[str, Any], 分析需求: str) -> Dict[str, 
     first = _合法字段(画像, fields[0] if fields else None)
     second = _合法字段(画像, fields[1] if len(fields) > 1 else None)
 
-    if "交叉分布" in 文本 or "热力图" in 文本 or "矩阵" in 文本:
+    if "交叉分布" in 文本 or "热力图" in 文本 or "矩阵" in 文本 or "交叉分析" in 文本:
         return _合并显式字段(自动选字段(画像, "热力图"), first, second)
     if "直方图" in 文本 or "分布情况" in 文本 or "数值分布" in 文本:
         return _合并显式字段(自动选字段(画像, "直方图"), first, second)

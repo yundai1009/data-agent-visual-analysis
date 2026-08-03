@@ -43,7 +43,7 @@ export default function Sidebar({ collapsed, onToggle }) {
             className={({ isActive }) =>
               `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-150 relative ${
                 isActive
-                  ? 'bg-indigo-50/80 text-indigo-600 font-medium'
+                  ? 'bg-accent-soft/80 text-accent font-medium'
                   : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
               }`
             }
@@ -51,7 +51,7 @@ export default function Sidebar({ collapsed, onToggle }) {
             {({ isActive }) => (
               <>
                 {isActive && (
-                  <span className="absolute left-0 top-2 bottom-2 w-[3px] bg-indigo-500 rounded-r-[3px]" />
+                  <span className="absolute left-0 top-2 bottom-2 w-[3px] bg-accent-soft0 rounded-r-[3px]" />
                 )}
                 <item.icon className="w-4 h-4 shrink-0" />
                 <span className={`transition-opacity duration-200 whitespace-nowrap ${collapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'}`}>

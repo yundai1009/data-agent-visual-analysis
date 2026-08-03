@@ -405,6 +405,32 @@ def test_词云单列数值_400提示(client):
     assert "文本字段" in r.json()["message"]
 
 
+def test_字段模板不误设分组(client):
+    """【字段】显式指定时：非分组类图表（饼图）不应把第二个字段设成分组，避免 pandas 列冲突 400。"""
+    tok = _register(client, "tplate")
+    content = ("地区,渠道,销售额,日期\n"
+               "华东,线上,100,2024-01-01\n"
+               "华南,线下,200,2024-01-02\n"
+               "华北,线上,150,2024-01-03\n")
+    r = _upload(client, tok, filename="d.csv", content=content)
+    assert r.status_code == 200, r.text
+    did = r.json()["数据集ID"]
+    # 占比 → 饼图：y=销售额，分组必须为 None（否则 groupby 重复列报错）
+    r = client.post("/reports/generate", json={
+        "数据集ID": did, "分析需求": "按【地区】看【销售额】占比", "图表类型": "自动推荐",
+        "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
+    }, headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200, r.text[:200]
+    assert r.json()["图表类型"] == "饼图"
+    # 交叉分析 → 热力图：第二个字段（分类）作分组字段
+    r = client.post("/reports/generate", json={
+        "数据集ID": did, "分析需求": "按【地区】和【渠道】做【销售额】交叉分析", "图表类型": "自动推荐",
+        "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
+    }, headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200, r.text[:200]
+    assert r.json()["图表类型"] == "热力图"
+
+
 def test_BYOK用户Key优先于服务端(client):
     """服务端 Key 为占位符时，用户传 X-LLM-API-Key 仍能启用 LLM，且用用户 Key。"""
     import 后端_核心.agent.编排器 as orc_mod

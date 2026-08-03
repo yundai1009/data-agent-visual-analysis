@@ -72,7 +72,7 @@ export default function LLMConfig() {
             <div>
               <label className="text-[11px] text-gray-400 block mb-1">服务商</label>
               <select
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-gray-50 focus:outline-none focus:border-indigo-400"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-gray-50 focus:outline-none focus:border-accent"
                 value={config.provider}
                 onChange={e => setConfig(c => ({ provider: e.target.value, model: '' }))}
               >
@@ -82,7 +82,7 @@ export default function LLMConfig() {
             <div>
               <label className="text-[11px] text-gray-400 block mb-1">模型</label>
               <select
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-gray-50 focus:outline-none focus:border-indigo-400"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-gray-50 focus:outline-none focus:border-accent"
                 value={config.model}
                 onChange={e => setConfig(c => ({ ...c, model: e.target.value }))}
                 disabled={modelOptions.length === 0}
@@ -94,7 +94,7 @@ export default function LLMConfig() {
               <label className="text-[11px] text-gray-400 block mb-1">API Key（可选）</label>
               <input
                 type="password"
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-gray-50 focus:outline-none focus:border-indigo-400"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-gray-50 focus:outline-none focus:border-accent"
                 value={apiKey}
                 onChange={e => setApiKey(e.target.value)}
                 placeholder="留空则使用服务端配置的 Key"
