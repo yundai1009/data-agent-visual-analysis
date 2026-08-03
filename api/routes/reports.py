@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import queue
 import threading
 from typing import Any, Callable, Dict, Optional, Tuple
@@ -31,7 +32,6 @@ _STREAM_QUEUE_MAX = 64
 def _json_safe(obj: Any) -> Any:
     """递归清洗非有限浮点（NaN/Infinity），保证 SSE 事件输出合法 JSON。"""
     if isinstance(obj, float):
-        import math
         return obj if math.isfinite(obj) else None
     if isinstance(obj, dict):
         return {k: _json_safe(v) for k, v in obj.items()}
@@ -165,7 +165,7 @@ def generate_report_stream(
 
     event_q: "queue.Queue[Optional[Dict[str, Any]]]" = queue.Queue(maxsize=_STREAM_QUEUE_MAX)
 
-    def _push(ev: Dict[str, Any]) -> None:
+    def _push(ev: Optional[Dict[str, Any]]) -> None:
         # 队列满说明客户端已断开且无人消费：丢弃事件，绝不阻塞 worker，
         # 保证 finally 必达（并发名额必释放，不会永久 503）
         try:
@@ -179,13 +179,13 @@ def generate_report_stream(
         except ValueError as exc:
             # 参数/字段问题（词云无词、桑基缺分组）→ 可给用户看的明确提示
             logger.warning("报表流式生成参数不满足: %s", exc)
-            event_q.put({"type": "error", "message": str(exc)})
+            _push({"type": "error", "message": str(exc)})
         except Exception as exc:  # noqa: BLE001 - SSE 错误统一走事件通道
             # 内部异常只记日志，对外返回通用消息（避免泄露路径/堆栈/数据细节）
             logger.exception("报表流式生成失败")
-            event_q.put({"type": "error", "message": "分析失败，请检查参数后重试"})
+            _push({"type": "error", "message": "分析失败，请检查参数后重试"})
         finally:
-            event_q.put(None)  # 结束哨兵
+            _push(None)  # 结束哨兵
             _STREAM_SEMAPHORE.release()
 
     threading.Thread(target=worker, daemon=True).start()

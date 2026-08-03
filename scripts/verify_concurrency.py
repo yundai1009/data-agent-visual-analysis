@@ -48,3 +48,9 @@ print(f"200={ok}  503={busy}  其他={[c for c in codes if c not in (200, 503)]}
 assert busy > 0, "应出现 503（并发限制未生效）"
 assert ok > 0, "应至少一个成功"
 print("[PASS] 并发限制生效：超出 4 并发的请求返回 503")
+
+# 名额恢复验证：断开的 worker 应自然结束并释放并发名额，随后正常请求应恢复 200
+time.sleep(3)  # 等待后台 worker 结束（无 LLM 环境生成约 0.1s）
+r = s.post(f"{BASE}/reports/generate-stream", headers=headers, json=payload, timeout=10)
+assert r.status_code == 200, f"名额未恢复，应 200，实际 {r.status_code}"
+print("[PASS] 断开后名额恢复：正常请求重新获得 200")
