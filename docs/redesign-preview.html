@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>重设计预览 · 专业数据工具风</title>
+<style>
+  :root {
+    --ink: #1e293b;
+    --accent: #0f4c81;
+    --accent-soft: #e8eef5;
+    --surface: #f8fafc;
+    --card: #ffffff;
+    --line: #e2e8f0;
+    --muted: #64748b;
+    --ok: #0f766e;
+    --warn: #b45309;
+    --err: #b91c1c;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif; background: #0f172a; color: var(--ink); -webkit-font-smoothing: antialiased; }
+  /* 顶部说明条 */
+  .bar { padding: 28px 40px; color: #e2e8f0; border-bottom: 1px solid #1e293b; }
+  .bar h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+  .bar p { color: #94a3b8; font-size: 13px; margin-top: 6px; }
+  .wrap { max-width: 1440px; margin: 0 auto; padding: 40px; display: flex; flex-direction: column; gap: 56px; }
+  .view-label { color: #94a3b8; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 14px; }
+  .win { background: var(--surface); border-radius: 16px; overflow: hidden; box-shadow: 0 24px 48px -12px rgba(2,6,23,.5); border: 1px solid #1e293b; }
+  .win-top { display: flex; align-items: center; gap: 6px; padding: 10px 14px; background: #1e293b; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .win-title { margin-left: 8px; color: #94a3b8; font-size: 12px; }
+  .app { min-height: 640px; display: flex; }
+  /* 侧边栏 */
+  .side { width: 220px; background: rgba(255,255,255,.72); backdrop-filter: blur(8px); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 18px 12px; }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 6px 10px 16px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+  .brand-logo { width: 34px; height: 34px; border-radius: 10px; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; }
+  .brand-name { font-weight: 600; font-size: 14px; }
+  .brand-sub { font-size: 11px; color: var(--muted); }
+  .nav { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; font-size: 13px; color: #475569; cursor: pointer; transition: all .2s; }
+  .nav-item:hover { background: #f1f5f9; }
+  .nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .nav-ic { width: 16px; height: 16px; border-radius: 4px; background: currentColor; opacity: .85; }
+  .side-foot { border-top: 1px solid var(--line); padding-top: 12px; display: flex; align-items: center; gap: 10px; padding: 12px 10px 0; }
+  .avatar { width: 30px; height: 30px; border-radius: 8px; background: #e2e8f0; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #475569; }
+  /* 主区 */
+  .main { flex: 1; padding: 28px 32px; overflow: hidden; }
+  .page-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 22px; }
+  .page-head h2 { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
+  .page-head p { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; padding: 5px 10px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-weight: 500; }
+  .chip.ok { background: #f0fdf9; color: var(--ok); }
+  /* 统计卡（去 border 靠色差） */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 22px; }
+  .stat { background: var(--card); border-radius: 12px; padding: 16px; box-shadow: 0 8px 16px -8px rgba(15,76,129,.06); }
+  .stat-label { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .stat-num { font-size: 26px; font-weight: 700; margin-top: 6px; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .stat-sub { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+  .stat.accent .stat-num { color: var(--accent); }
+  /* 面板（去 border） */
+  .panel { background: var(--card); border-radius: 14px; padding: 18px; box-shadow: 0 8px 16px -8px rgba(15,76,129,.06); margin-bottom: 18px; }
+  .panel-title { font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+  /* 字段行 */
+  .frow { display: flex; align-items: center; gap: 10px; padding: 9px 6px; border-bottom: 1px solid #f1f5f9; font-size: 13px; }
+  .frow:last-child { border-bottom: 0; }
+  .tag { font-size: 10px; padding: 2px 7px; border-radius: 4px; font-weight: 500; }
+  .tag.cat { background: #fef3c7; color: #92400e; }
+  .tag.num { background: #dcfce7; color: #166534; }
+  .tag.date { background: #e0f2fe; color: #075985; }
+  .tag.txt { background: #ede9fe; color: #5b21b6; }
+  .tag.accent { background: var(--accent-soft); color: var(--accent); }
+  /* 快捷操作不对称：2+1 */
+  .quick { display: grid; grid-template-columns: 1.2fr 1.2fr .8fr; gap: 14px; }
+  .quick-card { background: var(--card); border-radius: 12px; padding: 14px; box-shadow: 0 8px 16px -8px rgba(15,76,129,.06); cursor: pointer; transition: all .2s; }
+  .quick-card:hover { transform: translateY(-2px); }
+  .quick-ic { width: 34px; height: 34px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 15px; background: var(--accent-soft); margin-bottom: 8px; }
+  .quick-t { font-size: 13px; font-weight: 600; }
+  .quick-s { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  /* 按钮 */
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all .2s; border: 0; }
+  .btn:active { transform: scale(.98); }
+  .btn-primary { background: var(--accent); color: #fff; box-shadow: 0 8px 16px -8px rgba(15,76,129,.4); }
+  .btn-primary:hover { background: #0b3f6d; }
+  .btn-ghost { background: transparent; color: #475569; border: 1px solid var(--line); }
+  .btn-ghost:hover { background: #f8fafc; }
+  /* 分析页 */
+  .nl-input { width: 100%; border: 1.5px solid var(--line); border-radius: 12px; padding: 14px; font-size: 14px; font-family: inherit; resize: none; outline: none; transition: all .2s; background: #fff; }
+  .nl-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(15,76,129,.12); }
+  .chart-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+  .chart-cell { border: 1px solid var(--line); border-radius: 10px; padding: 12px 6px; text-align: center; font-size: 12px; color: #475569; cursor: pointer; transition: all .2s; }
+  .chart-cell:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .chart-cell.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .chart-ic { width: 22px; height: 22px; margin: 0 auto 6px; border-radius: 5px; background: currentColor; opacity: .3; }
+  /* 报表页 */
+  .report-head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+  .report-head h3 { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; }
+  .chart-area { background: linear-gradient(180deg, #fff, #f8fafc); border-radius: 14px; padding: 26px 20px; height: 240px; position: relative; }
+  .bars { display: flex; align-items: flex-end; gap: 22px; height: 180px; padding: 0 30px; }
+  .bar { flex: 1; border-radius: 6px 6px 0 0; background: linear-gradient(180deg, #0f4c81, #3d7bb8); transition: all .3s; position: relative; }
+  .bar:hover { opacity: .85; }
+  .bar-x { position: absolute; bottom: -24px; left: 0; right: 0; text-align: center; font-size: 11px; color: var(--muted); }
+  .tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+  .tab { padding: 10px 2px; font-size: 13px; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; transition: all .2s; }
+  .tab.active { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
+  .rec-row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .rec { font-size: 11px; padding: 5px 9px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); }
+  .concl { font-size: 13px; line-height: 1.8; color: #475569; white-space: pre-line; }
+  /* 登录页 */
+  .login { min-height: 640px; display: grid; grid-template-columns: 1.1fr 1fr; }
+  .login-brand { background: linear-gradient(160deg, #0f4c81 0%, #123f68 60%, #0f2f4f 100%); color: #e2e8f0; padding: 56px 48px; display: flex; flex-direction: column; justify-content: space-between; }
+  .login-brand h2 { font-size: 30px; font-weight: 700; letter-spacing: -0.03em; color: #fff; line-height: 1.3; }
+  .login-brand p { font-size: 13px; color: #94a3b8; margin-top: 12px; line-height: 1.8; max-width: 30em; }
+  .login-brand .logo-big { width: 46px; height: 46px; border-radius: 12px; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2); display: flex; align-items: center; justify-content: center; font-size: 20px; }
+  .login-form { background: #fff; padding: 56px 48px; display: flex; flex-direction: column; justify-content: center; }
+  .login-form h3 { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+  .login-form .sub { font-size: 13px; color: var(--muted); margin: 6px 0 26px; }
+  .field { margin-bottom: 16px; }
+  .field label { font-size: 12px; color: #475569; display: block; margin-bottom: 6px; }
+  .field input { width: 100%; border: 1.5px solid var(--line); border-radius: 10px; padding: 11px 13px; font-size: 14px; font-family: inherit; outline: none; transition: all .2s; }
+  .field input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(15,76,129,.12); }
+  .code-row { display: flex; gap: 10px; }
+  .code-row input { flex: 1; }
+  .btn-code { padding: 0 14px; border-radius: 10px; border: 1px solid var(--line); background: #fff; font-size: 12px; color: var(--accent); cursor: pointer; transition: all .2s; font-weight: 500; }
+  .btn-code:hover { background: var(--accent-soft); }
+  .login-foot { font-size: 12px; color: var(--muted); text-align: center; margin-top: 20px; }
+  .login-foot a { color: var(--accent); font-weight: 500; text-decoration: none; }
+  /* 迷你图例 */
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; color: #94a3b8; }
+  .lg { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 14px; height: 14px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <h1>数据分析 Agent 平台 · 重设计预览</h1>
+  <p>专业数据工具风 · 藏青单主色 + 冷灰 · 去 AI 紫蓝指纹 · 真实字体/配色/布局（Playwright 截图）</p>
+  <div class="legend" style="margin-top:14px">
+    <span class="lg"><span class="sw" style="background:#0f4c81"></span>主色 accent #0F4C81</span>
+    <span class="lg"><span class="sw" style="background:#1e293b"></span>墨色 ink #1E293B</span>
+    <span class="lg"><span class="sw" style="background:#f8fafc"></span>基底 surface #F8FAFC</span>
+    <span class="lg"><span class="sw" style="background:#e2e8f0"></span>分隔线 slate-200</span>
+    <span class="lg"><span class="sw" style="background:#e8eef5"></span>主色柔面 accent-soft</span>
+  </div>
+</div>
+
+<div class="wrap">
+  <!-- 1 登录页 -->
+  <div>
+    <div class="view-label">01 · 登录 / 注册（双栏，破对称）</div>
+    <div class="win"><div class="win-top"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#10b981"></span><span class="win-title">登录 · 数据分析 Agent 平台</span></div>
+      <div class="login">
+        <div class="login-brand">
+          <div class="logo-big">📊</div>
+          <div>
+            <h2>把数据<br>说成一句话<br>图表就出来了</h2>
+            <p>上传 CSV，用自然语言描述分析需求，18 种图表自动选字段生成，还带 Agent 决策记录。</p>
+          </div>
+          <div style="font-size:11px;color:#64748b">登录后数据按账号隔离 · 演示模式免登录</div>
+        </div>
+        <div class="login-form">
+          <h3>登录</h3>
+          <div class="sub">使用用户名或邮箱</div>
+          <div class="field"><label>用户名或邮箱</label><input placeholder="admin 或 admin@example.com"></div>
+          <div class="field"><label>密码</label><input type="password" placeholder="至少 6 位"></div>
+          <button class="btn btn-primary" style="width:100%;justify-content:center">登录</button>
+          <div class="login-foot">还没有账号？<a href="#">去注册（邮箱验证码）</a></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2 数据管理 -->
+  <div>
+    <div class="view-label">02 · 数据管理（去 border 卡片 + 数值对齐 + 不对称快捷区）</div>
+    <div class="win"><div class="win-top"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#10b981"></span><span class="win-title">数据管理</span></div>
+      <div class="app">
+        <div class="side">
+          <div class="brand"><div class="brand-logo">DA</div><div><div class="brand-name">数据助手</div><div class="brand-sub">自助分析平台</div></div></div>
+          <div class="nav">
+            <div class="nav-item active"><span class="nav-ic"></span>数据管理</div>
+            <div class="nav-item"><span class="nav-ic"></span>智能分析</div>
+            <div class="nav-item"><span class="nav-ic"></span>报表历史</div>
+          </div>
+          <div class="side-foot"><div class="avatar">云</div><div style="font-size:12px;color:#475569">admin</div></div>
+        </div>
+        <div class="main">
+          <div class="page-head">
+            <div><h2>数据管理</h2><p>支持 CSV / Excel，自动识别字段类型与数据质量</p></div>
+            <div style="display:flex;gap:8px"><button class="btn btn-ghost">导入示例数据</button><span class="chip ok">● 系统正常</span></div>
+          </div>
+          <div class="stats">
+            <div class="stat accent"><div class="stat-label">总行数</div><div class="stat-num">1,284</div><div class="stat-sub">数据量正常</div></div>
+            <div class="stat"><div class="stat-label">字段数</div><div class="stat-num">6</div><div class="stat-sub">日期 1 · 分类 3 · 数值 2</div></div>
+            <div class="stat"><div class="stat-label">数据质量评级</div><div class="stat-num">A</div><div class="stat-sub">优秀</div></div>
+            <div class="stat"><div class="stat-label">缺失值数量</div><div class="stat-num">23</div><div class="stat-sub">2 个字段存在缺失</div></div>
+          </div>
+          <div class="panel">
+            <div class="panel-title">字段列表<span style="float:right;font-weight:400;color:#94a3b8">共 6 个字段</span></div>
+            <div class="frow"><span style="font-weight:500">地区</span><span class="tag cat">分类</span><span style="flex:1;font-size:11px;color:#94a3b8">适合做分组对比或柱状图 X 轴</span></div>
+            <div class="frow"><span style="font-weight:500">渠道</span><span class="tag cat">分类</span><span style="flex:1;font-size:11px;color:#94a3b8">适合做分组对比或柱状图 X 轴</span></div>
+            <div class="frow"><span style="font-weight:500">销售额</span><span class="tag num">数值</span><span style="flex:1;font-size:11px;color:#94a3b8">适合求和、平均值等聚合</span></div>
+            <div class="frow"><span style="font-weight:500">日期</span><span class="tag date">日期</span><span style="flex:1;font-size:11px;color:#94a3b8">适合观察趋势变化，折线图 X 轴</span></div>
+            <div class="frow"><span style="font-weight:500">📝 评论</span><span class="tag txt">文本</span><span style="flex:1;font-size:11px;color:#94a3b8">长文本，词云图自动使用</span></div>
+          </div>
+          <div class="quick">
+            <div class="quick-card"><div class="quick-ic">📊</div><div class="quick-t">基于此数据集新建分析</div><div class="quick-s">自动带入当前数据集上下文</div></div>
+            <div class="quick-card"><div class="quick-ic">🧹</div><div class="quick-t">一键基础清洗</div><div class="quick-s">去重 / 填充缺失 / 删除空行</div></div>
+            <div class="quick-card"><div class="quick-ic">📈</div><div class="quick-t">查看报表</div><div class="quick-s">浏览已生成的报告</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3 分析页 -->
+  <div>
+    <div class="view-label">03 · 智能分析（单主色聚焦 + 图表网格 + 模型浮层）</div>
+    <div class="win"><div class="win-top"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#10b981"></span><span class="win-title">智能分析</span></div>
+      <div class="app">
+        <div class="side">
+          <div class="brand"><div class="brand-logo">DA</div><div><div class="brand-name">数据助手</div><div class="brand-sub">自助分析平台</div></div></div>
+          <div class="nav">
+            <div class="nav-item"><span class="nav-ic"></span>数据管理</div>
+            <div class="nav-item active"><span class="nav-ic"></span>智能分析</div>
+            <div class="nav-item"><span class="nav-ic"></span>报表历史</div>
+          </div>
+        </div>
+        <div class="main">
+          <div class="page-head"><div><h2>智能分析</h2><p>用自然语言描述需求，自动选图表与字段</p></div><span class="chip">已加载：sales_2024.csv</span></div>
+          <div class="panel">
+            <textarea class="nl-input" rows="3" placeholder="例如：生成词云图 / 按【地区】看【销售额】占比 / 按【日期】看【销售额】趋势">各地区【销售额】箱线分布</textarea>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
+              <div style="display:flex;gap:8px;align-items:center">
+                <span class="chip">+ AI 模型 · deepseek-chat</span>
+                <span style="font-size:11px;color:#94a3b8;cursor:pointer">📊 占比分布 · 📈 趋势变化 · 📊 分组对比</span>
+              </div>
+              <button class="btn btn-primary">开始分析</button>
+            </div>
+          </div>
+          <div style="font-size:12px;color:#64748b;font-weight:600;margin:4px 0 10px">图表类型 · 选中自动重选字段</div>
+          <div class="chart-grid">
+            <div class="chart-cell active"><div class="chart-ic"></div>箱线图</div>
+            <div class="chart-cell"><div class="chart-ic"></div>柱状图</div>
+            <div class="chart-cell"><div class="chart-ic"></div>折线图</div>
+            <div class="chart-cell"><div class="chart-ic"></div>饼图</div>
+            <div class="chart-cell"><div class="chart-ic"></div>词云图</div>
+            <div class="chart-cell"><div class="chart-ic"></div>桑基图</div>
+            <div class="chart-cell"><div class="chart-ic"></div>漏斗图</div>
+            <div class="chart-cell"><div class="chart-ic"></div>旭日图</div>
+            <div class="chart-cell"><div class="chart-ic"></div>K线图</div>
+            <div class="chart-cell"><div class="chart-ic"></div>瀑布图</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4 报表页 -->
+  <div>
+    <div class="view-label">04 · 报表查看（色差分层 + 结论排版 + 方角标签）</div>
+    <div class="win"><div class="win-top"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#10b981"></span><span class="win-title">报表查看</span></div>
+      <div class="app">
+        <div class="side">
+          <div class="brand"><div class="brand-logo">DA</div><div><div class="brand-name">数据助手</div><div class="brand-sub">自助分析平台</div></div></div>
+          <div class="nav">
+            <div class="nav-item"><span class="nav-ic"></span>数据管理</div>
+            <div class="nav-item"><span class="nav-ic"></span>智能分析</div>
+            <div class="nav-item active"><span class="nav-ic"></span>报表历史</div>
+          </div>
+        </div>
+        <div class="main">
+          <div class="report-head">
+            <h3>各地区销售额箱线分布</h3>
+            <span class="chip">规则匹配</span>
+            <span class="tag accent">箱线图</span>
+            <span style="margin-left:auto;font-size:12px;color:#94a3b8">1 / 3 · 清空</span>
+          </div>
+          <div class="chart-area">
+            <div class="bars">
+              <div style="flex:1"></div>
+              <div class="bar" style="height:46%"><div class="bar-x">华东</div></div>
+              <div class="bar" style="height:74%"><div class="bar-x">华南</div></div>
+              <div class="bar" style="height:38%"><div class="bar-x">华北</div></div>
+              <div class="bar" style="height:60%"><div class="bar-x">西南</div></div>
+              <div class="bar" style="height:28%"><div class="bar-x">东北</div></div>
+              <div style="flex:1"></div>
+            </div>
+          </div>
+          <div class="panel" style="margin-top:16px">
+            <div class="panel-title">推荐依据</div>
+            <div class="rec-row"><span class="rec">分类字段适合做分组对比</span><span class="rec">数值字段适合分布统计</span><span class="rec">箱线图检测异常值</span></div>
+          </div>
+          <div class="tabs"><div class="tab active">分析结论</div><div class="tab">数据表</div><div class="tab">决策记录</div></div>
+          <div class="concl">各地区销售额中位数差异明显：华南（中位 312）显著高于华北（218）与东北（165）。华东存在两个高于上须的离群值，建议核查对应订单是否含异常大单或录入错误。整体分布右偏，均值高于中位，区域间差距主要由头部大单拉动。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
