@@ -28,10 +28,11 @@ payload = {
 def call(i):
     t0 = time.time()
     try:
-        # 不读流：发送后立刻断开模拟“发起即断开”攻击
-        r = requests.post(f"{BASE}/reports/generate-stream", headers=headers,
-                          json=payload, timeout=5, stream=False)
-        return i, r.status_code, round(time.time() - t0, 2)
+        # 真正模拟"发起即断开"：stream=True 只读响应头，with 退出即关闭连接，
+        # 后端 worker 仍在后台生成（无人消费）
+        with requests.post(f"{BASE}/reports/generate-stream", headers=headers,
+                           json=payload, timeout=5, stream=True) as r:
+            return i, r.status_code, round(time.time() - t0, 2)
     except Exception as exc:
         return i, f"exc:{type(exc).__name__}", round(time.time() - t0, 2)
 
