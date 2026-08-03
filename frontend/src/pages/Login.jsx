@@ -158,6 +158,7 @@ export default function Login() {
               <label className="text-xs text-gray-400 block mb-1">密码</label>
               <input
                 type="password"
+                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 focus:outline-none focus:border-accent"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
