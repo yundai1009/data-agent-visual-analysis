@@ -169,7 +169,10 @@ export async function generateReportStream(payload, { onEvent, signal } = {}) {
     body: JSON.stringify(payload),
     signal,
   });
-  if (!res.ok) throw await parseError(res);
+  if (!res.ok) {
+    if (res.status === 401) handleAuthExpired('/reports/generate-stream');
+    throw await parseError(res);
+  }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';

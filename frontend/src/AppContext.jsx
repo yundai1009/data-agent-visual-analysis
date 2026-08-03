@@ -26,6 +26,7 @@ export function AppProvider({ children }) {
     const onAuthExpired = () => {
       setUser(null);
       setIsAuthed(false);
+      setDataset(null); // 与 api.js 清除 dataset_cache 保持一致，避免旧数据集残留展示
     };
     window.addEventListener('auth:expired', onAuthExpired);
     return () => window.removeEventListener('auth:expired', onAuthExpired);
