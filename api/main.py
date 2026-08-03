@@ -110,11 +110,19 @@ async def spa_fallback(full_path: str, request: Request):
         target = (dist / full_path).resolve()
         # 路径穿越防护：只允许读取 dist 目录内的文件
         if target.is_file() and str(target).startswith(str(dist)):
+            # hash 文件名内容指纹：可安全长缓存（浏览器内容变了 hash 自动变）
+            if full_path.startswith("assets/") or "/assets/" in "/" + full_path:
+                return FileResponse(target, headers={"Cache-Control": "public, max-age=31536000, immutable"})
             return FileResponse(target)
     index = dist / "index.html"
     if not index.exists():
         raise HTTPException(status_code=404, detail="前端构建产物不存在，请先运行构建")
-    return HTMLResponse(index.read_text(encoding="utf-8"), media_type="text/html")
+    # HTML 永远不启发式缓存：每次请求都回源校验，保证拿到最新构建（引用新 hash 资源）
+    return HTMLResponse(
+        index.read_text(encoding="utf-8"),
+        media_type="text/html",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 if __name__ == "__main__":
