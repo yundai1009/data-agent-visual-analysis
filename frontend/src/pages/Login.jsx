@@ -78,13 +78,24 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#F7F8FA] px-4">
-      <div className="w-full max-w-sm">
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-8">
+    <div className="min-h-dvh grid lg:grid-cols-[1.15fr_1fr] bg-surface">
+      {/* 左：品牌区（大屏显示） */}
+      <div className="hidden lg:flex flex-col justify-between p-12 text-white"
+           style={{ background: 'linear-gradient(160deg, #0f4c81 0%, #123f68 60%, #0f2f4f 100%)' }}>
+        <div className="w-12 h-12 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center text-2xl">📊</div>
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight leading-snug text-white">把数据说成一句话<br />图表就出来了</h1>
+          <p className="mt-4 text-sm text-slate-300 leading-relaxed max-w-[30em]">上传 CSV，用自然语言描述分析需求，18 种图表自动选字段生成，附 Agent 决策记录。</p>
+        </div>
+        <p className="text-xs text-slate-400">登录后数据按账号隔离 · 演示模式免登录</p>
+      </div>
+      {/* 右：表单区 */}
+      <div className="flex items-center justify-center px-4 py-10 bg-white">
+        <div className="w-full max-w-sm">
           <div className="text-center mb-6">
-            <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-accent-soft flex items-center justify-center text-2xl">📊</div>
-            <h1 className="text-lg font-semibold text-gray-900">数据分析 Agent 平台</h1>
-            <p className="text-xs text-gray-400 mt-1">{mode === 'login' ? '登录以继续' : '创建新账号'}</p>
+            <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-accent-soft flex items-center justify-center text-2xl lg:hidden">📊</div>
+            <h1 className="text-xl font-bold tracking-tight text-ink">{mode === 'login' ? '登录' : '注册'}</h1>
+            <p className="text-xs text-gray-400 mt-1">{mode === 'login' ? '使用用户名或邮箱' : '创建新账号（邮箱验证码）'}</p>
           </div>
 
           {error && (
@@ -158,7 +169,7 @@ export default function Login() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-2.5 rounded-lg bg-gray-900 text-white text-sm font-medium hover:bg-gray-800 transition-all disabled:opacity-50"
+              className="w-full py-2.5 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-deep transition-all disabled:opacity-50"
             >
               {loading ? '处理中…' : mode === 'login' ? '登录' : '注册'}
             </button>
@@ -166,7 +177,7 @@ export default function Login() {
 
           <p className="text-center text-xs text-gray-400 mt-4">
             {mode === 'login' ? '还没有账号？' : '已有账号？'}
-            <button className="text-accent-soft0 hover:text-accent-deep ml-1" onClick={() => switchMode(mode === 'login' ? 'register' : 'login')}>
+            <button className="text-accent hover:text-accent-deep ml-1" onClick={() => switchMode(mode === 'login' ? 'register' : 'login')}>
               {mode === 'login' ? '去注册' : '去登录'}
             </button>
           </p>

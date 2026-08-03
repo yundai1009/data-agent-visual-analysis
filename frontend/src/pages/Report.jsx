@@ -10,6 +10,7 @@ export default function Report() {
   const [reportMeta, setReportMeta] = useState([]); // [{报表ID, 标题, 图表类型}]
   const [currentIndex, setCurrentIndex] = useState(0);
   const [localReport, setLocalReport] = useState(null);
+  const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState('conclusion');
   const [loadError, setLoadError] = useState('');
 
@@ -17,6 +18,7 @@ export default function Report() {
   // reportId（路由参数）优先展示指定报表，否则展示最新一张
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
     (async () => {
       try {
         const res = await listReports(50);
@@ -35,7 +37,7 @@ export default function Report() {
       } catch (e) {
         console.error('报表列表加载失败:', e);
         setLoadError('报表加载失败，请检查后端服务是否可用');
-      }
+      } finally { if (!cancelled) setLoading(false); }
     })();
     return () => { cancelled = true; };
   }, [reportId]);
@@ -74,6 +76,19 @@ export default function Report() {
   };
 
   const report = localReport;
+
+  // 骨架屏（加载中且无数据）
+  if (loading && !report) {
+    return (
+      <div className="p-8 max-w-5xl mx-auto space-y-4">
+        <div className="h-6 w-48 bg-gray-200 rounded-lg animate-pulse" />
+        <div className="h-[360px] bg-gray-100 rounded-xl animate-pulse" />
+        <div className="h-4 w-1/3 bg-gray-200 rounded-lg animate-pulse" />
+        <div className="h-3 w-2/3 bg-gray-200 rounded-lg animate-pulse" />
+        <div className="h-3 w-1/2 bg-gray-200 rounded-lg animate-pulse" />
+      </div>
+    );
+  }
 
   if (!report) {
     return (
@@ -135,8 +150,9 @@ export default function Report() {
         </div>
       </div>
 
-      {/* ECharts Chart */}
-      <div className="bg-white rounded-xl border border-gray-200 p-5">
+      {/* ECharts Chart：藏青光晕舞台 */}
+      <div className="rounded-xl p-5"
+           style={{ background: 'radial-gradient(120% 100% at 50% 0%, #eef3f9 0%, #f8fafc 55%, #f1f5f9 100%)' }}>
         {chartTypeKey === 'table' ? (
           <div className="text-sm text-gray-400 text-center py-8">
             表格类数据请在下方「数据表」Tab 中查看
@@ -146,30 +162,36 @@ export default function Report() {
         )}
       </div>
 
-      {/* Recommendation */}
+      {/* 洞察面板：一句话结论 */}
+      {conclusion && (
+        <div className="mt-4 bg-white rounded-xl p-5"
+             style={{ boxShadow: '0 8px 16px -8px rgba(15,76,129,.08)', borderLeft: '4px solid var(--color-accent, #0f4c81)' }}>
+          <p className="text-xs text-gray-400 font-semibold tracking-wide mb-2">分析结论</p>
+          <p className="text-sm text-ink leading-relaxed whitespace-pre-wrap">{conclusion}</p>
+        </div>
+      )}
+
+      {/* 洞察面板：关键发现 */}
       {recommendations.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 p-4 mt-4">
-          <div className="flex items-center gap-2 mb-2.5">
-            <svg className="w-4 h-4 text-accent-soft0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
-            <span className="text-xs font-semibold text-gray-500">推荐依据</span>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {recommendations.map((r, i) => (
-              <span key={i} className="px-2.5 py-1 rounded-full bg-accent-soft text-accent text-xs border border-accent/20">{r}</span>
-            ))}
-          </div>
+        <div className="mt-3 grid sm:grid-cols-2 gap-3">
+          {recommendations.slice(0, 4).map((r, i) => (
+            <div key={i} className="bg-white rounded-xl p-4"
+                 style={{ boxShadow: '0 8px 16px -8px rgba(15,76,129,.08)' }}>
+              <p className="text-xs font-semibold text-ink mb-1">发现 {i + 1}</p>
+              <p className="text-xs text-gray-500 leading-relaxed">{r}</p>
+            </div>
+          ))}
         </div>
       )}
 
       {/* 风险提示 */}
       {riskWarnings.length > 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mt-4">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-amber-600 text-xs font-semibold">⚠ 注意事项</span>
-          </div>
+        <div className="mt-3 rounded-xl p-4 flex gap-3 items-start" style={{ background: '#fef3c7' }}>
+          <span className="text-xs font-semibold shrink-0" style={{ color: '#b45309' }}>⚠ 数据提示</span>
           <div className="flex flex-wrap gap-1.5">
             {riskWarnings.map((w, i) => (
-              <span key={i} className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-700 text-xs border border-amber-200">{w}</span>
+              <span key={i} className="text-xs px-2.5 py-1 rounded-md"
+                    style={{ background: '#fff7ed', color: '#92400e', border: '1px solid #fed7aa' }}>{w}</span>
             ))}
           </div>
         </div>
@@ -178,20 +200,14 @@ export default function Report() {
       {/* Tabs */}
       <div className="bg-white rounded-xl border border-gray-200 mt-5 overflow-hidden">
         <div className="flex items-center gap-6 px-5 pt-3.5 border-b border-gray-100">
-          {['conclusion', 'table', 'trace'].map((t) => (
+          {['table', 'trace'].map((t) => (
             <span key={t}
-              className={`pb-3 text-sm cursor-pointer transition-all ${tab === t ? 'text-gray-900 font-medium border-b-2 border-gray-900' : 'text-gray-400 hover:text-gray-600'}`}
+              className={`pb-3 text-sm cursor-pointer transition-all ${tab === t ? 'text-gray-900 font-medium border-b-2 border-accent' : 'text-gray-400 hover:text-gray-600'}`}
               onClick={() => setTab(t)}>
-              {{ conclusion: '分析结论', table: '数据表', trace: '决策记录' }[t]}
+              {{ table: '数据表', trace: '决策记录' }[t]}
             </span>
           ))}
         </div>
-
-        {tab === 'conclusion' && (
-          <div className="px-5 py-4 text-sm text-gray-600 leading-relaxed">
-            {conclusion ? <div className="whitespace-pre-wrap">{conclusion}</div> : <p className="text-gray-400">暂无结论</p>}
-          </div>
-        )}
 
         {tab === 'table' && (
           <div className="overflow-auto max-h-56">

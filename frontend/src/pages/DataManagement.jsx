@@ -201,28 +201,29 @@ export default function DataManagement() {
         {error && <p className="text-xs text-red-500 mt-2">{error}</p>}
       </div>
 
-      {/* Stats */}
+      {/* Stats：主次分明（质量卡放大 + 藏青强调，去千篇一律 border+shadow） */}
       {profile && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
-          <div className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-sm transition-shadow">
-            <div className="flex items-center gap-2"><Database className="w-4 h-4 text-gray-400" /><span className="text-xs text-gray-400">总行数</span></div>
-            <p className="text-2xl font-medium text-gray-900 mt-1">{profile.行数.toLocaleString()}</p>
+          <div className="bg-card rounded-xl p-4" style={{ boxShadow: '0 8px 16px -8px rgba(15,76,129,.08)' }}>
+            <div className="flex items-center gap-2"><Database className="w-4 h-4 text-muted" /><span className="text-xs text-gray-400">总行数</span></div>
+            <p className="text-2xl font-bold text-ink mt-1" style={{ fontVariantNumeric: 'tabular-nums' }}>{profile.行数.toLocaleString()}</p>
             <p className="text-xs text-gray-400 mt-1">数据量正常，可流畅分析</p>
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-sm transition-shadow">
-            <div className="flex items-center gap-2"><FileText className="w-4 h-4 text-gray-400" /><span className="text-xs text-gray-400">字段数</span></div>
-            <p className="text-2xl font-medium text-gray-900 mt-1">{profile.列数}</p>
+          <div className="bg-card rounded-xl p-4" style={{ boxShadow: '0 8px 16px -8px rgba(15,76,129,.08)' }}>
+            <div className="flex items-center gap-2"><FileText className="w-4 h-4 text-muted" /><span className="text-xs text-gray-400">字段数</span></div>
+            <p className="text-2xl font-bold text-ink mt-1" style={{ fontVariantNumeric: 'tabular-nums' }}>{profile.列数}</p>
             <p className="text-xs text-gray-400 mt-1">日期 {profile.日期字段?.length || 0} / 分类 {profile.分类字段?.length || 0} / 数值 {profile.数值字段?.length || 0}</p>
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-sm transition-shadow relative overflow-hidden">
-            <div className="absolute -top-4 -right-4 w-16 h-16 bg-gradient-to-br from-emerald-100 to-transparent opacity-60 rounded-full" />
-            <div className="flex items-center gap-2"><span className="text-emerald-600 text-lg">✓</span><span className="text-xs text-gray-400">数据质量评级</span></div>
-            <p className="text-2xl font-semibold text-emerald-700 mt-1">{qualityLevel}</p>
+          <div className="rounded-xl p-4 lg:col-span-2 relative overflow-hidden"
+               style={{ background: 'linear-gradient(135deg, #e8eef5 0%, #f8fafc 100%)', boxShadow: '0 8px 16px -8px rgba(15,76,129,.12)' }}>
+            <div className="absolute -top-4 -right-4 w-20 h-20 bg-accent/5 rounded-full" />
+            <div className="flex items-center gap-2"><span className="text-lg" style={{ color: '#0f4c81' }}>✓</span><span className="text-xs text-gray-400">数据质量评级</span></div>
+            <p className="text-3xl font-bold mt-1" style={{ color: '#0f4c81' }}>{qualityLevel}</p>
             <p className="text-xs text-gray-400 mt-1">{qualityDesc}</p>
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-sm transition-shadow cursor-pointer" style={{ borderLeft: '3px solid #f97316' }} onClick={() => setShowMissing(true)}>
+          <div className="bg-card rounded-xl p-4 cursor-pointer" style={{ boxShadow: '0 8px 16px -8px rgba(15,76,129,.08)', borderLeft: '3px solid #b45309' }} onClick={() => setShowMissing(true)}>
             <div className="flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-orange-500" /><span className="text-xs text-gray-400">缺失值数量</span></div>
-            <p className="text-2xl font-medium text-orange-600 mt-1">{missingCount}</p>
+            <p className="text-2xl font-bold mt-1" style={{ color: '#b45309', fontVariantNumeric: 'tabular-nums' }}>{missingCount}</p>
             <p className="text-xs text-orange-600 mt-1">{missingFields.length > 0 ? `共 ${missingFields.length} 个字段存在缺失` : '无缺失值'}</p>
           </div>
         </div>
