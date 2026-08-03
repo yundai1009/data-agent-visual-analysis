@@ -22,8 +22,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-PORT = "8000"
-URL = f"http://127.0.0.1:{PORT}"
+DEFAULT_PORT = 8000  # 端口被占时自动向后找空闲端口（8000→8001→…）
 
 # 桌面快捷方式传 --autostart：打开窗口后自动启动正式模式（跳转登录页），无需再点按钮
 AUTOSTART = "--autostart" in sys.argv
@@ -34,6 +33,8 @@ class LauncherApp:
         self.root = root
         self.proc: subprocess.Popen | None = None
         self.log_q: queue.Queue = queue.Queue()
+        self.port = DEFAULT_PORT
+        self.url = f"http://127.0.0.1:{self.port}"
 
         root.title("数据分析 Agent 平台 · 启动器")
         root.geometry("680x560")
@@ -102,7 +103,7 @@ class LauncherApp:
         self.lbl_status = tk.Label(status, text="已停止", font=("Microsoft YaHei", 10, "bold"),
                                    bg="#F7F8FA", fg="#9CA3AF")
         self.lbl_status.pack(side="left")
-        tk.Label(status, text=f"访问地址：{URL}", font=("Microsoft YaHei", 9),
+        self.lbl_url = tk.Label(status, text=f"访问地址：{self.url}", font=("Microsoft YaHei", 9),
                  bg="#F7F8FA", fg="#6B7280").pack(side="right")
 
         # 启动等待进度条（indeterminate：后端就绪前滚动，就绪后停止）
@@ -116,18 +117,30 @@ class LauncherApp:
         self._log("欢迎使用数据分析 Agent 平台 🎉\n"
                   "· 正式模式：需要注册/登录账号\n"
                   "· 演示模式：免登录，自动加载示例数据\n"
-                  f"· 端口 {PORT}，如被占用请先关闭占用程序\n")
+                  f"· 端口 {DEFAULT_PORT}，如被占用将自动改用空闲端口\n")
 
     # ── 核心逻辑 ────────────────────────────────────────
+    @staticmethod
+    def _find_free_port(start: int) -> int:
+        """从 start 开始找第一个空闲端口（最多往后找 20 个）。"""
+        import socket
+        for p in range(start, start + 20):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                if s.connect_ex(("127.0.0.1", p)) != 0:
+                    return p
+        return start
+
     def start(self, mode: str):
         if self.proc and self.proc.poll() is None:
             messagebox.showinfo("提示", "服务已在运行，请先点击【停止】")
             return
-        if self._port_in_use():
-            messagebox.showerror("端口被占用", f"端口 {PORT} 已被占用。\n"
-                                "可能已经有实例在运行，或其它程序占用了 8000 端口。\n"
-                                "请关闭占用程序后重试。")
-            return
+        # 端口自动漂移：被残留进程/其他程序占用时自动用下一个空闲端口，
+        # 而不是拒绝启动——确保双击启动器后打开的永远是新实例（新构建）
+        self.port = self._find_free_port(DEFAULT_PORT)
+        self.url = f"http://127.0.0.1:{self.port}"
+        if self.port != DEFAULT_PORT:
+            self._log(f"端口 {DEFAULT_PORT} 被占用，自动改用端口 {self.port}")
+        self.lbl_url.config(text=f"访问地址：{self.url}")
 
         env = dict(os.environ)
         if mode == "demo":
@@ -151,7 +164,7 @@ class LauncherApp:
         try:
             self.proc = subprocess.Popen(
                 [sys.executable, "-m", "uvicorn", "api.main:app",
-                 "--host", "127.0.0.1", "--port", PORT, "--log-level", "info"],
+                 "--host", "127.0.0.1", "--port", str(self.port), "--log-level", "info"],
                 cwd=str(PROJECT_ROOT), env=env,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, encoding="utf-8", errors="replace",
@@ -179,11 +192,11 @@ class LauncherApp:
             if self.proc is None or self.proc.poll() is not None:
                 return
             try:
-                with urllib.request.urlopen(f"{URL}/health", timeout=1) as resp:
+                with urllib.request.urlopen(f"{self.url}/health", timeout=1) as resp:
                     if resp.status == 200:
                         self.log_q.put(("ready", f"运行中（{label}）"))
-                        self.log_q.put(("log", f"✅ 启动完成，正在打开浏览器：{URL}\n"))
-                        webbrowser.open(URL)
+                        self.log_q.put(("log", f"✅ 启动完成，正在打开浏览器：{self.url}\n"))
+                        webbrowser.open(self.url)
                         return
             except Exception:
                 pass
@@ -237,12 +250,6 @@ class LauncherApp:
         self.txt_log.insert("end", text + "\n")
         self.txt_log.see("end")
         self.txt_log.config(state="disabled")
-
-    @staticmethod
-    def _port_in_use() -> bool:
-        import socket
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            return s.connect_ex(("127.0.0.1", int(PORT))) == 0
 
     def _on_close(self):
         if self.proc and self.proc.poll() is None:

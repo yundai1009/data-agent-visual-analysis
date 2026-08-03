@@ -118,11 +118,17 @@ async def spa_fallback(full_path: str, request: Request):
     index = dist / "index.html"
     if not index.exists():
         raise HTTPException(status_code=404, detail="前端构建产物不存在，请先运行构建")
-    # HTML 永远不启发式缓存：每次请求都回源校验，保证拿到最新构建（引用新 hash 资源）
+    # HTML 永不缓存：no-store 禁止浏览器/代理保存任何副本（no-cache 依赖
+    # 重新验证，个别浏览器/代理实现不遵守导致旧版 HTML 残留），
+    # 每次访问必须回源拿到最新构建（引用新 hash 资源）
     return HTMLResponse(
         index.read_text(encoding="utf-8"),
         media_type="text/html",
-        headers={"Cache-Control": "no-cache"},
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
     )
 
 
