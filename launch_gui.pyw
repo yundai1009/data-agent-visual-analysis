@@ -5,13 +5,16 @@
 - 【演示模式】后端 + 演示前端：免登录，打开页面自动加载示例数据，适合现场演示
 - 启动后自动打开浏览器，访问 http://127.0.0.1:8000
 
-只需要 Python（已装本项目依赖），不需要 Node / npm。
+自动构建：启动前会检测 frontend/src 源码是否比 dist 产物新，有更新则自动
+执行 npm run build（首次或安装 Node 后需能联网拉依赖）。未安装 Node.js 时
+提示手动构建，或沿用现有旧版产物。
 """
 
 from __future__ import annotations
 
 import os
 import queue
+import shutil
 import subprocess
 import sys
 import threading
@@ -104,7 +107,8 @@ class LauncherApp:
                                    bg="#F7F8FA", fg="#9CA3AF")
         self.lbl_status.pack(side="left")
         self.lbl_url = tk.Label(status, text=f"访问地址：{self.url}", font=("Microsoft YaHei", 9),
-                 bg="#F7F8FA", fg="#6B7280").pack(side="right")
+                 bg="#F7F8FA", fg="#6B7280")
+        self.lbl_url.pack(side="right")
 
         # 启动等待进度条（indeterminate：后端就绪前滚动，就绪后停止）
         self.progress = ttk.Progressbar(self.root, mode="indeterminate", length=420)
