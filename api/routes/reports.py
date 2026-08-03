@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
+# SSE 直播全局并发上限：每个流式请求 spawn 一个后台线程做 LLM 分析，
+# 无限制并发会占满 FastAPI 线程池（DoS）。超出上限直接 503 拒绝。
+_STREAM_SEMAPHORE = threading.BoundedSemaphore(4)
+# SSE 事件队列上限：trace 单请求最多 ~20 条 + done/error/sentinel，64 足够且防堆积
+_STREAM_QUEUE_MAX = 64
+
 
 # ── 公共校验 ──────────────────────────────────────────────────────────────────
 
@@ -137,25 +143,41 @@ def generate_report_stream(
     """
     # 先在同步上下文中完成鉴权 + 校验（失败直接 400/404）
     df, llm_config = _准备上下文(payload, request, user)
-    event_q: "queue.Queue[Optional[Dict[str, Any]]]" = queue.Queue()
+
+    # 并发控制：超出上限立即 503，避免后台线程无限堆积
+    if not _STREAM_SEMAPHORE.acquire(blocking=False):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="分析任务繁忙，请稍后重试",
+        )
+
+    event_q: "queue.Queue[Optional[Dict[str, Any]]]" = queue.Queue(maxsize=_STREAM_QUEUE_MAX)
 
     def worker() -> None:
         try:
             _生成报表流式(payload, df, llm_config, user, on_event=event_q.put)
-        except Exception as exc:  # noqa: BLE001 - SSE 错误统一走事件通道
-            logger.warning("报表流式生成失败: %s", exc)
+        except ValueError as exc:
+            # 参数/字段问题（词云无词、桑基缺分组）→ 可给用户看的明确提示
+            logger.warning("报表流式生成参数不满足: %s", exc)
             event_q.put({"type": "error", "message": str(exc)})
+        except Exception as exc:  # noqa: BLE001 - SSE 错误统一走事件通道
+            # 内部异常只记日志，对外返回通用消息（避免泄露路径/堆栈/数据细节）
+            logger.exception("报表流式生成失败")
+            event_q.put({"type": "error", "message": "分析失败，请检查参数后重试"})
         finally:
             event_q.put(None)  # 结束哨兵
+            _STREAM_SEMAPHORE.release()
 
     threading.Thread(target=worker, daemon=True).start()
 
     def event_stream():
+        # 注意：并发名额只由 worker 释放（含客户端断开后 worker 自然结束的场景），
+        # 这里不再 release，避免 BoundedSemaphore 双释放抛 ValueError。
         while True:
             ev = event_q.get()
             if ev is None:
                 break
-            yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps(ev, ensure_ascii=False, default=str)}\n\n"
 
     return StreamingResponse(
         event_stream(),
