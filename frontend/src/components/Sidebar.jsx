@@ -18,10 +18,10 @@ export default function Sidebar({ collapsed, onToggle }) {
   };
   return (
     <aside
-      className={`bg-white border-r border-gray-200 flex flex-col shrink-0 transition-all duration-250 ease-in-out overflow-hidden ${
+      className={`bg-white/65 backdrop-blur-xl border-r border-white/60 flex flex-col shrink-0 transition-all duration-250 ease-in-out overflow-hidden ${
         collapsed ? 'w-14' : 'w-52'
       }`}
-      style={{ boxShadow: '1px 0 4px rgba(0,0,0,.02)' }}
+      style={{ boxShadow: '2px 0 16px rgba(15,76,129,.07)' }}
     >
       {/* Brand */}
       <div className="h-16 flex items-center gap-2.5 px-3 border-b border-gray-100 shrink-0">

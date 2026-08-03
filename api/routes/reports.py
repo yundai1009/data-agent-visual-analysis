@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
 import logging
-from typing import Any, Dict
+import queue
+import threading
+from typing import Any, Callable, Dict, Optional, Tuple
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 
 from api.contracts import ReportGenerateRequest, ReportGenerateResponse
 from api.dependencies import get_current_user
@@ -18,12 +22,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 
-@router.post("/generate", response_model=ReportGenerateResponse)
-async def generate_report(
+# ── 公共校验 ──────────────────────────────────────────────────────────────────
+
+
+def _准备上下文(
     payload: ReportGenerateRequest,
     request: Request,
-    user: dict = Depends(get_current_user),
-) -> ReportGenerateResponse:
+    user: dict,
+) -> Tuple[Any, LLMRequestConfig]:
+    """校验数据集存在 + LLM 白名单，返回 (df, llm_config)。generate / generate-stream 共用。
+
+    从 request.headers 读取 LLM provider / model / BYOK key（白名单校验）。
+    """
     item = _仓储.读取(user["user_id"], payload.数据集ID)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在")
@@ -49,9 +59,7 @@ async def generate_report(
             detail=f"provider {user_provider} 不支持模型：{user_model}",
         )
 
-    # 请求级 LLM 配置：显式传递，不修改全局 EnvConfig（并发安全）。
-    # 可选 BYOK：用户可通过 X-LLM-API-Key 传自己的 Key（仅用于 Authorization 头，
-    # 不存后端、不上日志）；不传则回退服务端 .env。URL 始终白名单，不允许用户指定。
+    # BYOK：不存后端、不进日志；不传则回退服务端 .env。URL 始终白名单，不允许用户指定。
     user_api_key = (request.headers.get("x-llm-api-key") or "").strip()
     if len(user_api_key) > 200:
         raise HTTPException(
@@ -64,18 +72,22 @@ async def generate_report(
         model=user_model or provider_conf.get("default_model", ""),
         api_key=user_api_key or EnvConfig.LLM_API_KEY,
     )
+    return df, llm_config
 
-    try:
-        if payload.agent_mode == "multi":
-            report = _多智能体报表(df, payload, llm_config)
-        else:
-            report = _单Agent报表(df, payload, llm_config)
-    except ValueError as exc:
-        # 数据不满足图表前提（如词云无有效词、桑基缺分组字段）→ 明确 400，而非 500
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
+
+def _生成报表流式(
+    payload: ReportGenerateRequest,
+    df: Any,
+    llm_config: LLMRequestConfig,
+    user: dict,
+    on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> Tuple[str, Dict[str, Any]]:
+    """生成报表 + 持久化；on_event 实时推送决策事件（SSE 直播）。返回 (report_id, report)。"""
+    if payload.agent_mode == "multi":
+        report = _多智能体报表(df, payload, llm_config, on_event=on_event)
+    else:
+        report = _单Agent报表(df, payload, llm_config, on_event=on_event)
+
     # 报表持久化到后端（阶段 6）
     from repositories import report_repo
     report_id = report_repo.保存报表(
@@ -85,8 +97,74 @@ async def generate_report(
         chart_type=report.get("图表类型", ""),
         report=report,
     )
+    if on_event:
+        on_event({"type": "done", "报表ID": report_id, "标题": report.get("标题", "")})
+    return report_id, report
 
+
+# ── 端点 ──────────────────────────────────────────────────────────────────────
+
+
+@router.post("/generate", response_model=ReportGenerateResponse)
+async def generate_report(
+    payload: ReportGenerateRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+) -> ReportGenerateResponse:
+    df, llm_config = _准备上下文(payload, request, user)
+    try:
+        report_id, report = _生成报表流式(payload, df, llm_config, user)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
     return _构建响应(payload, report, report_id)
+
+
+@router.post("/generate-stream")
+def generate_report_stream(
+    payload: ReportGenerateRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+) -> StreamingResponse:
+    """分析直播：SSE 流式返回实时 Agent 决策事件，最后一条为 done/error。
+
+    事件格式：``data: {json}\\n\\n``
+    - ``{"type": "step", "data": {…}}``  trace 每记录一步实时推送
+    - ``{"type": "done", "报表ID": "…", "标题": "…"}`` 分析完成
+    - ``{"type": "error", "message": "…"}``     分析失败
+    """
+    # 先在同步上下文中完成鉴权 + 校验（失败直接 400/404）
+    df, llm_config = _准备上下文(payload, request, user)
+    event_q: "queue.Queue[Optional[Dict[str, Any]]]" = queue.Queue()
+
+    def worker() -> None:
+        try:
+            _生成报表流式(payload, df, llm_config, user, on_event=event_q.put)
+        except Exception as exc:  # noqa: BLE001 - SSE 错误统一走事件通道
+            logger.warning("报表流式生成失败: %s", exc)
+            event_q.put({"type": "error", "message": str(exc)})
+        finally:
+            event_q.put(None)  # 结束哨兵
+
+    threading.Thread(target=worker, daemon=True).start()
+
+    def event_stream():
+        while True:
+            ev = event_q.get()
+            if ev is None:
+                break
+            yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ── 历史 ──────────────────────────────────────────────────────────────────────
 
 
 @router.get("/")
@@ -118,7 +196,15 @@ def delete_report(report_id: str, user: dict = Depends(get_current_user)) -> Dic
     return {"message": "已删除"}
 
 
-def _单Agent报表(df: Any, payload: ReportGenerateRequest, llm_config: LLMRequestConfig) -> Dict[str, Any]:
+# ── 生成 ──────────────────────────────────────────────────────────────────────
+
+
+def _单Agent报表(
+    df: Any,
+    payload: ReportGenerateRequest,
+    llm_config: LLMRequestConfig,
+    on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> Dict[str, Any]:
     """标准单 Agent 生成报表。"""
     return 生成报表数据(
         df=df,
@@ -129,14 +215,20 @@ def _单Agent报表(df: Any, payload: ReportGenerateRequest, llm_config: LLMRequ
         分组字段=payload.分组字段,
         聚合方式=payload.聚合方式,
         llm_config=llm_config,
+        on_event=on_event,
     )
 
 
-def _多智能体报表(df: Any, payload: ReportGenerateRequest, llm_config: LLMRequestConfig) -> Dict[str, Any]:
+def _多智能体报表(
+    df: Any,
+    payload: ReportGenerateRequest,
+    llm_config: LLMRequestConfig,
+    on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> Dict[str, Any]:
     """多智能体模式生成报表。"""
     from 后端_核心.数据画像 import 生成数据画像
     画像 = 生成数据画像(df)
-    result = 多智能体分析(画像, payload.分析需求, df, llm_config=llm_config)
+    result = 多智能体分析(画像, payload.分析需求, df, llm_config=llm_config, on_event=on_event)
     if not result:
         # 降级到单 Agent
         logger.warning("多智能体失败，降级到单 Agent")
@@ -149,6 +241,7 @@ def _多智能体报表(df: Any, payload: ReportGenerateRequest, llm_config: LLM
             分组字段=payload.分组字段,
             聚合方式=payload.聚合方式,
             llm_config=llm_config,
+            on_event=on_event,
         )
 
     # 用多智能体返回的意图走标准报表链路
@@ -161,7 +254,11 @@ def _多智能体报表(df: Any, payload: ReportGenerateRequest, llm_config: LLM
         分组字段=result.get("分组字段"),
         聚合方式=result.get("聚合方式", "求和"),
         llm_config=llm_config,
+        on_event=on_event,
     )
+
+
+# ── 响应构建 ──────────────────────────────────────────────────────────────────
 
 
 def _构建响应(payload: ReportGenerateRequest, report: Dict[str, Any], report_id: str = "") -> ReportGenerateResponse:

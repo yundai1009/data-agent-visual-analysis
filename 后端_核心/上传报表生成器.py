@@ -258,14 +258,16 @@ def _解析自然语言意图(
     分析需求: str,
     df=None,
     llm_config: Optional[LLMRequestConfig] = None,
+    on_event: Optional[Any] = None,
 ) -> Tuple[Dict[str, Any], str, List[Dict[str, Any]]]:
     """优先用 LLM 解析; 失败降级回规则匹配. 返回 (override, source, trace)。
     source: LLM / 规则 / 无
     trace: 多轮 ReAct 决策记录，或空列表
+    on_event: 可选回调，trace 每记录一步即实时推送（SSE 直播）
     """
     if 分析需求 and 分析需求.strip():
         try:
-            agent_result = 编排Agent(画像, 分析需求, df=df, llm_config=llm_config)
+            agent_result = 编排Agent(画像, 分析需求, df=df, llm_config=llm_config, on_event=on_event)
             if agent_result:
                 override = {
                     "图表类型": agent_result["图表类型"],
@@ -784,10 +786,12 @@ def 生成报表数据(
     分组字段: Optional[str] = None,
     聚合方式: str = "求和",
     llm_config: Optional[LLMRequestConfig] = None,
+    on_event: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """根据上传数据和页面选择生成可渲染的报表配置。
 
     llm_config: 请求级 LLM 配置（并发安全）；为 None 时回退 EnvConfig 全局值。
+    on_event: 可选回调，trace 每记录一步即实时推送（SSE 直播）。
     """
     if df.empty:
         raise ValueError("没有可用于生成报表的数据")
@@ -802,7 +806,7 @@ def 生成报表数据(
     else:
         y轴列表 = [field for field in (y轴 or []) if field]
 
-    intent_override, intent_source, agent_trace = _解析自然语言意图(画像, 分析需求, df, llm_config=llm_config)
+    intent_override, intent_source, agent_trace = _解析自然语言意图(画像, 分析需求, df, llm_config=llm_config, on_event=on_event)
     if intent_override:
         图表类型 = intent_override["图表类型"]
         x轴 = intent_override.get("x轴") or x轴

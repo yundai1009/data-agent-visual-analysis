@@ -573,3 +573,67 @@ def test_统一错误格式(client):
     assert r.status_code == 422
     body = r.json()
     assert "code" in body and "message" in body and "request_id" in body
+
+
+# ---- 9. 分析直播（SSE） ----
+
+def _parse_sse(body: str):
+    """把 SSE 响应体解析为事件 dict 列表。"""
+    import json as _json
+    events = []
+    for line in body.splitlines():
+        if line.startswith("data: "):
+            events.append(_json.loads(line[6:]))
+    return events
+
+
+def test_generate_stream_事件流与持久化(client):
+    """分析直播：SSE 流返回 step 决策事件 + done 事件，报表已持久化可读。"""
+    tok = _register(client, "stream1")
+    content = "地区,销售额\n华东,100\n华南,200\n华北,150\n"
+    r = _upload(client, tok, filename="s.csv", content=content)
+    did = r.json()["数据集ID"]
+    r = client.post("/reports/generate-stream", json={
+        "数据集ID": did, "分析需求": "各地区销售额对比", "图表类型": "自动推荐",
+        "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
+    }, headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200, r.text[:300]
+    assert "text/event-stream" in r.headers.get("content-type", "")
+    events = _parse_sse(r.text)
+    types = [ev["type"] for ev in events]
+    assert types[-1] == "done", f"最后一条应为 done，实际: {types}"
+    assert "step" in types, f"应至少有一条 step 决策事件，实际: {types}"
+    rid = events[-1]["报表ID"]
+    # 报表已持久化，可直接读取
+    r = client.get(f"/reports/{rid}", headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200
+    assert r.json()["报表ID"] == rid
+
+
+def test_generate_stream_未认证401(client):
+    r = client.post("/reports/generate-stream", json={"数据集ID": "x", "分析需求": "y"})
+    assert r.status_code == 401
+
+
+def test_generate_stream_非法provider400(client):
+    tok = _register(client, "stream2")
+    did = _upload(client, tok).json()["数据集ID"]
+    r = client.post("/reports/generate-stream", json={"数据集ID": did, "分析需求": "x"},
+                    headers={"Authorization": f"Bearer {tok}", "X-LLM-Provider": "evil"})
+    assert r.status_code == 400
+
+
+def test_generate_stream_生成失败走error事件(client):
+    """桑基图缺分组字段 → 生成抛 ValueError → SSE error 事件（HTTP 仍 200）。"""
+    tok = _register(client, "stream3")
+    content = "地区,销售额\n华东,100\n华南,200\n"
+    r = _upload(client, tok, filename="s.csv", content=content)
+    did = r.json()["数据集ID"]
+    r = client.post("/reports/generate-stream", json={
+        "数据集ID": did, "分析需求": "", "图表类型": "桑基图",
+        "x轴": "地区", "y轴": ["销售额"], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
+    }, headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200
+    events = _parse_sse(r.text)
+    assert events[-1]["type"] == "error"
+    assert events[-1]["message"]

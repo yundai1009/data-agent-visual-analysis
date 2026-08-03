@@ -74,6 +74,7 @@ def 编排Agent(
     df: Any = None,
     enable_llm: Optional[bool] = None,
     llm_config: Optional[LLMRequestConfig] = None,
+    on_event: Optional[Any] = None,
 ) -> Optional[Dict[str, Any]]:
     """多轮 ReAct 编排：感知 → 推理 → 行动 → 观察 → 再推理。
 
@@ -83,11 +84,12 @@ def 编排Agent(
         df: 原始 DataFrame（用于聚合分析 tool 的实际执行）
         enable_llm: 是否启用 LLM
         llm_config: 请求级 LLM 配置（provider/base_url/model），并发安全
+        on_event: 可选回调，trace 每记录一步即实时推送（SSE 直播）
 
     Returns:
         标准化意图 dict（含 Agent_Trace），失败返回 None
     """
-    trace = TraceRecorder()
+    trace = TraceRecorder(on_event=on_event)
     if enable_llm is False:
         enable_llm = False
     else:

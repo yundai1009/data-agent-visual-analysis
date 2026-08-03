@@ -139,6 +139,45 @@ export async function generateReport(payload) {
   });
 }
 
+// 分析直播：SSE 流式获取 Agent 实时决策事件（fetch + ReadableStream 解析）
+// options.onEvent(ev)：每个 "data: {json}" 事件回调；返回 'stop' 可中断消费
+// options.signal：AbortSignal（用户取消）
+export async function generateReportStream(payload, { onEvent, signal } = {}) {
+  const llmHeaders = getLLMHeaders();
+  const authHeaders = getAuthHeaders();
+  const res = await fetch(`${BASE}/reports/generate-stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...authHeaders, ...llmHeaders },
+    body: JSON.stringify(payload),
+    signal,
+  });
+  if (!res.ok) throw await parseError(res);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf('\n\n')) >= 0) {
+      const chunk = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      for (const raw of chunk.split('\n')) {
+        if (raw.startsWith('data: ')) {
+          try {
+            const ev = JSON.parse(raw.slice(6));
+            if (onEvent && onEvent(ev) === 'stop') {
+              await reader.cancel();
+              return;
+            }
+          } catch { /* 忽略畸形帧 */ }
+        }
+      }
+    }
+  }
+}
+
 // ---- 报表历史（阶段 6：后端持久化）----
 
 export async function listReports(limit = 50) {

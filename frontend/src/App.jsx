@@ -6,6 +6,7 @@ import Login from './pages/Login';
 import DataManagement from './pages/DataManagement';
 import Analysis from './pages/Analysis';
 import Report from './pages/Report';
+import NotFound from './pages/NotFound';
 import { AppProvider, useApp } from './AppContext';
 
 // 是否强制登录。生产/正式构建默认 true；演示构建（vite --mode demo）注入 false。
@@ -32,7 +33,12 @@ export default function App() {
           <Route
             path="/*"
             element={
-              <div className="flex h-screen bg-[#F7F8FA] text-gray-900 antialiased">
+              <div
+                className="flex h-screen text-gray-900 antialiased"
+                style={{
+                  background: 'radial-gradient(120% 90% at 85% -10%, rgba(15,76,129,.09), transparent 55%), radial-gradient(90% 70% at -10% 110%, rgba(15,76,129,.05), transparent 50%), #F7F8FA',
+                }}
+              >
                 <Sidebar collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
                 <main className="flex-1 overflow-auto">
                   <ErrorBoundary>
@@ -41,7 +47,7 @@ export default function App() {
                       <Route path="/analysis" element={<ProtectedRoute><Analysis /></ProtectedRoute>} />
                       <Route path="/report" element={<ProtectedRoute><Report /></ProtectedRoute>} />
                       <Route path="/report/:reportId" element={<ProtectedRoute><Report /></ProtectedRoute>} />
-                      <Route path="*" element={<Navigate to="/data" replace />} />
+                      <Route path="*" element={<ProtectedRoute><NotFound /></ProtectedRoute>} />
                     </Routes>
                   </ErrorBoundary>
                 </main>

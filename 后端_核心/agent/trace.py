@@ -24,7 +24,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 
 # 单条 trace 长度上限：超长会被截断
@@ -34,10 +34,23 @@ _OUTPUT_SUMMARY_LIMIT = 200
 
 
 class TraceRecorder:
-    """记录一轮 ReAct 决策的证据。线程不安全；每个请求一个新实例。"""
+    """记录一轮 ReAct 决策的证据。线程不安全；每个请求一个新实例。
 
-    def __init__(self) -> None:
+    on_event: 可选回调，每记录一条就实时推送一条
+        ``{"type": "step", "data": record}``（供 SSE 直播使用）。回调异常
+        被吞掉，绝不影响主流程。
+    """
+
+    def __init__(self, on_event: Optional[Callable[[Dict[str, Any]], None]] = None) -> None:
         self._records: List[Dict[str, Any]] = []
+        self._on_event = on_event
+
+    def _emit(self, record: Dict[str, Any]) -> None:
+        if self._on_event:
+            try:
+                self._on_event({"type": "step", "data": record})
+            except Exception:  # noqa: BLE001 - 推送失败不影响分析主流程
+                pass
 
     def 记录LLM调用(
         self,
@@ -59,6 +72,7 @@ class TraceRecorder:
             "理由": 理由[:200],
         }
         self._records.append(record)
+        self._emit(record)
         if len(self._records) > _MAX_TRACE_RECORDS:
             self._records = self._records[:_MAX_TRACE_RECORDS]
 
@@ -84,6 +98,7 @@ class TraceRecorder:
             "理由": 理由[:200],
         }
         self._records.append(record)
+        self._emit(record)
         if len(self._records) > _MAX_TRACE_RECORDS:
             self._records = self._records[:_MAX_TRACE_RECORDS]
 
@@ -101,6 +116,7 @@ class TraceRecorder:
             "状态": 状态,
         }
         self._records.append(record)
+        self._emit(record)
         if len(self._records) > _MAX_TRACE_RECORDS:
             self._records = self._records[:_MAX_TRACE_RECORDS]
 
@@ -118,6 +134,7 @@ class TraceRecorder:
             "理由": 理由[:200],
         }
         self._records.append(record)
+        self._emit(record)
         if len(self._records) > _MAX_TRACE_RECORDS:
             self._records = self._records[:_MAX_TRACE_RECORDS]
 

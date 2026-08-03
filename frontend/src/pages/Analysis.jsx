@@ -1,8 +1,8 @@
-﻿import { useState, useEffect } from 'react';
+﻿import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Zap, Sparkles, BarChart3, LineChart, PieChart, ScatterChart, Table, Layers, Loader2, Cpu, GitBranch } from 'lucide-react';
+import { Zap, Sparkles, BarChart3, LineChart, PieChart, ScatterChart, Table, Layers, Loader2, Cpu, GitBranch, X } from 'lucide-react';
 import LLMConfig from '../components/LLMConfig';
-import { generateReport } from '../api';
+import { generateReportStream } from '../api';
 import { useApp } from '../AppContext';
 
 const chartMap = {
@@ -63,6 +63,13 @@ export default function Analysis() {
   const [selectedModel, setSelectedModel] = useState('');
   const [error, setError] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // 分析直播状态（SSE 实时决策流）
+  const [liveSteps, setLiveSteps] = useState([]);      // [{ record, status: 'done'|'active' }]
+  const [liveError, setLiveError] = useState('');
+  const [liveDone, setLiveDone] = useState(null);       // { 报表ID, 标题 }
+  const [elapsed, setElapsed] = useState(0);
+  const abortRef = useRef(null);
+  const scrollRef = useRef(null);
 
   const profile = dataset?.数据画像;
   const fields = profile?.字段列表 || [];
@@ -114,6 +121,33 @@ export default function Analysis() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile]);
 
+  // 生成期间计时 + 决策流自动滚动到底部
+  useEffect(() => {
+    if (!generating) return;
+    const t = setInterval(() => setElapsed(s => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [generating]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [liveSteps.length]);
+
+  // 收到 done 事件后稍作停留，跳转报表详情
+  useEffect(() => {
+    if (!liveDone) return;
+    const t = setTimeout(() => { window.location.href = '/report/' + liveDone.报表ID; }, 1000);
+    return () => clearTimeout(t);
+  }, [liveDone]);
+
+  const handleCancel = () => {
+    abortRef.current?.abort();
+    setGenerating(false);
+    setLiveSteps([]);
+    setLiveError('');
+    setLiveDone(null);
+  };
+
   async function handleGenerate() {
     if (!dataset) {
       setError('请先在数据管理页面上传数据');
@@ -127,36 +161,64 @@ export default function Analysis() {
       return;
     }
     setError('');
+    setLiveError('');
+    setLiveDone(null);
+    setLiveSteps([]);
+    setElapsed(0);
     setGenerating(true);
+
+    const payload = {
+      数据集ID: dataset.数据集ID,
+      分析需求: nlInput,
+      图表类型: chartMap[chartType] || '自动推荐',
+      x轴: xAxis === '无' ? null : xAxis,
+      y轴: yAxis ? [yAxis] : [],
+      分组字段: groupField === '无' ? null : groupField,
+      聚合方式: aggMethod,
+      agent_mode: agentMode,
+      model: selectedModel || undefined,
+    };
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
-      const res = await generateReport({
-        数据集ID: dataset.数据集ID,
-        分析需求: nlInput,
-        图表类型: chartMap[chartType] || '自动推荐',
-        x轴: xAxis === '无' ? null : xAxis,
-        y轴: yAxis ? [yAxis] : [],
-        分组字段: groupField === '无' ? null : groupField,
-        聚合方式: aggMethod,
-        agent_mode: agentMode,
-        model: selectedModel || undefined,
+      await generateReportStream(payload, {
+        signal: controller.signal,
+        onEvent: (ev) => {
+          if (ev.type === 'step') {
+            // 上一步置为完成，新一步置为进行中
+            setLiveSteps(prev => [
+              ...prev.map(s => ({ ...s, status: 'done' })),
+              { record: ev.data, status: 'active' },
+            ]);
+          } else if (ev.type === 'done') {
+            setLiveSteps(prev => prev.map(s => ({ ...s, status: 'done' })));
+            setLiveDone({ 报表ID: ev.报表ID, 标题: ev.标题 });
+            return 'stop';
+          } else if (ev.type === 'error') {
+            setLiveError(ev.message || '分析失败，请重试');
+            return 'stop';
+          }
+          return undefined;
+        },
       });
-      // 报表已由后端持久化（阶段 6），直接跳转到报表详情页，不再写 sessionStorage 缓存
-      window.location.href = '/report/' + res.报表ID;
     } catch (e) {
-      // 用结构化 err.status 判断（api.js parseError 已填充），而非字符串匹配
+      // 请求层错误：HTTP 状态 / 网络 / 用户取消
+      if (e.name === 'AbortError') return; // 取消不报错
       if (e.status === 401) {
         setError('认证已过期或无效，请重新登录');
       } else if (e.status === 413) {
         setError('文件超过大小限制（最大 50MB）');
       } else if (e.status === 400) {
         setError(e.message || '分析失败：参数或字段不满足要求');
-      } else if (e.message?.includes('Failed to fetch') || e.name === 'AbortError') {
-        setError('后端服务不可用或请求超时，请检查后端是否启动');
+      } else if (e.message?.includes('Failed to fetch') || e.name === 'TypeError') {
+        setError('后端服务不可用或请求中断，请检查后端是否启动');
       } else {
         setError('分析失败：' + e.message);
       }
+    } finally {
+      setGenerating(false);
     }
-    setGenerating(false);
   }
 
   // 图表类型字段适配校验
@@ -280,6 +342,107 @@ export default function Analysis() {
         </div>
       )}
 
+      {/* 分析直播：Agent 实时决策流 + 图表生长舞台 */}
+      {generating && (
+        <div className="mt-4 grid grid-cols-1 lg:grid-cols-5 gap-4">
+          {/* 左：决策流 */}
+          <div className="lg:col-span-3 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100">
+              <span
+                className="w-2 h-2 rounded-full bg-emerald-500 shrink-0"
+                style={{ animation: 'live-pulse 1.6s infinite' }}
+              />
+              <span className="text-xs font-semibold text-gray-700">Agent 决策流</span>
+              <span className="ml-auto text-[10px] px-2 py-0.5 rounded-md bg-accent-soft text-accent font-medium whitespace-nowrap">
+                AI 生成 · {agentMode === 'multi' ? '多智能体' : '单 Agent'}
+              </span>
+              <button
+                onClick={handleCancel}
+                className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md text-gray-400 hover:text-red-500 hover:bg-red-50 transition-all"
+              >
+                <X className="w-3 h-3" /> 取消
+              </button>
+            </div>
+
+            <div ref={scrollRef} className="px-2 py-2 space-y-0.5 max-h-[340px] overflow-y-auto">
+              {liveSteps.map((s, i) => <TraceRow key={i} step={s} />)}
+              {liveSteps.length === 0 && (
+                <div className="flex items-center gap-3 px-3 py-4 text-xs text-gray-400">
+                  <Loader2 className="w-4 h-4 animate-spin" /> 正在唤醒 Agent…
+                </div>
+              )}
+            </div>
+
+            {/* 底部状态条 */}
+            <div className="flex items-center gap-2.5 px-4 py-2.5 bg-gray-50/80 border-t border-gray-100 text-[11px] text-gray-500">
+              {liveError ? (
+                <span className="text-red-600 font-medium">✕ {liveError}</span>
+              ) : liveDone ? (
+                <span className="text-ok font-medium">✓ 分析完成，正在打开报表…</span>
+              ) : (
+                <>
+                  <span className="flex items-end gap-[3px] h-3.5" aria-hidden>
+                    {[5, 10, 7, 12, 8].map((h, i) => (
+                      <span
+                        key={i}
+                        className="w-[3px] rounded-[1px] bg-accent opacity-70"
+                        style={{ height: h, animation: `live-eq 0.9s ease-in-out ${i * 0.15}s infinite` }}
+                      />
+                    ))}
+                  </span>
+                  <span>Agent 正在工作 · 已用 {elapsed}s</span>
+                </>
+              )}
+              <span className="ml-auto font-variant-numeric">
+                步骤 {liveSteps.length}
+                {!liveDone && !liveError && ' · 实时更新'}
+              </span>
+            </div>
+          </div>
+
+          {/* 右：图表生长舞台 */}
+          <div className="lg:col-span-2 bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col">
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] font-semibold tracking-wide text-gray-400">生成中的报表</p>
+              {liveDone && <span className="text-[10px] px-2 py-0.5 rounded-md bg-ok-soft text-ok font-medium">已完成</span>}
+            </div>
+            <div
+              className="flex-1 min-h-[190px] mt-3 rounded-lg px-7 pb-7 flex items-end gap-4 relative overflow-hidden"
+              style={{ background: 'radial-gradient(120% 100% at 50% 0%, #eef3f9 0%, #f8fafc 55%, #f1f5f9 100%)' }}
+            >
+              {/* 参考网格线 */}
+              <div className="absolute left-7 right-7 top-5 bottom-7 flex flex-col justify-between pointer-events-none">
+                {[0, 1, 2, 3].map(i => (
+                  <span key={i} className="border-t border-dashed border-accent/10" />
+                ))}
+              </div>
+              <span className="absolute left-1/2 -translate-x-1/2 top-3 text-[10px] tracking-widest text-gray-300">
+                图表生成中
+              </span>
+              {[56, 72, 44, 32, 48].map((h, i) => (
+                <span
+                  key={i}
+                  className="relative flex-1 rounded-t-md"
+                  style={{
+                    height: `${h}%`,
+                    background: 'linear-gradient(180deg, #4a8ac2, #0f4c81)',
+                    boxShadow: '0 6px 14px -6px rgba(15,76,129,.35)',
+                    animation: `live-grow 0.9s cubic-bezier(.22,1,.36,1) ${0.12 * i + 0.1}s both`,
+                  }}
+                />
+              ))}
+            </div>
+            <p className="text-[11px] text-gray-400 mt-3">
+              {liveError
+                ? '生成失败，请检查参数后重试'
+                : liveDone
+                  ? '决策完成，报表即将打开'
+                  : 'AI 正在根据决策流生成图表与结论…'}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* 高级选项开关 */}
       <div className="flex items-center justify-between mt-4">
         <button
@@ -369,6 +532,56 @@ export default function Analysis() {
       </div>
       </>
       )}
+    </div>
+  );
+}
+
+// ---- 分析直播：单条 Agent 决策步骤卡片 ----
+const STEP_ICON = { 'LLM推理': '🧠', '工具调用': '🧮', '观察': '📋', '失败': '⚠️' };
+
+function TraceRow({ step }) {
+  const r = step.record || {};
+  const kind = step.status === 'active' ? 'active' : (r['状态'] === '失败' ? 'failed' : 'done');
+  const icon = STEP_ICON[r['步骤']] || '●';
+  const title = r['步骤'] === '工具调用'
+    ? `工具调用 · ${r['工具名'] || '未知工具'}`
+    : (r['步骤'] || '步骤');
+  const desc = r['说明'] || r['理由'] || r['prompt摘要'] || r['工具输出摘要'] || (r['步骤'] === '工具调用' ? '执行数据分析工具' : '');
+  const meta = r['耗时_ms'] != null
+    ? `${(r['耗时_ms'] / 1000).toFixed(1)}s${r['token']?.total_tokens ? ` · ${r['token'].total_tokens} tok` : ''}`
+    : '—';
+  const statusLabel = kind === 'active' ? '进行中' : (kind === 'failed' ? '失败' : '完成');
+
+  return (
+    <div className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-all ${kind === 'active' ? 'bg-accent-soft' : ''}`}>
+      <span
+        className={`w-7 h-7 rounded-lg flex items-center justify-center text-[13px] shrink-0 ${
+          kind === 'active'
+            ? 'bg-accent text-white'
+            : kind === 'failed'
+              ? 'bg-red-50 text-red-500'
+              : 'bg-ok-soft text-ok'
+        }`}
+        style={kind === 'active' ? { animation: 'live-blink 1.2s infinite' } : undefined}
+      >
+        {icon}
+      </span>
+      <div className="flex-1 min-w-0">
+        <p className={`text-xs font-semibold truncate ${kind === 'failed' ? 'text-red-600' : 'text-gray-700'}`}>{title}</p>
+        {desc && <p className="text-[11px] text-gray-400 mt-0.5 truncate">{desc}</p>}
+      </div>
+      <span className="text-[10px] text-gray-300 font-variant-numeric shrink-0">{meta}</span>
+      <span
+        className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${
+          kind === 'active'
+            ? 'bg-amber-soft text-amber'
+            : kind === 'failed'
+              ? 'bg-red-50 text-red-500'
+              : 'bg-ok-soft text-ok'
+        }`}
+      >
+        {statusLabel}
+      </span>
     </div>
   );
 }

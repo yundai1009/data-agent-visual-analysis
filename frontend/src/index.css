@@ -50,3 +50,20 @@ button:active, [role="button"]:active {
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* 分析直播动画（决策流脉冲 / 进行中闪烁 / 均衡器 / 图表生长） */
+@keyframes live-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(15, 118, 110, 0.5); }
+  70% { box-shadow: 0 0 0 8px rgba(15, 118, 110, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(15, 118, 110, 0); }
+}
+@keyframes live-blink {
+  50% { opacity: 0.6; }
+}
+@keyframes live-eq {
+  50% { transform: scaleY(0.4); }
+}
+@keyframes live-grow {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}

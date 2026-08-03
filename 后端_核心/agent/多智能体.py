@@ -84,6 +84,7 @@ def 多智能体分析(
     df: Any = None,
     max_retries: int = 1,
     llm_config: Optional[LLMRequestConfig] = None,
+    on_event: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """多智能体方式执行数据分析。
 
@@ -93,11 +94,12 @@ def 多智能体分析(
         df: DataFrame（用于工具执行）
         max_retries: 质量审查打回后的最大重试次数
         llm_config: 请求级 LLM 配置（并发安全）
+        on_event: 可选回调，trace 每记录一步即实时推送（SSE 直播）
 
     Returns:
         标准化意图 dict（含 Agent_Trace）
     """
-    trace = TraceRecorder()
+    trace = TraceRecorder(on_event=on_event)
     context = {"画像": 画像, "df": df}
     tools = [s for s in TOOL_SCHEMAS_FULL if s["function"]["name"] != "解析为报表意图"]
 
