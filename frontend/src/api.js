@@ -27,6 +27,20 @@ function getAuthHeaders() {
 const REQUEST_TIMEOUT_MS = 30000;
 const UPLOAD_TIMEOUT_MS = 60000;
 
+// 401 全局登出：token 失效/残留时清空本地认证状态并通知应用跳转登录页，
+// 避免用户卡在受保护页面反复报 401（旧 token 残留问题）
+function handleAuthExpired(url) {
+  const isAuthApi = url.includes('/auth/login') || url.includes('/auth/register');
+  if (isAuthApi) return; // 登录/注册本身的 401 是"密码错误"，不登出
+  try {
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('user_cache');
+    localStorage.removeItem('dataset_cache');
+    localStorage.removeItem('reports_cache');
+  } catch { /* ignore */ }
+  window.dispatchEvent(new Event('auth:expired'));
+}
+
 async function request(url, options = {}) {
   const llmHeaders = getLLMHeaders();
   const authHeaders = getAuthHeaders();
@@ -39,6 +53,7 @@ async function request(url, options = {}) {
       ...options,
     });
     if (!res.ok) {
+      if (res.status === 401) handleAuthExpired(url);
       throw await parseError(res);
     }
     try {
@@ -77,7 +92,10 @@ export async function uploadFile(file) {
     const res = await fetch(`${BASE}/datasets/upload`, {
       method: 'POST', body: form, headers: { ...authHeaders, ...llmHeaders }, signal: controller.signal,
     });
-    if (!res.ok) throw await parseError(res);
+    if (!res.ok) {
+      if (res.status === 401) handleAuthExpired('/datasets/upload');
+      throw await parseError(res);
+    }
     return res.json();
   } finally {
     clearTimeout(timer);

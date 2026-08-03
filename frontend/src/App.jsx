@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -7,11 +7,37 @@ import DataManagement from './pages/DataManagement';
 import Analysis from './pages/Analysis';
 import Report from './pages/Report';
 import NotFound from './pages/NotFound';
+import { fetchMe } from './api';
 import { AppProvider, useApp } from './AppContext';
 
 // 是否强制登录。生产/正式构建默认 true；演示构建（vite --mode demo）注入 false。
 // 构建时通过 .env.demo 的 VITE_AUTH_REQUIRED=false 控制，零基础演示无需注册账号。
 const AUTH_REQUIRED = import.meta.env.VITE_AUTH_REQUIRED !== 'false';
+
+// 启动时校验残留 token：localStorage 里的 token 可能来自旧实例/已失效
+// （实例切换、JWT 密钥变化、过期）。有效 → 刷新用户信息；401 → api.js
+// handleAuthExpired 自动登出并跳转登录页，避免用户带着坏 token 卡在报错页。
+function AuthBootstrap() {
+  const { isAuthed, setAuth } = useApp();
+  useEffect(() => {
+    if (!AUTH_REQUIRED || !isAuthed) return;
+    let cancelled = false;
+    fetchMe()
+      .then((user) => {
+        // token 有效：仅刷新本地用户信息缓存，不触碰认证状态
+        // （setAuth(null, user) 会把 isAuthed 误置 false 导致误踢出登录页）
+        if (!cancelled && user) {
+          try {
+            localStorage.setItem('user_cache', JSON.stringify(user));
+          } catch { /* ignore */ }
+        }
+      })
+      .catch(() => { /* 401 已由 handleAuthExpired 登出；网络错误保持现状 */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
+}
 
 // 路由守卫：未登录访问受保护页面时跳转登录页
 function ProtectedRoute({ children }) {
@@ -27,6 +53,7 @@ export default function App() {
 
   return (
     <AppProvider>
+      <AuthBootstrap />
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />

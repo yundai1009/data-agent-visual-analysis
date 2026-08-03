@@ -113,7 +113,8 @@ async def spa_fallback(full_path: str, request: Request):
             # hash 文件名内容指纹：可安全长缓存（浏览器内容变了 hash 自动变）
             if full_path.startswith("assets/") or "/assets/" in "/" + full_path:
                 return FileResponse(target, headers={"Cache-Control": "public, max-age=31536000, immutable"})
-            return FileResponse(target)
+            # 非 hash 文件（favicon.svg / icons.svg 等）无指纹：禁启发式缓存，每次回源
+            return FileResponse(target, headers={"Cache-Control": "no-cache"})
     index = dist / "index.html"
     if not index.exists():
         raise HTTPException(status_code=404, detail="前端构建产物不存在，请先运行构建")

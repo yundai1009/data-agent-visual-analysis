@@ -20,6 +20,17 @@ export function AppProvider({ children }) {
     localStorage.removeItem('reports_cache');
   }, []);
 
+  // 401 全局登出：token 失效/残留时（api.js handleAuthExpired 触发）
+  // 同步清空内存态 → ProtectedRoute 自动重定向登录页
+  useEffect(() => {
+    const onAuthExpired = () => {
+      setUser(null);
+      setIsAuthed(false);
+    };
+    window.addEventListener('auth:expired', onAuthExpired);
+    return () => window.removeEventListener('auth:expired', onAuthExpired);
+  }, []);
+
   // 设置认证状态（登录/注册成功后调用）
   const setAuth = useCallback((token, userInfo) => {
     try {
