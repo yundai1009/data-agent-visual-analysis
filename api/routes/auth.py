@@ -135,6 +135,36 @@ def me(user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     return user
 
 
+# ---- 账号级 LLM Key（BYOK 后端存储）----
+
+
+@router.get("/llm-key")
+def get_llm_key(user: dict = Depends(get_current_user)) -> Dict[str, Any]:
+    """返回账号是否已配置 LLM Key（不回传明文，仅脱敏后缀）。"""
+    api_key = user_repo.读取LLMKey(user["user_id"])
+    masked = f"sk-…{api_key[-4:]}" if len(api_key) >= 8 else ""
+    return {"has_key": bool(api_key), "masked": masked}
+
+
+@router.put("/llm-key")
+def put_llm_key(payload: dict, user: dict = Depends(get_current_user)) -> Dict[str, str]:
+    """保存账号级 LLM Key（仅服务端使用，不进入日志与响应）。"""
+    api_key = str(payload.get("api_key") or "").strip()
+    if not api_key:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="API Key 不能为空")
+    if len(api_key) > 200:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="API Key 格式不合法")
+    user_repo.保存LLMKey(user["user_id"], api_key)
+    return {"message": "已保存"}
+
+
+@router.delete("/llm-key")
+def delete_llm_key(user: dict = Depends(get_current_user)) -> Dict[str, str]:
+    """清除账号级 LLM Key，回退服务端 .env Key。"""
+    user_repo.清除LLMKey(user["user_id"])
+    return {"message": "已清除"}
+
+
 @router.post("/logout")
 def logout() -> Dict[str, str]:
     """登出。无服务端 token 黑名单，由前端清理 token。"""

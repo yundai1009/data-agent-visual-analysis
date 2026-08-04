@@ -129,6 +129,23 @@ export async function fetchMe() {
   return request('/auth/me');
 }
 
+// ---- 账号级 LLM Key（BYOK 后端存储，登录后任意设备自动生效）----
+
+export async function getAccountLLMKey() {
+  return request('/auth/llm-key');
+}
+
+export async function saveAccountLLMKey(apiKey) {
+  return request('/auth/llm-key', {
+    method: 'PUT',
+    body: JSON.stringify({ api_key: apiKey }),
+  });
+}
+
+export async function clearAccountLLMKey() {
+  return request('/auth/llm-key', { method: 'DELETE' });
+}
+
 export async function loadExample() {
   return request('/datasets/load-example', { method: 'POST' });
 }

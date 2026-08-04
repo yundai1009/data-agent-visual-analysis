@@ -575,6 +575,106 @@ def test_统一错误格式(client):
     assert "code" in body and "message" in body and "request_id" in body
 
 
+# ---- 10. 账号级 LLM Key（BYOK 后端存储）----
+
+def test_账号key_保存与状态(client):
+    """PUT /auth/llm-key 保存 → GET 返回 has_key + 脱敏 masked（不回明文）。"""
+    tok = _register(client, "keyacct1")
+    h = {"Authorization": f"Bearer {tok}"}
+    r = client.put("/auth/llm-key", json={"api_key": "sk-account-12345678"}, headers=h)
+    assert r.status_code == 200, r.text
+    r = client.get("/auth/llm-key", headers=h)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["has_key"] is True
+    assert body["masked"] == "sk-…5678"
+    assert "sk-account" not in str(body), "不应返回明文 key"
+
+
+def test_账号key_空值400(client):
+    tok = _register(client, "keyacct2")
+    r = client.put("/auth/llm-key", json={"api_key": "  "}, headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 400
+
+
+def test_账号key_报表生成自动回退(client):
+    """无 X-LLM-API-Key 请求头时，报表生成自动使用账号绑定的 key。"""
+    import 后端_核心.agent.编排器 as orc_mod
+    captured = {}
+    orig_cc = orc_mod.chat_completion
+
+    def fake_chat(messages, **kw):
+        captured["llm_config"] = kw.get("llm_config")
+        return None
+
+    orc_mod.chat_completion = fake_chat
+    try:
+        tok = _register(client, "keyacct3")
+        client.put("/auth/llm-key", json={"api_key": "sk-account-abcdef"}, headers={"Authorization": f"Bearer {tok}"})
+        did = _upload(client, tok).json()["数据集ID"]
+        r = client.post("/reports/generate", json={
+            "数据集ID": did, "分析需求": "各地区销售额对比", "图表类型": "自动推荐",
+            "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
+        }, headers={"Authorization": f"Bearer {tok}"})  # 不带 X-LLM-API-Key
+        assert r.status_code == 200, r.text[:200]
+        assert captured.get("llm_config") is not None, "应触发 LLM 链路"
+        assert captured["llm_config"].api_key == "sk-account-abcdef", "应使用账号绑定的 key"
+    finally:
+        orc_mod.chat_completion = orig_cc
+
+
+def test_账号key_请求头优先于账号(client):
+    """显式 X-LLM-API-Key 优先于账号绑定的 key。"""
+    import 后端_核心.agent.编排器 as orc_mod
+    captured = {}
+    orig_cc = orc_mod.chat_completion
+
+    def fake_chat(messages, **kw):
+        captured["llm_config"] = kw.get("llm_config")
+        return None
+
+    orc_mod.chat_completion = fake_chat
+    try:
+        tok = _register(client, "keyacct4")
+        client.put("/auth/llm-key", json={"api_key": "sk-account-111111"}, headers={"Authorization": f"Bearer {tok}"})
+        did = _upload(client, tok).json()["数据集ID"]
+        r = client.post("/reports/generate", json={
+            "数据集ID": did, "分析需求": "各地区销售额对比", "图表类型": "自动推荐",
+            "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
+        }, headers={"Authorization": f"Bearer {tok}", "X-LLM-API-Key": "sk-browser-222222"})
+        assert r.status_code == 200, r.text[:200]
+        assert captured["llm_config"].api_key == "sk-browser-222222", "请求头 key 应优先"
+    finally:
+        orc_mod.chat_completion = orig_cc
+
+
+def test_账号key_清除与用户隔离(client):
+    """DELETE 清除后回退服务端；A 的 key 不影响 B。"""
+    import 后端_核心.agent.编排器 as orc_mod
+    captured = {}
+    orig_cc = orc_mod.chat_completion
+
+    def fake_chat(messages, **kw):
+        captured["llm_config"] = kw.get("llm_config")
+        return None
+
+    orc_mod.chat_completion = fake_chat
+    try:
+        tok_a = _register(client, "keyacct5")
+        tok_b = _register(client, "keyacct6")
+        client.put("/auth/llm-key", json={"api_key": "sk-account-333333"}, headers={"Authorization": f"Bearer {tok_a}"})
+        # A 清除后回退服务端 .env（空 → 无 key）
+        r = client.delete("/auth/llm-key", headers={"Authorization": f"Bearer {tok_a}"})
+        assert r.status_code == 200
+        r = client.get("/auth/llm-key", headers={"Authorization": f"Bearer {tok_a}"})
+        assert r.json()["has_key"] is False
+        # B 未配置 → has_key False（隔离）
+        r = client.get("/auth/llm-key", headers={"Authorization": f"Bearer {tok_b}"})
+        assert r.json()["has_key"] is False
+    finally:
+        orc_mod.chat_completion = orig_cc
+
+
 # ---- 9. 分析直播（SSE） ----
 
 def _parse_sse(body: str):

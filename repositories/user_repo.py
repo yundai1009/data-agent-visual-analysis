@@ -43,6 +43,10 @@ def 初始化用户表() -> None:
         if "email" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
             logger.info("users 表已迁移：新增 email 列")
+        # 账号级 LLM Key（BYOK 后端存储）：旧库幂等迁移
+        if "llm_api_key" not in columns:
+            conn.execute("ALTER TABLE users ADD COLUMN llm_api_key TEXT")
+            logger.info("users 表已迁移：新增 llm_api_key 列")
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)"
         )
@@ -140,3 +144,37 @@ def 确保管理员存在(username: str, password_hash: str) -> Dict[str, Any]:
             logger.warning("用户 %s 已存在但角色非 admin，已升级为 admin", username)
         return user
     return 创建用户(username, password_hash, role="admin")
+
+
+# ---- 账号级 LLM Key（BYOK 后端存储）----
+
+
+def 保存LLMKey(user_id: str, api_key: str) -> None:
+    """保存账号级 LLM Key（明文存库，仅服务端使用，不回传前端）。"""
+    初始化用户表()
+    with _write_lock, _get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET llm_api_key = ?, updated_at = ? WHERE user_id = ?",
+            (api_key.strip(), _now_iso(), user_id),
+        )
+
+
+def 读取LLMKey(user_id: str) -> str:
+    """读取账号级 LLM Key；未配置返回空串。"""
+    初始化用户表()
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT llm_api_key FROM users WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    return (row["llm_api_key"] or "") if row else ""
+
+
+def 清除LLMKey(user_id: str) -> None:
+    """清除账号级 LLM Key。"""
+    初始化用户表()
+    with _write_lock, _get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET llm_api_key = NULL, updated_at = ? WHERE user_id = ?",
+            (_now_iso(), user_id),
+        )

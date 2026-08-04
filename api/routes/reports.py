@@ -84,6 +84,10 @@ def _准备上下文(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="API Key 格式不合法",
         )
+    # 优先级：请求头 X-LLM-API-Key > 账号绑定 key（user_repo 存储）> 服务端 .env
+    if not user_api_key:
+        from repositories import user_repo as _user_repo
+        user_api_key = _user_repo.读取LLMKey(user["user_id"])
     llm_config = LLMRequestConfig(
         provider=user_provider,
         base_url=provider_conf["base_url"],
