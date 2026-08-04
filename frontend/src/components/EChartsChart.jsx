@@ -66,7 +66,8 @@ export default function EChartsChart({ chartType, chartConfig, height = 320 }) {
         chartRef.current = null;
       }
     };
-  }, [chartType, chartConfig]);
+    // ready：echarts 懒加载完成后才初始化（首次 chartType/chartConfig 到来时可能还没加载完）
+  }, [ready, chartType, chartConfig]);
 
   // resize 监听：handler 动态读取最新 chartRef，避免图表重建后调用已 dispose 的旧实例
   useEffect(() => {
