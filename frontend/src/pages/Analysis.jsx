@@ -280,7 +280,7 @@ export default function Analysis() {
       <div className="mb-7">
         <h1 className="text-lg font-semibold text-gray-900">智能分析</h1>
         <p className="text-xs text-gray-400 mt-1">用自然语言描述分析需求，AI 自动生成报表</p>
-        {dataset && <p className="text-xs text-accent-soft0 mt-1">当前数据集：{dataset.文件名}</p>}
+        {dataset && <p className="text-xs text-accent mt-1">当前数据集：{dataset.文件名}</p>}
         {error && (
           <div className="mt-3 px-4 py-2.5 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700 flex items-center gap-2">
             <span>⚠</span>
@@ -319,7 +319,7 @@ export default function Analysis() {
           </div>
           <button
             disabled={generating}
-            className="flex items-center gap-2 px-5 py-2 rounded-lg bg-gray-900 text-white text-sm font-medium hover:bg-gray-800 transition-all active:scale-[.98] disabled:opacity-50"
+            className="flex items-center gap-2 px-5 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-deep transition-all active:scale-[.98] disabled:opacity-50"
             onClick={handleGenerate}
           >
             {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
@@ -474,7 +474,7 @@ export default function Analysis() {
             <GitBranch className="w-3 h-3" /> 多智能体
           </button>
         </div>
-        {agentMode === 'multi' && <span className="text-[11px] text-accent-soft0">Supervisor + 3 个 Worker Agent</span>}
+        {agentMode === 'multi' && <span className="text-[11px] text-accent">Supervisor + 3 个 Worker Agent</span>}
       </div>
 
       {/* Chart type */}
@@ -489,12 +489,12 @@ export default function Analysis() {
                 key={ct.id}
                 className={`rounded-xl p-3 text-center cursor-pointer transition-all ${
                   active
-                    ? 'border-2 border-accent-soft0 bg-accent-soft'
+                    ? 'border-2 border-accent bg-accent-soft'
                     : 'border border-gray-200 hover:border-accent/60 hover:bg-gray-50'
                 }`}
                 onClick={() => handleChartSelect(ct.id)}
               >
-                <Icon className={`w-6 h-6 mx-auto mb-1 ${active ? 'text-accent-soft0' : 'text-gray-400'}`} />
+                <Icon className={`w-6 h-6 mx-auto mb-1 ${active ? 'text-accent' : 'text-gray-400'}`} />
                 <p className={`text-xs ${active ? 'text-accent font-medium' : 'text-gray-500'}`}>{ct.label}</p>
               </div>
             );

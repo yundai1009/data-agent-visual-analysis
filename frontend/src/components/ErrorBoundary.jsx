@@ -17,7 +17,7 @@ export default class ErrorBoundary extends Component {
           <p className="text-gray-400 text-sm mb-2">页面渲染异常</p>
           <p className="text-xs text-gray-500 mb-4">{this.state.error?.message || ''}</p>
           <button
-            className="px-5 py-2 rounded-lg bg-gray-900 text-white text-sm hover:bg-gray-800 transition-all"
+            className="px-5 py-2 rounded-lg bg-accent text-white text-sm hover:bg-accent-deep transition-all"
             onClick={() => window.location.reload()}
           >
             刷新页面

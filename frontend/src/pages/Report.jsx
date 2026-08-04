@@ -94,7 +94,7 @@ export default function Report() {
     return (
       <div className="p-8 max-w-5xl mx-auto text-center">
         <p className="text-gray-400 text-sm mb-4">暂无报表数据</p>
-        <button className="px-5 py-2 rounded-lg bg-gray-900 text-white text-sm hover:bg-gray-800 transition-all" onClick={() => navigate('/analysis')}>
+        <button className="px-5 py-2 rounded-lg bg-accent text-white text-sm hover:bg-accent-deep transition-all" onClick={() => navigate('/analysis')}>
           前往分析
         </button>
       </div>
@@ -256,7 +256,7 @@ export default function Report() {
       {/* Export + 继续分析 */}
       <div className="flex gap-3 justify-end mt-4">
         <button
-          className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gray-900 text-white text-xs font-medium hover:bg-gray-800 transition-all"
+          className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-deep transition-all"
           onClick={() => navigate('/analysis')}
         >
           继续分析

@@ -8,7 +8,7 @@ import { useApp } from '../AppContext';
 const DEMO_MODE = import.meta.env.VITE_DEMO === '1';
 
 const typeColors = {
-  date: 'bg-cyan-50 text-cyan-600 border-cyan-200',
+  date: 'bg-accent-soft text-accent-deep border-accent/20',
   cat: 'bg-amber-50 text-amber-600 border-amber-200',
   num: 'bg-emerald-50 text-emerald-600 border-emerald-200',
 };
@@ -177,7 +177,7 @@ export default function DataManagement() {
         {uploading ? (
           <div className="max-w-sm mx-auto">
             <div className="flex items-center gap-3">
-              <svg className="w-5 h-5 text-accent-soft0 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+              <svg className="w-5 h-5 text-accent animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
               <span className="text-sm text-gray-500">正在解析文件结构，请稍候...</span>
             </div>
           </div>
@@ -282,7 +282,7 @@ export default function DataManagement() {
             <div><p className="text-sm font-medium text-gray-700">一键基础清洗</p><p className="text-xs text-gray-400 mt-0.5">去重 / 填充缺失 / 删除空行</p></div>
           </div>
           <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3 cursor-pointer hover:bg-gray-50/50 transition-all hover:shadow-sm" onClick={() => navigate('/report')}>
-            <div className="w-10 h-10 rounded-lg bg-cyan-50 flex items-center justify-center"><LineChart className="w-5 h-5 text-cyan-600" /></div>
+            <div className="w-10 h-10 rounded-lg bg-accent-soft flex items-center justify-center"><LineChart className="w-5 h-5 text-accent" /></div>
             <div><p className="text-sm font-medium text-gray-700">查看报表</p><p className="text-xs text-gray-400 mt-0.5">浏览已生成的智能分析报告</p></div>
           </div>
         </div>
@@ -330,7 +330,7 @@ export default function DataManagement() {
                     </tbody>
                   </table>
                   <div className="flex gap-3 mt-5">
-                    <button className="px-4 py-2 rounded-lg bg-gray-900 text-white text-xs font-medium hover:bg-gray-800 transition-all" onClick={() => { setShowMissing(false); navigate('/analysis'); }}>分析时自动忽略缺失行</button>
+                    <button className="px-4 py-2 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-deep transition-all" onClick={() => { setShowMissing(false); navigate('/analysis'); }}>分析时自动忽略缺失行</button>
                     <button className="px-4 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all" onClick={() => { setShowMissing(false); handleClean(); }}>先进行数据清洗</button>
                   </div>
                 </>
@@ -359,7 +359,7 @@ export default function DataManagement() {
                 <p className="font-medium mb-1">操作摘要</p>
                 <pre className="text-xs whitespace-pre-wrap">{JSON.stringify(cleanResult.操作摘要, null, 2)}</pre>
               </div>
-              <button className="w-full py-2 rounded-lg bg-gray-900 text-white text-xs font-medium hover:bg-gray-800 transition-all" onClick={() => { setCleanResult(null); navigate('/analysis'); }}>前往分析</button>
+              <button className="w-full py-2 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-deep transition-all" onClick={() => { setCleanResult(null); navigate('/analysis'); }}>前往分析</button>
             </div>
           </div>
         </div>

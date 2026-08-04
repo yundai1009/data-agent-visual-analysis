@@ -103,7 +103,7 @@ export default function LLMConfig() {
             </div>
             <p className="text-[11px] text-gray-500">填写自己的 Key 时，生成报表消耗你自己的额度；留空使用服务端统一配置。Key 仅保存在本机浏览器。</p>
             <div className="flex gap-2">
-              <button className="flex-1 py-2 rounded-lg bg-gray-900 text-white text-xs font-medium hover:bg-gray-800 transition-all" onClick={handleSave}>保存</button>
+              <button className="flex-1 py-2 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-deep transition-all" onClick={handleSave}>保存</button>
               <button className="px-3 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all" onClick={() => setOpen(false)}>取消</button>
             </div>
           </div>

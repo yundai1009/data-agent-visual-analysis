@@ -25,7 +25,7 @@ export default function Sidebar({ collapsed, onToggle }) {
     >
       {/* Brand */}
       <div className="h-16 flex items-center gap-2.5 px-3 border-b border-gray-100 shrink-0">
-        <div className="w-8 h-8 rounded-lg bg-gray-900 text-white flex items-center justify-center text-xs font-bold shrink-0">
+        <div className="w-8 h-8 rounded-lg bg-accent text-white flex items-center justify-center text-xs font-bold shrink-0">
           DA
         </div>
         <div className={`transition-opacity duration-200 overflow-hidden ${collapsed ? 'opacity-0 w-0' : 'opacity-100'}`}>
@@ -51,7 +51,7 @@ export default function Sidebar({ collapsed, onToggle }) {
             {({ isActive }) => (
               <>
                 {isActive && (
-                  <span className="absolute left-0 top-2 bottom-2 w-[3px] bg-accent-soft0 rounded-r-[3px]" />
+                  <span className="absolute left-0 top-2 bottom-2 w-[3px] bg-accent rounded-r-[3px]" />
                 )}
                 <item.icon className="w-4 h-4 shrink-0" />
                 <span className={`transition-opacity duration-200 whitespace-nowrap ${collapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'}`}>
