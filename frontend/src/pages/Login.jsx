@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { BarChart3 } from 'lucide-react';
 import { login, register, sendCode } from '../api';
 import { useApp } from '../AppContext';
 
@@ -82,7 +83,7 @@ export default function Login() {
       {/* 左：品牌区（大屏显示） */}
       <div className="hidden lg:flex flex-col justify-between p-12 text-white"
            style={{ background: 'linear-gradient(160deg, #0f4c81 0%, #123f68 60%, #0f2f4f 100%)' }}>
-        <div className="w-12 h-12 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center text-2xl">📊</div>
+        <div className="w-12 h-12 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center"><BarChart3 className="w-6 h-6 text-white" /></div>
         <div>
           <h1 className="text-3xl font-bold tracking-tight leading-snug text-white">把数据说成一句话<br />图表就出来了</h1>
           <p className="mt-4 text-sm text-slate-300 leading-relaxed max-w-[30em]">上传 CSV，用自然语言描述分析需求，18 种图表自动选字段生成，附 Agent 决策记录。</p>
@@ -93,7 +94,7 @@ export default function Login() {
       <div className="flex items-center justify-center px-4 py-10 bg-white">
         <div className="w-full max-w-sm">
           <div className="text-center mb-6">
-            <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-accent-soft flex items-center justify-center text-2xl lg:hidden">📊</div>
+            <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-accent-soft flex items-center justify-center lg:hidden"><BarChart3 className="w-6 h-6 text-accent" /></div>
             <h1 className="text-xl font-bold tracking-tight text-ink">{mode === 'login' ? '登录' : '注册'}</h1>
             <p className="text-xs text-gray-400 mt-1">{mode === 'login' ? '使用用户名或邮箱' : '创建新账号（邮箱验证码）'}</p>
           </div>

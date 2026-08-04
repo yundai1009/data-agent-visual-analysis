@@ -61,7 +61,7 @@ export default function App() {
             path="/*"
             element={
               <div
-                className="flex h-screen text-gray-900 antialiased"
+                className="flex min-h-[100dvh] text-gray-900 antialiased"
                 style={{
                   background: 'radial-gradient(120% 90% at 85% -10%, rgba(15,76,129,.09), transparent 55%), radial-gradient(90% 70% at -10% 110%, rgba(15,76,129,.05), transparent 50%), #F7F8FA',
                 }}

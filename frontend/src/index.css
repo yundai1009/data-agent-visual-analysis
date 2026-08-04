@@ -6,7 +6,7 @@
    ============================================================ */
 @theme {
   /* 字体：Noto Sans SC 优先，中文环境回退系统 */
-  --font-sans: "Noto Sans SC", system-ui, -apple-system, "PingFang SC",
+  --font-sans: "Noto Sans SC", "HarmonyOS Sans SC", "MiSans", system-ui, -apple-system, "PingFang SC",
                "Microsoft YaHei", sans-serif;
 
   /* 主色：藏青（替代 indigo 紫蓝） */
@@ -66,4 +66,17 @@ button:active, [role="button"]:active {
 @keyframes live-grow {
   from { transform: scaleY(0); }
   to { transform: scaleY(1); }
+}
+
+/* lucide 图标统一笔画（默认 2 → 1.75，更精致） */
+.lucide { stroke-width: 1.75; }
+
+/* 尊重系统"减少动态效果"设置：关闭全部动画/过渡 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

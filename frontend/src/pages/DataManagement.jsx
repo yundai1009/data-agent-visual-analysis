@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Upload, Download, Database, FileText, AlertTriangle, Search, Sparkles, Loader2 } from 'lucide-react';
+import { Upload, Download, Database, FileText, AlertTriangle, Search, Sparkles, Loader2, BarChart3, LineChart } from 'lucide-react';
 import { uploadFile, loadExample, cleanDataset, healthCheck } from '../api';
 import { useApp } from '../AppContext';
 
@@ -193,7 +193,7 @@ export default function DataManagement() {
           </div>
         ) : (
           <>
-            <Upload className="w-10 h-10 mx-auto text-gray-300 mb-3" />
+            <Upload className="w-10 h-10 mx-auto text-gray-400 mb-3" />
             <p className="text-sm text-gray-500 mb-1">点击上传或拖拽文件到此处</p>
             <p className="text-xs text-gray-400">支持 .csv / .xlsx / .xls 格式，单文件不超过 50MB</p>
           </>
@@ -274,15 +274,15 @@ export default function DataManagement() {
       {profile && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
           <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3 cursor-pointer hover:bg-gray-50/50 transition-all hover:shadow-sm" onClick={handleNewAnalysis}>
-            <div className="w-10 h-10 rounded-lg bg-accent-soft flex items-center justify-center text-lg">📊</div>
+            <div className="w-10 h-10 rounded-lg bg-accent-soft flex items-center justify-center"><BarChart3 className="w-5 h-5 text-accent" /></div>
             <div><p className="text-sm font-medium text-gray-700">基于此数据集新建分析</p><p className="text-xs text-gray-400 mt-0.5">自动带入当前数据集上下文</p></div>
           </div>
           <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3 cursor-pointer hover:bg-gray-50/50 transition-all hover:shadow-sm" onClick={handleClean}>
-            <div className="w-10 h-10 rounded-lg bg-orange-50 flex items-center justify-center text-lg">{cleaning ? <Loader2 className="w-5 h-5 animate-spin" /> : '🧹'}</div>
+            <div className="w-10 h-10 rounded-lg bg-orange-50 flex items-center justify-center">{cleaning ? <Loader2 className="w-5 h-5 animate-spin text-orange-500" /> : <Sparkles className="w-5 h-5 text-orange-500" />}</div>
             <div><p className="text-sm font-medium text-gray-700">一键基础清洗</p><p className="text-xs text-gray-400 mt-0.5">去重 / 填充缺失 / 删除空行</p></div>
           </div>
           <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3 cursor-pointer hover:bg-gray-50/50 transition-all hover:shadow-sm" onClick={() => navigate('/report')}>
-            <div className="w-10 h-10 rounded-lg bg-cyan-50 flex items-center justify-center text-lg">📈</div>
+            <div className="w-10 h-10 rounded-lg bg-cyan-50 flex items-center justify-center"><LineChart className="w-5 h-5 text-cyan-600" /></div>
             <div><p className="text-sm font-medium text-gray-700">查看报表</p><p className="text-xs text-gray-400 mt-0.5">浏览已生成的智能分析报告</p></div>
           </div>
         </div>

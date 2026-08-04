@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Zap, Sparkles, BarChart3, LineChart, PieChart, ScatterChart, Table, Layers, Loader2, Cpu, GitBranch, X } from 'lucide-react';
+import { Zap, Sparkles, BarChart3, LineChart, PieChart, ScatterChart, Table, Layers, Loader2, Cpu, GitBranch, X, Brain, Wrench, Eye, AlertTriangle } from 'lucide-react';
 import LLMConfig from '../components/LLMConfig';
 import { generateReportStream } from '../api';
 import { useApp } from '../AppContext';
@@ -36,10 +36,10 @@ const chartTypes = [
 ];
 
 const templates = [
-  { label: '📊 占比分布', text: '按【地区】统计【销售额】占比' },
-  { label: '📈 趋势变化', text: '按【月份】统计【销售额】趋势变化' },
-  { label: '📊 分组对比', text: '按【地区】分组对比【销售额】平均值' },
-  { label: '🔀 交叉分析', text: '按【地区】和【岗位类型】做【销售额】交叉分析' },
+  { label: '占比分布', icon: PieChart, text: '按【地区】统计【销售额】占比' },
+  { label: '趋势变化', icon: LineChart, text: '按【月份】统计【销售额】趋势变化' },
+  { label: '分组对比', icon: BarChart3, text: '按【地区】分组对比【销售额】平均值' },
+  { label: '交叉分析', icon: GitBranch, text: '按【地区】和【岗位类型】做【销售额】交叉分析' },
 ];
 
 const models = [
@@ -295,7 +295,7 @@ export default function Analysis() {
         <div className="px-5 py-4 rounded-t-xl">
           <textarea
             rows={3}
-            className="w-full bg-transparent border-0 text-sm text-gray-700 resize-none focus:outline-none placeholder:text-gray-300 leading-relaxed"
+            className="w-full bg-transparent border-0 text-sm text-gray-700 resize-none focus:outline-none placeholder:text-gray-400 leading-relaxed"
             placeholder="输入分析需求，例如：按【地区】统计【销售额】占比…"
             value={nlInput}
             onChange={(e) => setNlInput(e.target.value)}
@@ -308,9 +308,10 @@ export default function Analysis() {
               {templates.map((t) => (
                 <span
                   key={t.label}
-                  className="px-3 py-1.5 rounded-lg bg-white text-xs text-gray-500 cursor-pointer hover:bg-gray-100 hover:text-gray-700 transition-all border border-gray-200"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-xs text-gray-500 cursor-pointer hover:bg-gray-100 hover:text-gray-700 transition-all border border-gray-200"
                   onClick={() => setNlInput(t.text)}
                 >
+                  <t.icon className="w-3.5 h-3.5 text-accent" />
                   {t.label}
                 </span>
               ))}
@@ -416,7 +417,7 @@ export default function Analysis() {
                   <span key={i} className="border-t border-dashed border-accent/10" />
                 ))}
               </div>
-              <span className="absolute left-1/2 -translate-x-1/2 top-3 text-[10px] tracking-widest text-gray-300">
+              <span className="absolute left-1/2 -translate-x-1/2 top-3 text-[10px] tracking-widest text-gray-400">
                 图表生成中
               </span>
               {[56, 72, 44, 32, 48].map((h, i) => (
@@ -452,7 +453,7 @@ export default function Analysis() {
           <span className={`inline-block transition-transform ${showAdvanced ? 'rotate-90' : ''}`}>▶</span>
           高级选项{showAdvanced ? '（点击收起）' : ''}
         </button>
-        {!showAdvanced && <span className="text-[11px] text-gray-300">图表、字段、Agent 模式等高级配置</span>}
+        {!showAdvanced && <span className="text-[11px] text-gray-500">图表、字段、Agent 模式等高级配置</span>}
       </div>
 
       {/* 模型选择 + Agent 模式 */}
@@ -493,7 +494,7 @@ export default function Analysis() {
                 }`}
                 onClick={() => handleChartSelect(ct.id)}
               >
-                <Icon className={`w-6 h-6 mx-auto mb-1 ${active ? 'text-accent-soft0' : 'text-gray-300'}`} />
+                <Icon className={`w-6 h-6 mx-auto mb-1 ${active ? 'text-accent-soft0' : 'text-gray-400'}`} />
                 <p className={`text-xs ${active ? 'text-accent font-medium' : 'text-gray-500'}`}>{ct.label}</p>
               </div>
             );
@@ -506,7 +507,7 @@ export default function Analysis() {
         <div>
           <label className="text-xs text-gray-400 mb-1.5 block">X 轴</label>
           <select className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 focus:outline-none focus:border-accent" value={xAxis} onChange={(e) => setXAxis(e.target.value)}>
-            {fields.map((f) => <option key={f} value={f}>{textFields.includes(f) ? `📝 ${f}` : f}</option>)}
+            {fields.map((f) => <option key={f} value={f}>{textFields.includes(f) ? `✎ ${f}` : f}</option>)}
           </select>
         </div>
         <div>
@@ -537,12 +538,12 @@ export default function Analysis() {
 }
 
 // ---- 分析直播：单条 Agent 决策步骤卡片 ----
-const STEP_ICON = { 'LLM推理': '🧠', '工具调用': '🧮', '观察': '📋', '失败': '⚠️' };
+const STEP_ICON = { 'LLM推理': Brain, '工具调用': Wrench, '观察': Eye, '失败': AlertTriangle };
 
 function TraceRow({ step }) {
   const r = step.record || {};
   const kind = step.status === 'active' ? 'active' : (r['状态'] === '失败' ? 'failed' : 'done');
-  const icon = STEP_ICON[r['步骤']] || '●';
+  const Icon = STEP_ICON[r['步骤']] || Zap;
   const title = r['步骤'] === '工具调用'
     ? `工具调用 · ${r['工具名'] || '未知工具'}`
     : (r['步骤'] || '步骤');
@@ -564,13 +565,13 @@ function TraceRow({ step }) {
         }`}
         style={kind === 'active' ? { animation: 'live-blink 1.2s infinite' } : undefined}
       >
-        {icon}
+        <Icon className="w-4 h-4" />
       </span>
       <div className="flex-1 min-w-0">
         <p className={`text-xs font-semibold truncate ${kind === 'failed' ? 'text-red-600' : 'text-gray-700'}`}>{title}</p>
         {desc && <p className="text-[11px] text-gray-400 mt-0.5 truncate">{desc}</p>}
       </div>
-      <span className="text-[10px] text-gray-300 font-variant-numeric shrink-0">{meta}</span>
+      <span className="text-[10px] text-gray-400 font-variant-numeric shrink-0">{meta}</span>
       <span
         className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${
           kind === 'active'

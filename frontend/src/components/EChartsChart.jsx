@@ -1,7 +1,4 @@
-import { useRef, useEffect } from 'react';
-import * as echarts from 'echarts';
-// 词云扩展：echarts-wordcloud 2.x 自动注册（与 echarts 6 的兼容性依赖运行时；若报错回退到 ECharts 自定义 series 或直接文字展示）
-import 'echarts-wordcloud';
+import { useRef, useState, useEffect } from 'react';
 
 // 藏青系协调色板 + 主题常量（阶段 13 重设计：与 UI 主色统一）
 const COLORS = ['#0f4c81', '#3d7bb8', '#5b8cb8', '#8aa9c4', '#b45309', '#0f766e', '#64748b', '#334155'];
@@ -17,9 +14,32 @@ const CHART_TOOLTIP = {
 export default function EChartsChart({ chartType, chartConfig, height = 320 }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
+  const echartsRef = useRef(null);
+  const [ready, setReady] = useState(false);
+
+  // echarts 懒加载：仅在报表页首次渲染图表时动态加载（约 1MB 独立 chunk），
+  // 避免打入主 bundle 拖慢首屏；加载完成前显示占位
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const mod = await import('echarts');
+        // 词云插件需在 echarts 注册后导入（side-effect 自动注册）
+        await import('echarts-wordcloud');
+        if (cancelled) return;
+        echartsRef.current = mod;
+        setReady(true);
+      } catch (e) {
+        console.error('图表库加载失败:', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!ready || !containerRef.current) return;
+    const echarts = echartsRef.current;
+    if (!echarts) return;
     // 创建实例
     if (!chartRef.current) {
       chartRef.current = echarts.init(containerRef.current, null, { renderer: 'canvas' });
@@ -59,10 +79,18 @@ export default function EChartsChart({ chartType, chartConfig, height = 320 }) {
 
   return (
     <div style={{ position: 'relative', width: '100%', height, minHeight: 160 }}>
-      {!hasData && (
+      {!ready && (
         <div style={{
           position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
-          justifyContent: 'center', color: '#999', fontSize: 14, zIndex: 1,
+          justifyContent: 'center', color: '#94a3b8', fontSize: 13, zIndex: 1,
+        }}>
+          图表加载中…
+        </div>
+      )}
+      {ready && !hasData && (
+        <div style={{
+          position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
+          justifyContent: 'center', color: '#94a3b8', fontSize: 13, zIndex: 1,
         }}>
           暂无图表数据
         </div>
