@@ -156,7 +156,7 @@ def get_llm_providers(user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     """
     providers = getattr(EnvConfig, "LLM_PROVIDERS", {})
     presets = [
-        {"id": pid, "label": pid, "models": conf.get("models") or [],
+        {"id": pid, "label": conf.get("label") or pid, "models": conf.get("models") or [],
          "default": conf.get("default_model", ""), "custom": False}
         for pid, conf in providers.items()
     ]

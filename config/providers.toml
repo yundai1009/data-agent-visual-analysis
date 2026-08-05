@@ -1,11 +1,13 @@
 # LLM Provider 配置（参考 Reasonix 的 [[providers]] 接入方式）
 # kind: openai（OpenAI 兼容 chat/completions；anthropic 暂未支持，后续扩展）
+# label: 前端「推荐预设」卡片显示名（中文）
 # api_key_env: 服务端读取该环境变量的值作为该 provider 的 Key（放在项目 .env 或系统环境）；
 #              用户页面 BYOK 的 Key 优先级更高（请求头 X-LLM-API-Key > 账号 key > 本 provider Key > 服务端 LLM_API_KEY）
-# balance_url: 可选，余额查询接口（预留）
+# models: 常用模型列表（官方模型会更新，可在配置中扩展；用户也可 BYOK 后用模型下拉选择）
 
 [[providers]]
 name        = "deepseek"
+label       = "DeepSeek 官方"
 kind        = "openai"
 base_url    = "https://api.deepseek.com/v1"
 models      = ["deepseek-chat", "deepseek-reasoner"]
@@ -13,40 +15,78 @@ default     = "deepseek-chat"
 api_key_env = "DEEPSEEK_API_KEY"
 
 [[providers]]
+name        = "openai"
+label       = "OpenAI 官方"
+kind        = "openai"
+base_url    = "https://api.openai.com/v1"
+models      = ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "o3-mini"]
+default     = "gpt-4o-mini"
+api_key_env = "OPENAI_API_KEY"
+
+[[providers]]
+name        = "glm"
+label       = "智谱 GLM"
+kind        = "openai"
+base_url    = "https://open.bigmodel.cn/api/paas/v4"
+models      = ["glm-4.5", "glm-4.5-air", "glm-4.7", "glm-4-flash", "glm-4v-flash"]
+default     = "glm-4.5-air"
+api_key_env = "GLM_API_KEY"
+
+[[providers]]
+name        = "qwen"
+label       = "通义千问"
+kind        = "openai"
+base_url    = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+models      = ["qwen-max", "qwen-plus", "qwen-turbo", "qwen2.5-72b-instruct", "qwen3-235b-a22b"]
+default     = "qwen-plus"
+api_key_env = "QWEN_API_KEY"
+
+[[providers]]
+name        = "kimi"
+label       = "Kimi 月之暗面"
+kind        = "openai"
+base_url    = "https://api.moonshot.cn/v1"
+models      = ["kimi-k2-0905-preview", "kimi-k2-turbo-preview", "moonshot-v1-32k", "moonshot-v1-8k"]
+default     = "kimi-k2-0905-preview"
+api_key_env = "MOONSHOT_API_KEY"
+
+[[providers]]
+name        = "doubao"
+label       = "豆包（火山引擎）"
+kind        = "openai"
+base_url    = "https://ark.cn-beijing.volces.com/api/v3"
+models      = ["doubao-1-5-pro-32k-250115", "doubao-1-5-lite-32k-250115", "doubao-seed-1-6-250615"]
+default     = "doubao-1-5-pro-32k-250115"
+api_key_env = "DOUBAO_API_KEY"
+
+[[providers]]
+name        = "siliconflow"
+label       = "硅基流动"
+kind        = "openai"
+base_url    = "https://api.siliconflow.cn/v1"
+models      = ["Qwen/Qwen2.5-7B-Instruct", "Qwen/Qwen3-235B-A22B-Instruct", "deepseek-ai/DeepSeek-V3", "THUDM/GLM-4-9B-0414"]
+default     = "Qwen/Qwen2.5-7B-Instruct"
+api_key_env = "SILICONFLOW_API_KEY"
+
+# ---- 用户自配中转（保留，自定义供应商可替代）----
+
+[[providers]]
 name        = "yundai2"
+label       = "Yundai2（中转）"
 kind        = "openai"
 base_url    = "https://api.kkdmx.com/v1"
 models      = [
     "abacusai/dracarys-llama-3.1-70b-instruct",
-    "bytedance/seed-oss-36b-instruct",
     "deepseek-ai/deepseek-v4-flash",
     "deepseek-ai/deepseek-v4-pro",
-    "google/diffusiongemma-26b-a4b-it",
-    "google/gemma-3n-e2b-it",
-    "google/gemma-3n-e4b-it",
     "google/gemma-4-31b-it",
-    "meta/llama-3.1-70b-instruct",
-    "meta/llama-3.2-11b-vision-instruct",
-    "meta/llama-3.2-90b-vision-instruct",
     "meta/llama-3.3-70b-instruct",
     "meta/llama-4-maverick-17b-128e-instruct",
-    "microsoft/phi-4-mini-instruct",
-    "minimaxai/minimax-m2.7",
     "minimaxai/minimax-m3",
-    "mistralai/ministral-14b-instruct-2512",
-    "mistralai/mistral-large-3-675b-instruct-2512",
-    "mistralai/mistral-medium-3.5-128b",
-    "mistralai/mistral-small-4-119b-2603",
     "moonshotai/kimi-k2.6",
-    "nvidia/llama-3.3-nemotron-super-49b-v1",
-    "nvidia/nemotron-3-nano-30b-a3b",
-    "nvidia/nemotron-3-super-120b-a12b",
     "openai/gpt-oss-120b",
     "qwen/qwen3-coder-480b-a35b-instruct",
-    "qwen/qwen3-next-80b-a3b-instruct",
-    "qwen/qwen3.5-122b-a10b",
     "qwen/qwen3.5-397b-a17b",
-    "stepfun-ai/step-3.5-flash",
     "stepfun-ai/step-3.7-flash",
     "z-ai/glm-5.1",
     "z-ai/glm-5.2",
@@ -56,6 +96,7 @@ api_key_env = "YUNDAI2_API_KEY"
 
 [[providers]]
 name        = "rika"
+label       = "Rika（中转）"
 kind        = "openai"
 base_url    = "https://inferaichat.com/v1"
 models      = ["deepseek-v4-flash", "deepseek-v4-pro", "mimo-v2.5", "mimo-v2.5-pro"]

@@ -86,6 +86,7 @@ class EnvConfig:
                         "base_url": p["base_url"],
                         "default_model": p.get("default", "") or "",
                         "models": list(p.get("models") or []),
+                        "label": p.get("label") or name,
                         "api_key_env": p.get("api_key_env") or "",
                         "balance_url": p.get("balance_url") or "",
                     }
