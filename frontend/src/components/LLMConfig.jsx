@@ -1,14 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getAccountLLMKey, saveAccountLLMKey, clearAccountLLMKey, fetchLLMProviders } from '../api';
+import { Plus, Trash2, Loader2, Check } from 'lucide-react';
+import { getAccountLLMKey, saveAccountLLMKey, clearAccountLLMKey, fetchLLMProviders, saveCustomProvider, deleteCustomProvider, testCustomProvider } from '../api';
 
 const STORAGE_KEY = 'llm_config';
-
-// 兜底 provider（后端 /auth/llm-providers 不可用时使用；正常由后端动态下发）
-const FALLBACK_PROVIDERS = [
-  { id: 'deepseek', label: 'DeepSeek', models: ['deepseek-chat', 'deepseek-reasoner'] },
-  { id: 'openai', label: 'OpenAI', models: ['gpt-4o-mini', 'gpt-4o'] },
-  { id: 'siliconflow', label: '硅基流动', models: [] },
-];
 
 const DEFAULTS = { provider: 'deepseek', model: 'deepseek-chat' };
 
@@ -19,42 +13,37 @@ export function loadLLMConfig() {
 
 export default function LLMConfig() {
   const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState('preset'); // preset | custom
+  const [providers, setProviders] = useState([]); // 预设 + 自定义
   const [config, setConfig] = useState(() => loadLLMConfig() || DEFAULTS);
   const [apiKey, setApiKey] = useState(() => loadLLMConfig()?.apiKey || '');
   const [saved, setSaved] = useState(!!loadLLMConfig());
-  // 账号级 Key 状态（后端存储，登录任意设备生效）
-  const [accountKey, setAccountKey] = useState(null); // { has_key: bool, masked: string }
-  // provider 列表（后端动态下发，参考 Reasonix 接入方式）
-  const [providers, setProviders] = useState(FALLBACK_PROVIDERS);
+  const [accountKey, setAccountKey] = useState(null);
+  // 自定义供应商表单
+  const [form, setForm] = useState({ name: '', base_url: '', api_key: '', models: [], default: '' });
+  const [formError, setFormError] = useState('');
+  const [testing, setTesting] = useState(false);
 
-  // 挂载时加载账号 Key 状态 + provider 列表
-  useEffect(() => {
-    let cancelled = false;
-    getAccountLLMKey()
-      .then(info => { if (!cancelled) setAccountKey(info); })
-      .catch(() => {});
-    fetchLLMProviders()
-      .then(res => { if (!cancelled && res?.providers?.length) setProviders(res.providers); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, []);
-
-  const refreshAccountKey = useCallback(() => {
+  const refreshAll = useCallback(() => {
     getAccountLLMKey().then(setAccountKey).catch(() => {});
+    fetchLLMProviders().then(res => setProviders(res.providers || [])).catch(() => {});
   }, []);
 
-  const activeProvider = providers.find(p => p.id === config.provider) || providers[0];
-  const modelOptions = activeProvider?.models?.length > 0 ? activeProvider.models : [activeProvider?.models?.[0]].filter(Boolean);
+  useEffect(() => { refreshAll(); }, [refreshAll]);
+
+  const presets = providers.filter(p => !p.custom);
+  const customs = providers.filter(p => p.custom);
+  const activeProvider = providers.find(p => p.id === config.provider) || presets[0];
+  const modelOptions = activeProvider?.models?.length ? activeProvider.models : [activeProvider?.default].filter(Boolean);
 
   const handleSave = async () => {
-    const finalModel = modelOptions.includes(config.model) ? config.model : (activeProvider.models[0] || '');
-    const final = { provider: config.provider, model: finalModel, apiKey: apiKey.trim() };
+    const finalModel = modelOptions.includes(config.model) ? config.model : (activeProvider?.default || modelOptions[0] || '');
+    const final = { provider: activeProvider?.id || config.provider, model: finalModel, apiKey: apiKey.trim() };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(final));
     setConfig(final);
     setSaved(true);
-    // 浏览器级 key 保存后同步到账号（若填了 key）
     if (final.apiKey) {
-      try { await saveAccountLLMKey(final.apiKey); refreshAccountKey(); } catch { /* 忽略 */ }
+      try { await saveAccountLLMKey(final.apiKey); refreshAll(); } catch { /* ignore */ }
     }
     setOpen(false);
   };
@@ -64,21 +53,56 @@ export default function LLMConfig() {
     setConfig(DEFAULTS);
     setApiKey('');
     setSaved(false);
-    // 同步清除账号级 Key
-    try { await clearAccountLLMKey(); refreshAccountKey(); } catch { /* 忽略 */ }
+    try { await clearAccountLLMKey(); refreshAll(); } catch { /* ignore */ }
     setOpen(false);
   };
 
-  // 状态按钮显示文字
+  const handleTest = async () => {
+    if (!form.base_url || !form.api_key) { setFormError('请先填写 API 地址和 Key'); return; }
+    setFormError('');
+    setTesting(true);
+    try {
+      const res = await testCustomProvider(form.base_url, form.api_key);
+      setForm(f => ({ ...f, models: res.models || [], default: (res.models || [])[0] || '' }));
+    } catch (e) {
+      setFormError(e.message || '测试失败');
+    }
+    setTesting(false);
+  };
+
+  const handleAddCustom = async () => {
+    if (!form.name || !form.base_url) { setFormError('名称和 API 地址必填'); return; }
+    setFormError('');
+    try {
+      await saveCustomProvider({ ...form, api_key: form.api_key });
+      // 保存后自动选中该自定义供应商
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ provider: form.name, model: form.default || '', apiKey: form.api_key }));
+      setConfig({ provider: form.name, model: form.default || '', apiKey: form.api_key });
+      setSaved(true);
+      setForm({ name: '', base_url: '', api_key: '', models: [], default: '' });
+      refreshAll();
+      setTab('preset');
+    } catch (e) {
+      setFormError(e.message || '保存失败');
+    }
+  };
+
+  const handleDeleteCustom = async (name) => {
+    if (!window.confirm(`删除自定义供应商「${name}」？`)) return;
+    try {
+      await deleteCustomProvider(name);
+      refreshAll();
+    } catch { /* ignore */ }
+  };
+
   const buttonLabel = accountKey?.has_key && !saved
     ? `AI: 账号Key ${accountKey.masked}`
     : saved
-      ? `AI: ${config.model}${config.apiKey ? ' · 浏览器Key' : ''}`
+      ? `AI: ${config.model}${config.apiKey ? ' · 自带Key' : ''}`
       : '+ AI 模型';
 
   return (
     <div className="relative">
-      {/* 状态行 */}
       <button
         onClick={() => setOpen(!open)}
         className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border transition-all whitespace-nowrap ${
@@ -94,59 +118,172 @@ export default function LLMConfig() {
         )}
       </button>
 
-      {/* 浮层 */}
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-full mt-2 z-20 w-72 bg-white border border-gray-200 rounded-xl shadow-lg p-4 space-y-3">
-            <p className="text-xs font-medium text-gray-700">选择 AI 模型（可选）</p>
-            {accountKey?.has_key && (
-              <div className="px-3 py-2 rounded-lg bg-accent-soft text-[11px] text-accent flex items-center justify-between">
-                <span>账号已绑定：{accountKey.masked}</span>
+          <div className="absolute left-0 top-full mt-2 z-20 w-[22rem] bg-white border border-gray-200 rounded-xl shadow-xl p-0 overflow-hidden">
+            {/* 标签页：推荐预设 / 自定义供应商 */}
+            <div className="flex border-b border-gray-100">
+              {[['preset', '推荐预设'], ['custom', '自定义供应商']].map(([id, label]) => (
                 <button
-                  className="text-[11px] text-gray-400 hover:text-red-500 transition-colors"
-                  onClick={async () => {
-                    try { await clearAccountLLMKey(); refreshAccountKey(); } catch {}
-                  }}
-                >解绑</button>
-              </div>
-            )}
-            <div>
-              <label className="text-[11px] text-gray-400 block mb-1">服务商</label>
-              <select
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-gray-50 focus:outline-none focus:border-accent"
-                value={config.provider}
-                onChange={e => setConfig(c => ({ provider: e.target.value, model: '' }))}
-              >
-                {providers.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-              </select>
+                  key={id}
+                  onClick={() => setTab(id)}
+                  className={`flex-1 py-2.5 text-xs font-medium transition-colors ${
+                    tab === id ? 'bg-accent text-white' : 'text-gray-500 hover:bg-gray-50'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
-            <div>
-              <label className="text-[11px] text-gray-400 block mb-1">模型</label>
-              <select
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-gray-50 focus:outline-none focus:border-accent"
-                value={config.model}
-                onChange={e => setConfig(c => ({ ...c, model: e.target.value }))}
-                disabled={modelOptions.length === 0}
-              >
-                {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-[11px] text-gray-400 block mb-1">API Key（可选）</label>
-              <input
-                type="password"
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-gray-50 focus:outline-none focus:border-accent"
-                value={apiKey}
-                onChange={e => setApiKey(e.target.value)}
-                placeholder="留空则用服务端/账号绑定的 Key"
-                autoComplete="off"
-              />
-            </div>
-            <p className="text-[11px] text-gray-500">填写 Key 后同时保存到账号（任意设备登录生效）；留空则用服务端统一配置。</p>
-            <div className="flex gap-2">
-              <button className="flex-1 py-2 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-deep transition-all" onClick={handleSave}>保存</button>
-              <button className="px-3 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all" onClick={() => setOpen(false)}>取消</button>
+
+            <div className="p-4 max-h-[26rem] overflow-y-auto">
+              {tab === 'preset' && (
+                <>
+                  {accountKey?.has_key && (
+                    <div className="px-3 py-2 rounded-lg bg-accent-soft text-[11px] text-accent flex items-center justify-between mb-3">
+                      <span>账号已绑定：{accountKey.masked}</span>
+                      <button className="text-gray-400 hover:text-red-500 transition-colors" onClick={handleClear}>解绑</button>
+                    </div>
+                  )}
+                  {/* 供应商卡片 */}
+                  <div className="grid grid-cols-2 gap-2">
+                    {presets.map(p => (
+                      <button
+                        key={p.id}
+                        onClick={() => setConfig(c => ({ ...c, provider: p.id, model: p.default || '' }))}
+                        className={`rounded-lg border p-2.5 text-left transition-all ${
+                          config.provider === p.id ? 'border-accent bg-accent-soft/60' : 'border-gray-200 hover:border-accent/40 hover:bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-medium text-gray-800">{p.label}</span>
+                          {config.provider === p.id && <Check className="w-3.5 h-3.5 text-accent" />}
+                        </div>
+                        <p className="text-[10px] text-gray-400 mt-0.5">{p.models.length} 个模型</p>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* 选中供应商的模型 + Key */}
+                  <div className="mt-4 space-y-3">
+                    <div>
+                      <label className="text-[11px] text-gray-400 block mb-1">模型</label>
+                      <select
+                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-gray-50 focus:outline-none focus:border-accent"
+                        value={config.model}
+                        onChange={e => setConfig(c => ({ ...c, model: e.target.value }))}
+                      >
+                        {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
+                        {modelOptions.length === 0 && <option value="">（暂无模型，请填 Key 或选其他供应商）</option>}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-gray-400 block mb-1">API Key（可选）</label>
+                      <input
+                        type="password"
+                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-gray-50 focus:outline-none focus:border-accent"
+                        value={apiKey}
+                        onChange={e => setApiKey(e.target.value)}
+                        placeholder="留空则用服务端/账号绑定的 Key"
+                        autoComplete="off"
+                      />
+                    </div>
+                    <p className="text-[10px] text-gray-400 leading-relaxed">填 Key 后同时保存到账号（任意设备登录生效）；留空用服务端统一配置。</p>
+                    <div className="flex gap-2">
+                      <button className="flex-1 py-2 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-deep transition-all" onClick={handleSave}>使用此供应商</button>
+                      <button className="px-3 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all" onClick={() => setOpen(false)}>取消</button>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {tab === 'custom' && (
+                <>
+                  {/* 已添加的自定义供应商 */}
+                  {customs.length > 0 && (
+                    <div className="space-y-2 mb-3">
+                      {customs.map(p => (
+                        <div key={p.id} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium text-gray-700">{p.label}{p.has_key ? '' : '（未填 Key）'}</p>
+                            <p className="text-[10px] text-gray-400 truncate">{p.base_url}</p>
+                          </div>
+                          <button
+                            onClick={() => setConfig({ provider: p.id, model: p.default || '', apiKey: '' })}
+                            className="text-[11px] px-2 py-1 rounded-md bg-accent-soft text-accent hover:bg-accent-soft/70 transition-colors"
+                          >选用</button>
+                          <button className="text-gray-300 hover:text-red-500 transition-colors" onClick={() => handleDeleteCustom(p.id)}>
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* 添加表单 */}
+                  <div className="space-y-3">
+                    <p className="text-xs font-medium text-gray-700">添加自定义供应商</p>
+                    <div>
+                      <label className="text-[11px] text-gray-400 block mb-1">供应商名称</label>
+                      <input
+                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-gray-50 focus:outline-none focus:border-accent"
+                        value={form.name}
+                        onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                        placeholder="如：我的中转站"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-gray-400 block mb-1">API 地址（base_url）</label>
+                      <input
+                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-gray-50 focus:outline-none focus:border-accent"
+                        value={form.base_url}
+                        onChange={e => setForm(f => ({ ...f, base_url: e.target.value }))}
+                        placeholder="https://api.example.com/v1"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-gray-400 block mb-1">API Key</label>
+                      <input
+                        type="password"
+                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-gray-50 focus:outline-none focus:border-accent"
+                        value={form.api_key}
+                        onChange={e => setForm(f => ({ ...f, api_key: e.target.value }))}
+                        placeholder="输入 API Key（保存到你的账号）"
+                      />
+                    </div>
+
+                    <button
+                      className="w-full py-2 rounded-lg border border-accent/30 text-xs text-accent hover:bg-accent-soft/50 transition-all flex items-center justify-center gap-1.5"
+                      onClick={handleTest}
+                      disabled={testing}
+                    >
+                      {testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                      测试并获取模型
+                    </button>
+
+                    {form.models.length > 0 && (
+                      <div>
+                        <label className="text-[11px] text-gray-400 block mb-1">模型列表（{form.models.length} 个，来自接口）</label>
+                        <select
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-gray-50 focus:outline-none focus:border-accent"
+                          value={form.default}
+                          onChange={e => setForm(f => ({ ...f, default: e.target.value }))}
+                        >
+                          {form.models.map(m => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                      </div>
+                    )}
+
+                    {formError && <p className="text-[11px] text-red-500">{formError}</p>}
+
+                    <button
+                      className="w-full py-2 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-deep transition-all"
+                      onClick={handleAddCustom}
+                    >保存供应商</button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </>

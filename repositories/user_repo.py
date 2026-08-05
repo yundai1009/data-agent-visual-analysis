@@ -47,6 +47,10 @@ def 初始化用户表() -> None:
         if "llm_api_key" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN llm_api_key TEXT")
             logger.info("users 表已迁移：新增 llm_api_key 列")
+        # 用户自定义 LLM 供应商（JSON 数组，阶段 13.6）
+        if "llm_custom_providers" not in columns:
+            conn.execute("ALTER TABLE users ADD COLUMN llm_custom_providers TEXT")
+            logger.info("users 表已迁移：新增 llm_custom_providers 列")
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)"
         )
@@ -177,4 +181,35 @@ def 清除LLMKey(user_id: str) -> None:
         conn.execute(
             "UPDATE users SET llm_api_key = NULL, updated_at = ? WHERE user_id = ?",
             (_now_iso(), user_id),
+        )
+
+
+# ---- 用户自定义 LLM 供应商（阶段 13.6，参考 Reasonix 自定义供应商）----
+
+import json as _json
+
+
+def 读取自定义供应商(user_id: str) -> list:
+    """读取用户自定义 LLM 供应商列表（JSON 数组）。"""
+    初始化用户表()
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT llm_custom_providers FROM users WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    raw = (row["llm_custom_providers"] if row else "") or ""
+    try:
+        data = _json.loads(raw)
+        return data if isinstance(data, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
+def 保存自定义供应商(user_id: str, providers: list) -> None:
+    """整体保存用户自定义 LLM 供应商列表（JSON 数组）。"""
+    初始化用户表()
+    with _write_lock, _get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET llm_custom_providers = ?, updated_at = ? WHERE user_id = ?",
+            (_json.dumps(providers, ensure_ascii=False), _now_iso(), user_id),
         )

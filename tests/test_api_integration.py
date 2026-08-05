@@ -761,6 +761,54 @@ def test_LLM失败原因_透传到报表(client):
         orc_mod.chat_completion = orig_cc
 
 
+# ---- 12. 自定义 LLM 供应商（阶段 13.6）----
+
+def test_自定义供应商_保存列表删除(client):
+    """POST 保存自定义供应商 → GET 列表含自定义（Key 脱敏）→ DELETE 移除。"""
+    tok = _register(client, "custp1")
+    h = {"Authorization": f"Bearer {tok}"}
+    r = client.post("/auth/llm-providers/custom", json={
+        "name": "myproxy", "base_url": "https://api.myproxy.com/v1",
+        "api_key": "sk-myproxy-12345678", "models": ["m1", "m2"], "default": "m1",
+    }, headers=h)
+    assert r.status_code == 200, r.text
+    r = client.get("/auth/llm-providers", headers=h)
+    assert r.status_code == 200
+    body = r.json()
+    custom = [p for p in body["providers"] if p.get("custom")]
+    assert len(custom) == 1, f"应有 1 个自定义供应商: {custom}"
+    assert custom[0]["id"] == "myproxy"
+    assert custom[0]["base_url"] == "https://api.myproxy.com/v1"
+    assert "sk-myproxy" not in str(body), "不应下发明文 Key"
+    # 删除
+    r = client.delete("/auth/llm-providers/custom/myproxy", headers=h)
+    assert r.status_code == 200
+    r = client.get("/auth/llm-providers", headers=h)
+    assert len([p for p in r.json()["providers"] if p.get("custom")]) == 0
+
+
+def test_自定义供应商_生成报表不报400(client):
+    """使用自定义供应商生成报表：不再因"不支持的 provider"报 400。"""
+    import 后端_核心.agent.编排器 as orc_mod
+    orig_cc = orc_mod.chat_completion
+    orc_mod.chat_completion = lambda messages, **kw: None  # LLM 失败降级规则
+    try:
+        tok = _register(client, "custp2")
+        h = {"Authorization": f"Bearer {tok}"}
+        client.post("/auth/llm-providers/custom", json={
+            "name": "myproxy", "base_url": "https://api.myproxy.com/v1",
+            "api_key": "sk-myproxy-abcdef", "models": ["m1"], "default": "m1",
+        }, headers=h)
+        did = _upload(client, tok).json()["数据集ID"]
+        r = client.post("/reports/generate", json={
+            "数据集ID": did, "分析需求": "各地区销售额占比", "图表类型": "自动推荐",
+            "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
+        }, headers={**h, "X-LLM-Provider": "myproxy", "X-LLM-Model": "m1"})
+        assert r.status_code == 200, f"自定义供应商生成应成功，实际 {r.status_code}: {r.text[:200]}"
+    finally:
+        orc_mod.chat_completion = orig_cc
+
+
 # ---- 9. 分析直播（SSE） ----
 
 def _parse_sse(body: str):

@@ -139,6 +139,24 @@ export async function fetchLLMProviders() {
   return request('/auth/llm-providers');
 }
 
+export async function saveCustomProvider(payload) {
+  return request('/auth/llm-providers/custom', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteCustomProvider(name) {
+  return request(`/auth/llm-providers/custom/${encodeURIComponent(name)}`, { method: 'DELETE' });
+}
+
+export async function testCustomProvider(baseUrl, apiKey) {
+  return request('/auth/llm-providers/test', {
+    method: 'POST',
+    body: JSON.stringify({ base_url: baseUrl, api_key: apiKey }),
+  });
+}
+
 export async function saveAccountLLMKey(apiKey) {
   return request('/auth/llm-key', {
     method: 'PUT',

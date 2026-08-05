@@ -148,23 +148,110 @@ def get_llm_key(user: dict = Depends(get_current_user)) -> Dict[str, Any]:
 
 
 @router.get("/llm-providers")
-def get_llm_providers() -> Dict[str, Any]:
-    """返回可用 LLM provider + 模型列表（供前端「+ AI 模型」动态渲染）。
+def get_llm_providers(user: dict = Depends(get_current_user)) -> Dict[str, Any]:
+    """返回可用 LLM provider（推荐预设 + 用户自定义）+ 模型列表。
 
-    来自 config/providers.toml（参考 Reasonix 接入方式）；不含任何 Key。
+    推荐预设来自 config/providers.toml；自定义供应商来自用户账号存储
+    （Key 脱敏显示，明文不下发）。供前端「+ AI 模型」分类渲染。
     """
     providers = getattr(EnvConfig, "LLM_PROVIDERS", {})
-    return {
-        "providers": [
-            {
-                "id": pid,
-                "label": pid,
-                "models": conf.get("models") or [],
-                "default": conf.get("default_model", ""),
-            }
-            for pid, conf in providers.items()
-        ]
+    presets = [
+        {"id": pid, "label": pid, "models": conf.get("models") or [],
+         "default": conf.get("default_model", ""), "custom": False}
+        for pid, conf in providers.items()
+    ]
+    customs = [
+        {
+            "id": p.get("name", ""),
+            "label": p.get("name", ""),
+            "base_url": p.get("base_url", ""),
+            "models": p.get("models") or [],
+            "default": p.get("default", ""),
+            "has_key": bool(p.get("api_key")),
+            "custom": True,
+        }
+        for p in user_repo.读取自定义供应商(user["user_id"])
+    ]
+    return {"providers": presets + customs}
+
+
+@router.post("/llm-providers/custom")
+def save_custom_provider(payload: dict, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
+    """保存/更新一个自定义 LLM 供应商（用户自担风险，BYOK）。
+
+    payload: {name, base_url, api_key?, models?, default?}
+    """
+    name = str(payload.get("name") or "").strip()
+    base_url = str(payload.get("base_url") or "").strip().rstrip("/")
+    if not name or not base_url:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="名称和 API 地址必填")
+    if len(base_url) > 300 or len(name) > 50:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="参数长度不合法")
+    api_key = str(payload.get("api_key") or "").strip()
+    if len(api_key) > 200:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="API Key 格式不合法")
+
+    providers = user_repo.读取自定义供应商(user["user_id"])
+    entry = {
+        "name": name,
+        "base_url": base_url,
+        "api_key": api_key,  # 明文存库（用户自己的 Key，仅服务端使用）
+        "models": list(payload.get("models") or []),
+        "default": str(payload.get("default") or ""),
     }
+    replaced = False
+    for i, p in enumerate(providers):
+        if p.get("name") == name:
+            providers[i] = entry
+            replaced = True
+            break
+    if not replaced:
+        providers.append(entry)
+    user_repo.保存自定义供应商(user["user_id"], providers)
+    return {"message": "已保存"}
+
+
+@router.delete("/llm-providers/custom/{name}")
+def delete_custom_provider(name: str, user: dict = Depends(get_current_user)) -> Dict[str, str]:
+    """删除一个自定义 LLM 供应商。"""
+    providers = user_repo.读取自定义供应商(user["user_id"])
+    providers = [p for p in providers if p.get("name") != name]
+    user_repo.保存自定义供应商(user["user_id"], providers)
+    return {"message": "已删除"}
+
+
+@router.post("/llm-providers/test")
+def test_custom_provider(payload: dict, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
+    """测试自定义供应商连接并拉取模型列表（/v1/models）。
+
+    payload: {base_url, api_key}
+    """
+    import requests as _requests
+    base_url = str(payload.get("base_url") or "").strip().rstrip("/")
+    api_key = str(payload.get("api_key") or "").strip()
+    if not base_url or not api_key:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="API 地址和 Key 必填")
+    try:
+        resp = _requests.get(
+            f"{base_url}/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=15,
+        )
+    except _requests.RequestException as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"连接失败：{type(exc).__name__}") from exc
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"验证失败：HTTP {resp.status_code}（Key 无效或接口不兼容）",
+        )
+    try:
+        body = resp.json()
+        models = [m.get("id", "") for m in (body.get("data") or []) if m.get("id")]
+    except (ValueError, TypeError):
+        models = []
+    if not models:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="连接成功但未获取到模型列表")
+    return {"models": models}
 
 
 @router.put("/llm-key")

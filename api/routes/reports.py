@@ -59,12 +59,27 @@ def _准备上下文(
 
     df = item["数据"]
 
-    # LLM 配置：只允许用户选 provider + model（白名单校验），禁止传任意 URL/Key
+    # LLM 配置：推荐预设（白名单）或用户自定义供应商（自担风险 BYOK）
     user_provider = (request.headers.get("x-llm-provider") or "deepseek").strip().lower()
     user_model = (request.headers.get("x-llm-model") or "").strip() or payload.model or ""
 
     providers = getattr(EnvConfig, "LLM_PROVIDERS", {})
     provider_conf = providers.get(user_provider)
+    # 用户自定义供应商：base_url/key 来自账号存储（参考 Reasonix 自定义供应商）
+    custom_api_key = ""
+    if not provider_conf:
+        from repositories import user_repo as _ur
+        custom_conf = next(
+            (p for p in _ur.读取自定义供应商(user["user_id"]) if p.get("name") == user_provider),
+            None,
+        )
+        if custom_conf:
+            provider_conf = {
+                "base_url": custom_conf["base_url"],
+                "default_model": custom_conf.get("default", "") or "",
+                "models": custom_conf.get("models") or [],
+            }
+            custom_api_key = custom_conf.get("api_key", "")
     if not provider_conf:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -78,17 +93,19 @@ def _准备上下文(
             detail=f"provider {user_provider} 不支持模型：{user_model}",
         )
 
-    # BYOK：不存后端、不进日志；不传则回退服务端 .env。URL 始终白名单，不允许用户指定。
+    # BYOK：不存后端、不进日志；不传则回退服务端 .env。自定义供应商 URL 由用户自担风险。
     user_api_key = (request.headers.get("x-llm-api-key") or "").strip()
     if len(user_api_key) > 200:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="API Key 格式不合法",
         )
-    # 优先级：请求头 X-LLM-API-Key > 账号绑定 key（user_repo 存储）> 服务端 .env
+    # 优先级：请求头 X-LLM-API-Key > 账号绑定 key > 自定义供应商 key > provider env key > .env
     if not user_api_key:
         from repositories import user_repo as _user_repo
         user_api_key = _user_repo.读取LLMKey(user["user_id"])
+    if not user_api_key and custom_api_key:
+        user_api_key = custom_api_key
     # provider 级 Key（api_key_env 对应环境变量，参考 Reasonix 接入方式）
     if not user_api_key and provider_conf.get("api_key_env"):
         user_api_key = os.getenv(provider_conf["api_key_env"], "")
