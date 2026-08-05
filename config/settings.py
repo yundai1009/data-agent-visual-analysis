@@ -60,23 +60,66 @@ class EnvConfig:
 
     # LLM provider 白名单（阶段 5）：用户只能选 provider+model，不能传任意 URL/Key
     # 结构：provider -> {base_url, default_model, models: [可选模型列表]}
-    LLM_PROVIDERS = {
-        "deepseek": {
-            "base_url": "https://api.deepseek.com/v1",
-            "default_model": "deepseek-chat",
-            "models": ["deepseek-chat", "deepseek-reasoner"],
-        },
-        "openai": {
-            "base_url": "https://api.openai.com/v1",
-            "default_model": "gpt-4o-mini",
-            "models": ["gpt-4o-mini", "gpt-4o"],
-        },
-        "siliconflow": {
-            "base_url": "https://api.siliconflow.cn/v1",
-            "default_model": "Qwen/Qwen2.5-7B-Instruct",
-            "models": [],
-        },
-    }
+    # 阶段 13.5：provider 配置外置到 config/providers.toml（参考 Reasonix 接入方式，
+    # 支持任意 OpenAI 兼容 provider + api_key_env），文件不存在时回退内置默认。
+    # 注意：此赋值在类体末尾（_加载LLMProviders 定义之后）执行。
+
+    @staticmethod
+    def _加载LLMProviders() -> Dict[str, Any]:
+        import logging
+        import os
+        from pathlib import Path as _Path
+        _log = logging.getLogger(__name__)
+        _file = _Path(__file__).resolve().parents[1] / "config" / "providers.toml"
+        if _file.exists():
+            try:
+                import tomllib
+                with open(_file, "rb") as fh:
+                    data = tomllib.load(fh)
+                out: Dict[str, Any] = {}
+                for p in data.get("providers", []):
+                    name = (p.get("name") or "").strip()
+                    # 本期仅支持 OpenAI 兼容协议（anthropic 后续扩展）
+                    if not name or p.get("kind", "openai") != "openai":
+                        continue
+                    out[name] = {
+                        "base_url": p["base_url"],
+                        "default_model": p.get("default", "") or "",
+                        "models": list(p.get("models") or []),
+                        "api_key_env": p.get("api_key_env") or "",
+                        "balance_url": p.get("balance_url") or "",
+                    }
+                if out:
+                    _log.info("已从 providers.toml 加载 %d 个 LLM provider", len(out))
+                    return out
+                _log.warning("providers.toml 无可用 provider，回退内置默认")
+            except Exception as exc:
+                _log.error("解析 providers.toml 失败，回退内置默认: %s", exc)
+        # 内置默认（回退）
+        return {
+            "deepseek": {
+                "base_url": "https://api.deepseek.com/v1",
+                "default_model": "deepseek-chat",
+                "models": ["deepseek-chat", "deepseek-reasoner"],
+                "api_key_env": "DEEPSEEK_API_KEY",
+            },
+            "openai": {
+                "base_url": "https://api.openai.com/v1",
+                "default_model": "gpt-4o-mini",
+                "models": ["gpt-4o-mini", "gpt-4o"],
+                "api_key_env": "OPENAI_API_KEY",
+            },
+            "siliconflow": {
+                "base_url": "https://api.siliconflow.cn/v1",
+                "default_model": "Qwen/Qwen2.5-7B-Instruct",
+                "models": [],
+                "api_key_env": "SILICONFLOW_API_KEY",
+            },
+        }
+
+
+# 类定义完成后加载 provider 配置（_加载LLMProviders 此时已定义）
+EnvConfig.LLM_PROVIDERS = EnvConfig._加载LLMProviders()
 
 
 @dataclass(frozen=True)

@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from api.dependencies import get_current_user
+from config.settings import EnvConfig
 from repositories import email_code_repo, user_repo
 from services import auth_service, email_service
 
@@ -144,6 +145,26 @@ def get_llm_key(user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     api_key = user_repo.读取LLMKey(user["user_id"])
     masked = f"sk-…{api_key[-4:]}" if len(api_key) >= 8 else ""
     return {"has_key": bool(api_key), "masked": masked}
+
+
+@router.get("/llm-providers")
+def get_llm_providers() -> Dict[str, Any]:
+    """返回可用 LLM provider + 模型列表（供前端「+ AI 模型」动态渲染）。
+
+    来自 config/providers.toml（参考 Reasonix 接入方式）；不含任何 Key。
+    """
+    providers = getattr(EnvConfig, "LLM_PROVIDERS", {})
+    return {
+        "providers": [
+            {
+                "id": pid,
+                "label": pid,
+                "models": conf.get("models") or [],
+                "default": conf.get("default_model", ""),
+            }
+            for pid, conf in providers.items()
+        ]
+    }
 
 
 @router.put("/llm-key")

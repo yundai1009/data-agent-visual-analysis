@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import queue
 import threading
 from typing import Any, Callable, Dict, Optional, Tuple
@@ -88,6 +89,9 @@ def _准备上下文(
     if not user_api_key:
         from repositories import user_repo as _user_repo
         user_api_key = _user_repo.读取LLMKey(user["user_id"])
+    # provider 级 Key（api_key_env 对应环境变量，参考 Reasonix 接入方式）
+    if not user_api_key and provider_conf.get("api_key_env"):
+        user_api_key = os.getenv(provider_conf["api_key_env"], "")
     llm_config = LLMRequestConfig(
         provider=user_provider,
         base_url=provider_conf["base_url"],

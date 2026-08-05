@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getAccountLLMKey, saveAccountLLMKey, clearAccountLLMKey } from '../api';
+import { getAccountLLMKey, saveAccountLLMKey, clearAccountLLMKey, fetchLLMProviders } from '../api';
 
 const STORAGE_KEY = 'llm_config';
 
-// 只允许选择服务端白名单内的 provider + model，不输入 Key / Base-URL
-const PROVIDERS = [
+// 兜底 provider（后端 /auth/llm-providers 不可用时使用；正常由后端动态下发）
+const FALLBACK_PROVIDERS = [
   { id: 'deepseek', label: 'DeepSeek', models: ['deepseek-chat', 'deepseek-reasoner'] },
   { id: 'openai', label: 'OpenAI', models: ['gpt-4o-mini', 'gpt-4o'] },
   { id: 'siliconflow', label: '硅基流动', models: [] },
@@ -24,12 +24,17 @@ export default function LLMConfig() {
   const [saved, setSaved] = useState(!!loadLLMConfig());
   // 账号级 Key 状态（后端存储，登录任意设备生效）
   const [accountKey, setAccountKey] = useState(null); // { has_key: bool, masked: string }
+  // provider 列表（后端动态下发，参考 Reasonix 接入方式）
+  const [providers, setProviders] = useState(FALLBACK_PROVIDERS);
 
-  // 挂载时加载账号 Key 状态（登录后才可能有）
+  // 挂载时加载账号 Key 状态 + provider 列表
   useEffect(() => {
     let cancelled = false;
     getAccountLLMKey()
       .then(info => { if (!cancelled) setAccountKey(info); })
+      .catch(() => {});
+    fetchLLMProviders()
+      .then(res => { if (!cancelled && res?.providers?.length) setProviders(res.providers); })
       .catch(() => {});
     return () => { cancelled = true; };
   }, []);
@@ -38,8 +43,8 @@ export default function LLMConfig() {
     getAccountLLMKey().then(setAccountKey).catch(() => {});
   }, []);
 
-  const activeProvider = PROVIDERS.find(p => p.id === config.provider) || PROVIDERS[0];
-  const modelOptions = activeProvider.models.length > 0 ? activeProvider.models : [activeProvider.models[0]].filter(Boolean);
+  const activeProvider = providers.find(p => p.id === config.provider) || providers[0];
+  const modelOptions = activeProvider?.models?.length > 0 ? activeProvider.models : [activeProvider?.models?.[0]].filter(Boolean);
 
   const handleSave = async () => {
     const finalModel = modelOptions.includes(config.model) ? config.model : (activeProvider.models[0] || '');
@@ -113,7 +118,7 @@ export default function LLMConfig() {
                 value={config.provider}
                 onChange={e => setConfig(c => ({ provider: e.target.value, model: '' }))}
               >
-                {PROVIDERS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                {providers.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
               </select>
             </div>
             <div>

@@ -135,6 +135,10 @@ export async function getAccountLLMKey() {
   return request('/auth/llm-key');
 }
 
+export async function fetchLLMProviders() {
+  return request('/auth/llm-providers');
+}
+
 export async function saveAccountLLMKey(apiKey) {
   return request('/auth/llm-key', {
     method: 'PUT',
