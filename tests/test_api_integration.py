@@ -675,6 +675,25 @@ def test_账号key_清除与用户隔离(client):
         orc_mod.chat_completion = orig_cc
 
 
+# ---- 11. 字段意图自动选择（时间类需求）----
+
+def test_工作时间占比_自动选中时间字段(client):
+    """需求含"工作时间"时，规则匹配应选中工作时间字段而非默认首个分类字段。"""
+    tok = _register(client, "wt1")
+    content = "地点,工作时间,职位ID\n武汉,8,101\n上海,10,102\n北京,6,103\n"
+    r = _upload(client, tok, filename="wt.csv", content=content)
+    assert r.status_code == 200, r.text
+    did = r.json()["数据集ID"]
+    r = client.post("/reports/generate", json={
+        "数据集ID": did, "分析需求": "工作时间占比", "图表类型": "自动推荐",
+        "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
+    }, headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200, r.text[:200]
+    body = r.json()
+    assert body["图表类型"] == "饼图", f"应选饼图，实际 {body['图表类型']}"
+    assert body["图表配置"]["X轴"] == "工作时间", f"X 轴应为工作时间，实际 {body['图表配置']['X轴']}"
+
+
 # ---- 9. 分析直播（SSE） ----
 
 def _parse_sse(body: str):
