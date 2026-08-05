@@ -22,8 +22,13 @@ from 后端_核心.agent.工具集 import register_tool_executor
 from 后端_核心.数据画像 import 生成数据画像 as _生成数据画像
 
 
-def _可读画像摘要(画像: Dict[str, Any]) -> str:
-    """把数据画像压缩成一段可读文本，供 LLM 查看。"""
+def _可读画像摘要(画像: Dict[str, Any], df=None) -> str:
+    """把数据画像压缩成一段可读文本，供 LLM 查看。
+
+    关键：除字段名/类型外，附上每字段前几个真实示例值——
+    LLM 结合"字段名 + 示例值"才能准确理解字段语义（如"工作时间: 8,10,6"
+    明确是时长度量），从而任意自然语言都能选对字段。
+    """
     行数 = 画像.get("行数", 0)
     列数 = 画像.get("列数", 0)
     字段列表 = 画像.get("字段列表", [])
@@ -31,14 +36,27 @@ def _可读画像摘要(画像: Dict[str, Any]) -> str:
     日期字段 = 画像.get("日期字段", [])
     分类字段 = 画像.get("分类字段", [])
     质量 = 画像.get("数据质量", {})
-    return (
-        f"数据集共 {行数} 行、{列数} 列。\n"
-        f"字段列表：{', '.join(字段列表)}\n"
-        f"数值字段：{', '.join(数值字段)}\n"
-        f"日期字段：{', '.join(日期字段)}\n"
-        f"分类字段：{', '.join(分类字段)}\n"
-        f"数据质量评级：{质量.get('评级', '?')} - {质量.get('等级说明', '')}"
-    )
+    lines = [
+        f"数据集共 {行数} 行、{列数} 列。",
+        f"字段列表：{', '.join(字段列表)}",
+        f"数值字段：{', '.join(数值字段)}",
+        f"日期字段：{', '.join(日期字段)}",
+        f"分类字段：{', '.join(分类字段)}",
+        f"数据质量评级：{质量.get('评级', '?')} - {质量.get('等级说明', '')}",
+    ]
+    # 每字段真实示例值（前 3 个非空），帮 LLM 理解字段语义
+    if df is not None and not df.empty:
+        sample_lines = []
+        for field in 字段列表:
+            if field not in df.columns:
+                continue
+            samples = [str(v) for v in df[field].dropna().head(3).tolist()]
+            if samples:
+                sample_lines.append(f"{field}: {', '.join(samples)}")
+        if sample_lines:
+            lines.append("字段示例值（帮助理解语义，非完整数据）：")
+            lines.append(" | ".join(sample_lines))
+    return "\n".join(lines)
 
 
 def _获取数据画像_executor(arguments: Dict[str, Any], context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -47,7 +65,7 @@ def _获取数据画像_executor(arguments: Dict[str, Any], context: Dict[str, A
     if not 画像:
         return None
     return {
-        "摘要": _可读画像摘要(画像),
+        "摘要": _可读画像摘要(画像, df=context.get("df")),
         "字段列表": 画像.get("字段列表", []),
     }
 

@@ -332,14 +332,32 @@ export default function Analysis() {
       {nlInput.trim().length > 0 && !generating && (
         <div className="flex items-center gap-2 flex-wrap mt-3 px-4 py-2.5 rounded-xl bg-accent-soft text-xs text-accent">
           <b className="font-semibold">已自动选择</b>
-          <span className="bg-white border border-accent/20 rounded-md px-2 py-1 font-medium">
-            {nlInput.trim() ? '图表：自动' : (chartMap[chartType] || '自动推荐')}
+          <span
+            className="bg-white border border-accent/20 rounded-md px-2 py-1 font-medium cursor-pointer hover:border-accent/60 transition-colors"
+            onClick={() => setShowAdvanced(true)}
+            title="点击修改图表类型"
+          >
+            {nlInput.trim() ? '图表：自动' : (chartMap[chartType] || '自动推荐')} ✎
           </span>
-          {xAxis && <span className="bg-white border border-accent/20 rounded-md px-2 py-1 font-medium">X {xAxis}</span>}
-          {yAxis && <span className="bg-white border border-accent/20 rounded-md px-2 py-1 font-medium">Y {yAxis}</span>}
-          {groupField && groupField !== '无' && <span className="bg-white border border-accent/20 rounded-md px-2 py-1 font-medium">分组 {groupField}</span>}
-          <span className="bg-white border border-accent/20 rounded-md px-2 py-1 font-medium">{aggMethod}</span>
-          <span className="ml-auto opacity-70">确认无误再生成</span>
+          {xAxis && (
+            <span className="bg-white border border-accent/20 rounded-md px-2 py-1 font-medium cursor-pointer hover:border-accent/60 transition-colors" onClick={() => setShowAdvanced(true)} title="点击修改 X 轴">
+              X {xAxis} ✎
+            </span>
+          )}
+          {yAxis && (
+            <span className="bg-white border border-accent/20 rounded-md px-2 py-1 font-medium cursor-pointer hover:border-accent/60 transition-colors" onClick={() => setShowAdvanced(true)} title="点击修改 Y 轴">
+              Y {yAxis} ✎
+            </span>
+          )}
+          {groupField && groupField !== '无' && (
+            <span className="bg-white border border-accent/20 rounded-md px-2 py-1 font-medium cursor-pointer hover:border-accent/60 transition-colors" onClick={() => setShowAdvanced(true)} title="点击修改分组字段">
+              分组 {groupField} ✎
+            </span>
+          )}
+          <span className="bg-white border border-accent/20 rounded-md px-2 py-1 font-medium cursor-pointer hover:border-accent/60 transition-colors" onClick={() => setShowAdvanced(true)} title="点击修改聚合方式">
+            {aggMethod} ✎
+          </span>
+          <span className="ml-auto opacity-70">点击任意项可修改</span>
         </div>
       )}
 
