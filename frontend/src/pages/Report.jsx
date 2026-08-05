@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Download, DownloadCloud, Sparkles, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Download, DownloadCloud, Sparkles, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
 import { listReports, getReport, deleteReport } from '../api';
 import EChartsChart from '../components/EChartsChart';
 
@@ -193,6 +193,18 @@ export default function Report() {
               <span key={i} className="text-xs px-2.5 py-1 rounded-md"
                     style={{ background: '#fff7ed', color: '#92400e', border: '1px solid #fed7aa' }}>{w}</span>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* LLM 失败原因：降级到规则时明示（不再静默回退让用户困惑） */}
+      {report.LLM失败原因 && intentSource !== 'LLM' && (
+        <div className="mt-3 rounded-xl p-4 flex gap-3 items-start bg-red-50 border border-red-200">
+          <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+          <div className="text-xs text-red-700 leading-relaxed">
+            <p className="font-semibold mb-0.5">AI 智能解析未生效，本次使用规则匹配</p>
+            <p>{report.LLM失败原因}</p>
+            <p className="mt-1 opacity-80">配置有效的 AI Key 后（「+ AI 模型」），可生成更符合需求的图表。</p>
           </div>
         </div>
       )}

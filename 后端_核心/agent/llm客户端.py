@@ -45,6 +45,34 @@ _CHAT_COMPLETIONS_PATH = "/chat/completions"
 # 视为“未配置 LLM”的占位字符串，触发静默回退。
 _UNCONFIGURED_KEY_PLACEHOLDERS = {"", "your_llm_api_key", "your-api-key", "sk-xxx"}
 
+# 最近一次 LLM 失败原因（模块级，供降级路径把原因透传给用户，
+# 避免"LLM 失败静默回退规则"让用户误以为系统没理解）。
+_last_llm_fail: Dict[str, Any] = {}
+
+
+def 最近LLM失败() -> Dict[str, Any]:
+    """返回最近一次 LLM 失败原因（供报表/前端明示）。"""
+    return dict(_last_llm_fail)
+
+
+def _record_llm_fail(reason: str) -> None:
+    _last_llm_fail.clear()
+    _last_llm_fail.update({"reason": reason})
+
+
+def _解释HTTP状态(status_code: int, model: str, base_url: str) -> str:
+    """把 LLM API 的 HTTP 状态码转成用户可读的原因。"""
+    common = {
+        401: "API Key 无效（认证失败），请检查 Key 是否正确、服务商是否选对",
+        402: "LLM 账号欠费或额度用尽（HTTP 402），请到服务商平台充值",
+        403: "无权限访问（403），请检查 Key 权限/服务商是否匹配",
+        404: "接口地址不存在（404），请检查模型名或服务商",
+        429: "请求过于频繁或额度受限（429），请稍后重试",
+    }
+    if status_code in common:
+        return f"LLM 调用失败：{common[status_code]}"
+    return f"LLM 调用失败：HTTP {status_code}（模型 {model} @ {base_url}）"
+
 
 class LLMError(Exception):
     """LLM 调用相关错误。本模块对外不抛出，仅内部用于日志区分。"""
@@ -154,6 +182,7 @@ def chat_completion(
 
     api_key = (user_api_key or EnvConfig.LLM_API_KEY or "").strip()
     if api_key.lower() in _UNCONFIGURED_KEY_PLACEHOLDERS:
+        _record_llm_fail("未配置 API Key（服务端 .env 为占位符），请在页面填写自己的 Key")
         return None
 
     base_url = ((user_base_url or EnvConfig.LLM_BASE_URL) or "").rstrip("/")
@@ -179,16 +208,19 @@ def chat_completion(
         response = requests.post(url, headers=headers, json=payload, timeout=request_timeout)
     except requests.RequestException as exc:
         logger.warning("LLM 网络异常: %s", exc)
+        _record_llm_fail(f"LLM 网络异常（无法访问 {base_url}）：{type(exc).__name__}，请检查网络/代理")
         return None
 
     if response.status_code != 200:
         logger.warning("LLM HTTP %s（响应内容已脱敏，仅记录状态码）", response.status_code)
+        _record_llm_fail(_解释HTTP状态(response.status_code, model, base_url))
         return None
 
     try:
         return response.json()
     except (json.JSONDecodeError, ValueError) as exc:
         logger.warning("LLM 响应非 JSON: %s", exc)
+        _record_llm_fail("LLM 响应不是合法 JSON")
         return None
 
 

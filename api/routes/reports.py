@@ -323,5 +323,6 @@ def _构建响应(payload: ReportGenerateRequest, report: Dict[str, Any], report
         导出数据=report["导出数据"],
         结论=report["结论"],
         意图来源=report.get("意图来源", "无"),
+        LLM失败原因=report.get("LLM失败原因", ""),
         agent_mode=payload.agent_mode,
     )

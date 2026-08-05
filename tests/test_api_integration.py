@@ -711,6 +711,56 @@ def test_数据画像摘要_含字段示例值():
     assert "地点: 武汉, 上海, 北京" in summary, f"画像应含地点示例值: {summary}"
 
 
+def test_工作经验占比_优先经验字段而非时间(client):
+    """需求"工作经验要求占比图"且数据同时含工作经验/时间字段时，
+    必须选"工作经验"字段（需求文本中明确提到的词优先），而非"时间"。"""
+    tok = _register(client, "exp1")
+    content = ("工作经验,时间,地点\n"
+               "1-2年,2025年09月22日,武汉\n"
+               "2-3年,2025年09月21日,上海\n"
+               "无经验,2025年09月20日,北京\n")
+    r = _upload(client, tok, filename="exp.csv", content=content)
+    assert r.status_code == 200, r.text
+    did = r.json()["数据集ID"]
+    r = client.post("/reports/generate", json={
+        "数据集ID": did, "分析需求": "工作经验要求占比图", "图表类型": "自动推荐",
+        "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
+    }, headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200, r.text[:200]
+    body = r.json()
+    assert body["图表类型"] == "饼图", f"应选饼图，实际 {body['图表类型']}"
+    assert body["图表配置"]["X轴"] == "工作经验", f"X 轴应为工作经验，实际 {body['图表配置']['X轴']}"
+
+
+def test_LLM失败原因_透传到报表(client):
+    """LLM 调用失败（如 402 欠费）时，报表响应必须带 LLM失败原因，前端可明示。"""
+    import 后端_核心.agent.llm客户端 as llm_mod
+    import 后端_核心.agent.编排器 as orc_mod
+    orig_cc = orc_mod.chat_completion
+
+    def fake_chat(messages, **kw):
+        llm_mod._record_llm_fail("LLM 调用失败：LLM 账号欠费或额度用尽（HTTP 402），请到服务商平台充值")
+        return None
+
+    orc_mod.chat_completion = fake_chat
+    try:
+        tok = _register(client, "llmfail1")
+        # 账号配 key（非占位符）→ 触发 LLM 链路 → fake 记录 402 失败 → 降级规则
+        client.put("/auth/llm-key", json={"api_key": "sk-llm-fail-12345678"}, headers={"Authorization": f"Bearer {tok}"})
+        did = _upload(client, tok).json()["数据集ID"]
+        r = client.post("/reports/generate", json={
+            "数据集ID": did, "分析需求": "各地区销售额占比", "图表类型": "自动推荐",
+            "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
+        }, headers={"Authorization": f"Bearer {tok}"})
+        assert r.status_code == 200, r.text[:200]
+        body = r.json()
+        assert body["意图来源"] == "规则", f"LLM 失败应降级规则，实际 {body['意图来源']}"
+        assert body["LLM失败原因"], "应透传 LLM 失败原因"
+        assert "402" in body["LLM失败原因"], f"失败原因应含 402，实际 {body['LLM失败原因']}"
+    finally:
+        orc_mod.chat_completion = orig_cc
+
+
 # ---- 9. 分析直播（SSE） ----
 
 def _parse_sse(body: str):

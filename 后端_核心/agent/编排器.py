@@ -19,6 +19,7 @@ from 后端_核心.agent.llm客户端 import (
     chat_completion,
     extract_tool_call,
     is_llm_configured,
+    最近LLM失败,
 )
 from config.settings import LLMRequestConfig
 from 后端_核心.agent.工具集 import (
@@ -173,6 +174,8 @@ def 编排Agent(
         "意图来源": intent_source,
         "推荐理由": intent_override.get("推荐理由", ""),
         "Agent_Trace": trace.to_list(),
+        # LLM 失败原因：降级时透传给用户（避免静默回退规则让用户困惑）
+        "LLM失败原因": 最近LLM失败().get("reason", ""),
     }
 
 

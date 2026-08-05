@@ -86,11 +86,22 @@ def _转换日期列(df: pd.DataFrame, columns: List[str]) -> pd.DataFrame:
     return result
 
 
-def _匹配意图字段(画像: Dict[str, Any], 关键词列表: List[str]) -> Optional[str]:
+def _匹配意图字段(画像: Dict[str, Any], 关键词列表: List[str], 需求文本: str = "") -> Optional[str]:
     可用字段 = 画像.get("字段列表", [])
     分类字段 = 画像.get("分类字段", [])
+    候选字段 = [*可用字段, *分类字段]
+    # 第一优先：需求文本中真正出现的关键词所匹配的字段
+    # （如"工作经验要求占比图"→ 需求含"工作经验"，优先匹配工作经验字段，
+    #   而不是按固定顺序被"时间"等字段抢先）
+    if 需求文本:
+        for 关键词 in 关键词列表:
+            if 关键词 and 关键词 in 需求文本:
+                for field in 候选字段:
+                    if 关键词 in field:
+                        return field
+    # 第二优先：固定顺序
     for 关键词 in 关键词列表:
-        for field in [*可用字段, *分类字段]:
+        for field in 候选字段:
             if 关键词 and 关键词 in field:
                 return field
     if 分类字段:
@@ -252,7 +263,7 @@ def _受控语句配置(画像: Dict[str, Any], 分析需求: str) -> Dict[str, 
     if "占比" in 文本 or "比例" in 文本 or "构成" in 文本:
         # 占比语义：优先匹配需求中提到的维度字段（如"工作时间占比"→ 工作时间），
         # 值统一用记录数计数（避免 x=y 同字段冲突）
-        intent_field = _匹配意图字段(画像, 字段意图关键词)
+        intent_field = _匹配意图字段(画像, 字段意图关键词, 文本)
         if intent_field and _合法字段(画像, intent_field):
             override = {"图表类型": "饼图", "x轴": intent_field, "y轴": ["记录数"],
                         "分组字段": None, "聚合方式": "计数"}
@@ -275,10 +286,11 @@ def _解析自然语言意图(
     df=None,
     llm_config: Optional[LLMRequestConfig] = None,
     on_event: Optional[Any] = None,
-) -> Tuple[Dict[str, Any], str, List[Dict[str, Any]]]:
-    """优先用 LLM 解析; 失败降级回规则匹配. 返回 (override, source, trace)。
+) -> Tuple[Dict[str, Any], str, List[Dict[str, Any]], str]:
+    """优先用 LLM 解析; 失败降级回规则匹配. 返回 (override, source, trace, llm_fail_reason)。
     source: LLM / 规则 / 无
     trace: 多轮 ReAct 决策记录，或空列表
+    llm_fail_reason: LLM 失败原因（降级时供前端明示；成功或规则路径为空）
     on_event: 可选回调，trace 每记录一步即实时推送（SSE 直播）
     """
     if 分析需求 and 分析需求.strip():
@@ -293,12 +305,13 @@ def _解析自然语言意图(
                     "聚合方式": agent_result["聚合方式"],
                     "推荐理由": agent_result.get("推荐理由", ""),
                 }
-                return override, agent_result["意图来源"], agent_result["Agent_Trace"]
+                fail_reason = agent_result.get("LLM失败原因", "")
+                return override, agent_result["意图来源"], agent_result["Agent_Trace"], fail_reason
             logger.warning("LLM 意图解析返回 None, 降级到关键词匹配")
         except Exception as exc:
             logger.warning("LLM 意图解析异常, 降级到关键词匹配: %s", exc)
     rule_override = _意图驱动配置(画像, 分析需求)
-    return rule_override, ("规则" if rule_override else "无"), []
+    return rule_override, ("规则" if rule_override else "无"), [], ""
 
 
 def _意图驱动配置(画像: Dict[str, Any], 分析需求: str) -> Dict[str, Any]:
@@ -310,7 +323,7 @@ def _意图驱动配置(画像: Dict[str, Any], 分析需求: str) -> Dict[str, 
     if not any(keyword in 需求文本 for keyword in 占比关键词):
         return {}
 
-    目标字段 = _匹配意图字段(画像, 字段意图关键词)
+    目标字段 = _匹配意图字段(画像, 字段意图关键词, 需求文本)
     if not 目标字段:
         return {}
 
@@ -822,7 +835,7 @@ def 生成报表数据(
     else:
         y轴列表 = [field for field in (y轴 or []) if field]
 
-    intent_override, intent_source, agent_trace = _解析自然语言意图(画像, 分析需求, df, llm_config=llm_config, on_event=on_event)
+    intent_override, intent_source, agent_trace, llm_fail_reason = _解析自然语言意图(画像, 分析需求, df, llm_config=llm_config, on_event=on_event)
     if intent_override:
         图表类型 = intent_override["图表类型"]
         x轴 = intent_override.get("x轴") or x轴
@@ -916,6 +929,7 @@ def 生成报表数据(
         "风险提示": 风险提示,
         "Agent Trace": agent_trace or _生成_agent_trace(分析需求, 画像, effective_chart, x轴, y轴列表, 分组字段, 聚合方式, 推荐说明, 风险提示, intent_source),
         "意图来源": intent_source,
+        "LLM失败原因": llm_fail_reason,
         "结论来源": conclusion_source,
         "导出数据": {
             "推荐文件名": "analysis-report.html",

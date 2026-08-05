@@ -72,6 +72,8 @@ class ReportGenerateResponse(BaseModel):
     结论: str
     # 阶段 1 已在 生成报表数据 返回中存在；阶段 2 透传到 API 响应，便于前端展示 LLM/规则 兜底来源
     意图来源: str = "无"
+    # LLM 失败原因：降级到规则时透传，前端明示"为什么是规则匹配"
+    LLM失败原因: str = ""
     agent_mode: str = "single"
 
     class Config:
