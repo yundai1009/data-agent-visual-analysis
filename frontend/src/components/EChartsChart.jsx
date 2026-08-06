@@ -105,6 +105,14 @@ function buildOption(chartType, config) {
   const rows = Array.isArray(config?.数据) ? config.数据 : [];
   if (!rows.length) return null;
 
+  // 取值键回退：preferred 字段在数据中不存在时（旧报表/字段错配），
+  // 自动用数据里第一个未被排除的列，避免所有图表显示 0
+  function resolveKey(row, preferred, excludes = []) {
+    if (row && preferred && row[preferred] !== undefined) return preferred;
+    const exclude = new Set(excludes);
+    return Object.keys(row || {}).find(k => !exclude.has(k) && row[k] !== undefined) || preferred;
+  }
+
   const xField = config.X轴 || Object.keys(rows[0])[0] || '';
   const yFields = config.Y轴 || [];
   const groupField = config.颜色 || config.分组字段;
@@ -146,7 +154,7 @@ function buildOption(chartType, config) {
   }
 
   if (type === 'line' || type === 'area') {
-    const yf = yFields[0] || Object.keys(rows[0]).find(k => k !== xField) || '';
+    const yf = resolveKey(rows[0], yFields[0], [xField]);
     return {
       ...base, tooltip: { trigger: 'axis' },
       xAxis: { type: 'category', data: rows.map(r => String(r[xField] ?? '')) },
@@ -159,7 +167,7 @@ function buildOption(chartType, config) {
   }
 
   if (type === 'scatter') {
-    const yf = yFields[0] || Object.keys(rows[0]).find(k => k !== xField) || '';
+    const yf = resolveKey(rows[0], yFields[0], [xField]);
     return {
       ...base,
       xAxis: { type: 'value', name: xField },
@@ -169,7 +177,10 @@ function buildOption(chartType, config) {
   }
 
   if (type === 'radar') {
-    const indicators = (yFields.length >= 2 ? yFields : Object.keys(rows[0]).filter(k => k !== xField)).map(f => ({ name: f }));
+    // 指标列必须是数据中真实存在的键（过滤旧报表/字段错配导致的不存在列）
+    const indicatorKeys = (yFields.length >= 2 ? yFields : Object.keys(rows[0]).filter(k => k !== xField))
+      .filter(k => rows[0] && rows[0][k] !== undefined);
+    const indicators = indicatorKeys.map(f => ({ name: f }));
     return {
       ...base, tooltip: { trigger: 'item' },
       legend: { data: rows.map(r => String(r[xField] ?? '')), bottom: 0 },
@@ -184,7 +195,7 @@ function buildOption(chartType, config) {
   if (type === 'heatmap' && groupField) {
     const xVals = [...new Set(rows.map(r => String(r[xField] ?? '')))];
     const yVals = [...new Set(rows.map(r => String(r[groupField] ?? '')))];
-    const vf = yFields[0] || Object.keys(rows[0]).find(k => k !== xField && k !== groupField) || '';
+    const vf = resolveKey(rows[0], yFields[0], [xField, groupField]);
     const hData = rows.map(r => [xVals.indexOf(String(r[xField] ?? '')), yVals.indexOf(String(r[groupField] ?? '')), Number(r[vf]) || 0]);
     return {
       ...base, tooltip: { position: 'top' },
@@ -198,7 +209,7 @@ function buildOption(chartType, config) {
   if (groupField && (type === 'stacked_bar' || type === 'bar')) {
     const groups = [...new Set(rows.map(r => String(r[groupField] ?? '')))];
     const xVals = [...new Set(rows.map(r => String(r[xField] ?? '')))];
-    const yf = yFields[0] || Object.keys(rows[0]).find(k => k !== xField && k !== groupField) || '';
+    const yf = resolveKey(rows[0], yFields[0], [xField, groupField]);
     return {
       ...base, tooltip: { ...CHART_TOOLTIP, trigger: 'axis', axisPointer: { type: 'shadow' } },
       legend: { data: groups, bottom: 0 },
@@ -213,7 +224,7 @@ function buildOption(chartType, config) {
   }
 
   if (type === 'histogram') {
-    const yf = yFields[0] || Object.keys(rows[0]).find(k => k !== xField) || '';
+    const yf = resolveKey(rows[0], yFields[0], [xField]);
     return {
       ...base, tooltip: { ...CHART_TOOLTIP, trigger: 'axis', axisPointer: { type: 'shadow' } },
       xAxis: { type: 'category', data: rows.map(r => String(r[xField] ?? '')), axisLabel: { rotate: 45 } },
@@ -224,7 +235,7 @@ function buildOption(chartType, config) {
 
   if (type === 'wordcloud') {
     const nk = nameField || 'name';
-    const vk = valueField || 'value';
+    const vk = resolveKey(rows[0], valueField || 'value', [nk]);
     return {
       ...base, tooltip: { show: true },
       series: [{
