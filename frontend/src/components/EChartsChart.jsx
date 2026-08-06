@@ -127,11 +127,16 @@ function buildOption(chartType, config) {
     const nk = nameField || xField;
     const vk = valueField || (yFields[0] || Object.keys(rows[0]).find(k => k !== nk) || '');
     return {
-      ...base, tooltip: { ...CHART_TOOLTIP, trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+      ...base,
+      // 用 formatter 函数手动算百分比（不依赖 {d} 占位符，避免显示 0%）
+      tooltip: {
+        ...CHART_TOOLTIP, trigger: 'item',
+        formatter: (p) => `${p.name}: ${p.value} (${(p.percent ?? 0).toFixed(1)}%)`,
+      },
       series: [{
         type: 'pie', radius: type === 'donut' ? ['45%', '70%'] : ['0%', '60%'],
         data: rows.map(r => ({ name: String(r[nk] ?? ''), value: Number(r[vk]) || 0 })),
-        label: { formatter: '{b}\n{d}%' },
+        label: { formatter: (p) => `${p.name}\n${(p.percent ?? 0).toFixed(1)}%` },
       }],
     };
   }
