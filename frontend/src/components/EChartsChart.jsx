@@ -219,6 +219,7 @@ function buildOption(chartType, config) {
         name: g, type: 'bar', stack: 'total',
         data: xVals.map(xv => { const m = rows.find(r => String(r[xField] ?? '') === xv && String(r[groupField] ?? '') === g); return m ? Number(m[yf]) || 0 : 0; }),
         itemStyle: { color: COLORS[i % COLORS.length] },
+        animationDelay: (idx) => idx * 50,
       })),
     };
   }
@@ -229,7 +230,7 @@ function buildOption(chartType, config) {
       ...base, tooltip: { ...CHART_TOOLTIP, trigger: 'axis', axisPointer: { type: 'shadow' } },
       xAxis: { type: 'category', data: rows.map(r => String(r[xField] ?? '')), axisLabel: { rotate: 45 } },
       yAxis: { type: 'value' },
-      series: [{ type: 'bar', data: rows.map(r => Number(r[yf]) || 0), barWidth: '99%', itemStyle: { color: '#6366f1' } }],
+      series: [{ type: 'bar', data: rows.map(r => Number(r[yf]) || 0), barWidth: '99%', itemStyle: { color: '#6366f1' }, animationDelay: (idx) => idx * 60 }],
     };
   }
 
@@ -351,6 +352,6 @@ function buildOption(chartType, config) {
     ...base, tooltip: { trigger: 'axis' },
     xAxis: { type: 'category', data: rows.map(r => String(r[xField] ?? '')) },
     yAxis: { type: 'value' },
-    series: [{ type: 'bar', data: rows.map(r => Number(r[yf]) || 0) }],
+    series: [{ type: 'bar', data: rows.map(r => Number(r[yf]) || 0), animationDelay: (idx) => idx * 60 }],
   };
 }

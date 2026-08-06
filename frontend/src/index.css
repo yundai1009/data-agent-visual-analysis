@@ -71,6 +71,19 @@ button:active, [role="button"]:active {
 /* lucide 图标统一笔画（默认 2 → 1.75，更精致） */
 .lucide { stroke-width: 1.75; }
 
+/* 登录页深色 3D 动效：光晕呼吸 / 粒子浮动 / 标题渐变流动 */
+@keyframes motion-glow {
+  0%, 100% { opacity: .75; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+@keyframes motion-float {
+  0%, 100% { transform: translateY(0); opacity: .5; }
+  50% { transform: translateY(-22px); opacity: 1; }
+}
+@keyframes motion-title {
+  to { background-position: 200% center; }
+}
+
 /* 尊重系统"减少动态效果"设置：关闭全部动画/过渡 */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

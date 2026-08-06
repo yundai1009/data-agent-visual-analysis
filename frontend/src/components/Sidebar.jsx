@@ -18,19 +18,27 @@ export default function Sidebar({ collapsed, onToggle }) {
   };
   return (
     <aside
-      className={`bg-white/65 backdrop-blur-xl border-r border-white/60 flex flex-col shrink-0 transition-all duration-250 ease-in-out overflow-hidden ${
+      className={`flex flex-col shrink-0 transition-all duration-250 ease-in-out overflow-hidden ${
         collapsed ? 'w-14' : 'w-52'
       }`}
-      style={{ boxShadow: '2px 0 16px rgba(15,76,129,.07)' }}
+      style={{
+        background: 'linear-gradient(180deg, rgba(10,20,36,.96), rgba(8,16,30,.96))',
+        borderRight: '1px solid rgba(255,255,255,.08)',
+        boxShadow: '2px 0 20px rgba(0,0,0,.25)',
+        backdropFilter: 'blur(16px)',
+      }}
     >
       {/* Brand */}
-      <div className="h-16 flex items-center gap-2.5 px-3 border-b border-gray-100 shrink-0">
-        <div className="w-8 h-8 rounded-lg bg-accent text-white flex items-center justify-center text-xs font-bold shrink-0">
+      <div className="h-16 flex items-center gap-2.5 px-3 border-b border-white/[0.06] shrink-0">
+        <div
+          className="w-8 h-8 rounded-lg text-white flex items-center justify-center text-xs font-bold shrink-0"
+          style={{ background: 'linear-gradient(135deg, #2e7ab8, #0f4c81)', boxShadow: '0 4px 12px -3px rgba(15,76,129,.7)' }}
+        >
           DA
         </div>
         <div className={`transition-opacity duration-200 overflow-hidden ${collapsed ? 'opacity-0 w-0' : 'opacity-100'}`}>
-          <p className="text-sm font-semibold text-gray-900 whitespace-nowrap">数据助手</p>
-          <p className="text-xs text-gray-400 leading-tight -mt-0.5 whitespace-nowrap">自助分析平台</p>
+          <p className="text-sm font-semibold text-white whitespace-nowrap">数据助手</p>
+          <p className="text-xs text-slate-400 leading-tight -mt-0.5 whitespace-nowrap">自助分析平台</p>
         </div>
       </div>
 
@@ -43,17 +51,19 @@ export default function Sidebar({ collapsed, onToggle }) {
             className={({ isActive }) =>
               `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-150 relative ${
                 isActive
-                  ? 'bg-accent-soft/80 text-accent font-medium'
-                  : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+                  ? 'text-white font-medium'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.05]'
               }`
             }
+            style={({ isActive }) => (isActive ? { background: 'rgba(15,76,129,.35)' } : undefined)}
           >
             {({ isActive }) => (
               <>
                 {isActive && (
-                  <span className="absolute left-0 top-2 bottom-2 w-[3px] bg-accent rounded-r-[3px]" />
+                  <span className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-[3px]"
+                        style={{ background: 'linear-gradient(180deg, #4a8ac2, #0f4c81)' }} />
                 )}
-                <item.icon className="w-4 h-4 shrink-0" />
+                <item.icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-accent-soft' : ''}`} />
                 <span className={`transition-opacity duration-200 whitespace-nowrap ${collapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'}`}>
                   {item.label}
                 </span>
@@ -64,20 +74,23 @@ export default function Sidebar({ collapsed, onToggle }) {
       </nav>
 
       {/* User + Toggle */}
-      <div className="p-2 border-t border-gray-100 space-y-1">
+      <div className="p-2 border-t border-white/[0.06] space-y-1">
         <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg">
-          <div className="w-7 h-7 rounded-lg bg-gray-100 flex items-center justify-center text-xs text-gray-500 shrink-0">
+          <div
+            className="w-7 h-7 rounded-lg flex items-center justify-center text-xs text-white shrink-0"
+            style={{ background: 'rgba(15,76,129,.5)' }}
+          >
             {(user?.username || '云').slice(0, 1)}
           </div>
           <div className={`transition-opacity duration-200 ${collapsed ? 'opacity-0 w-0' : 'opacity-100'}`}>
-            <p className="text-xs font-medium text-gray-700 whitespace-nowrap">{user?.username || '未登录'}</p>
+            <p className="text-xs font-medium text-slate-200 whitespace-nowrap">{user?.username || '未登录'}</p>
           </div>
           <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 ml-auto" />
         </div>
 
         <button
           onClick={handleLogout}
-          className="flex items-center justify-center w-full py-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-all"
+          className="flex items-center justify-center w-full py-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-all"
           title="登出"
         >
           <LogOut className="w-4 h-4 shrink-0" />
@@ -86,7 +99,7 @@ export default function Sidebar({ collapsed, onToggle }) {
 
         <button
           onClick={onToggle}
-          className="flex items-center justify-center w-full py-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all"
+          className="flex items-center justify-center w-full py-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] transition-all"
           title={collapsed ? '展开侧边栏' : '收起侧边栏'}
         >
           {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
