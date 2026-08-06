@@ -84,6 +84,20 @@ button:active, [role="button"]:active {
   to { background-position: 200% center; }
 }
 
+/* 登录页 3D 玻璃球体：轨道自转 / 反向公转 / 球体与数据块漂浮 */
+@keyframes orb-spin {
+  from { transform: rotateZ(0deg); }
+  to { transform: rotateZ(360deg); }
+}
+@keyframes orb-spin-rev {
+  from { transform: rotateX(72deg) rotateZ(0deg); }
+  to { transform: rotateX(72deg) rotateZ(-360deg); }
+}
+@keyframes orb-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-16px); }
+}
+
 /* 尊重系统"减少动态效果"设置：关闭全部动画/过渡 */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

@@ -105,9 +105,9 @@ export default function Login() {
       ))}
 
       <div className="relative w-full max-w-[1400px] mx-auto lg:grid lg:grid-cols-[1.12fr_1fr]">
-        {/* 左：品牌区（大屏，3D 质感） */}
-        <div className="hidden lg:flex flex-col justify-between p-12 pr-16">
-          <div className="flex items-center gap-3">
+        {/* 左：品牌区（大屏，3D 玻璃球体 hero） */}
+        <div className="hidden lg:flex flex-col justify-between p-12 pr-10 relative overflow-hidden">
+          <div className="flex items-center gap-3 relative z-10">
             <div className="w-11 h-11 rounded-xl flex items-center justify-center shadow-lg"
                  style={{ background: 'linear-gradient(135deg, #2e7ab8, #0f4c81)', boxShadow: '0 8px 24px -6px rgba(15,76,129,.6)' }}>
               <BarChart3 className="w-6 h-6 text-white" />
@@ -118,11 +118,68 @@ export default function Login() {
             </div>
           </div>
 
-          <div>
+          {/* 3D 玻璃球体主体：中央光球 + 轨道环 + 漂浮数据块 + 透视网格地面 */}
+          <div className="flex-1 relative flex items-center justify-center" style={{ perspective: '1000px' }}>
+            {/* 透视网格地面 */}
+            <div className="absolute left-1/2 -translate-x-1/2 bottom-0 w-[520px] h-[260px] pointer-events-none"
+                 style={{
+                   backgroundImage: 'linear-gradient(rgba(63,123,184,.18) 1px, transparent 1px), linear-gradient(90deg, rgba(63,123,184,.18) 1px, transparent 1px)',
+                   backgroundSize: '40px 40px',
+                   transform: 'rotateX(62deg)',
+                   transformOrigin: 'top',
+                   maskImage: 'radial-gradient(ellipse 70% 90% at 50% 0%, black 40%, transparent 78%)',
+                 }} />
+            {/* 轨道环 1（水平） */}
+            <div className="absolute w-[380px] h-[380px] rounded-full pointer-events-none border border-accent-soft/20"
+                 style={{ animation: 'orb-spin 22s linear infinite' }} />
+            {/* 轨道环 2（倾斜） */}
+            <div className="absolute w-[300px] h-[300px] rounded-full pointer-events-none border border-accent-soft/15"
+                 style={{ transform: 'rotateX(72deg)', animation: 'orb-spin-rev 16s linear infinite' }} />
+            {/* 中央玻璃球体 */}
+            <div className="relative w-56 h-56 rounded-full pointer-events-none"
+                 style={{
+                   background:
+                     'radial-gradient(circle at 32% 28%, rgba(255,255,255,.95), rgba(255,255,255,.28) 18%, transparent 40%), ' +
+                     'radial-gradient(circle at 70% 78%, rgba(46,122,184,.85), transparent 52%), ' +
+                     'radial-gradient(circle at 50% 50%, rgba(63,123,184,.55), rgba(15,76,129,.75) 62%, rgba(7,20,38,.95) 100%)',
+                   boxShadow:
+                     'inset -18px -18px 46px rgba(7,20,38,.55), ' +
+                     'inset 12px 12px 34px rgba(255,255,255,.35), ' +
+                     '0 40px 90px -24px rgba(15,76,129,.85), ' +
+                     '0 0 140px rgba(63,123,184,.35)',
+                   animation: 'orb-float 7s ease-in-out infinite',
+                 }}>
+              {/* 球体高光描边 */}
+              <div className="absolute inset-0 rounded-full pointer-events-none"
+                   style={{ background: 'radial-gradient(circle at 50% 50%, transparent 62%, rgba(143,195,238,.28) 66%, transparent 72%)' }} />
+              {/* 球心内容：放大镜图标 / 数据 */}
+              <div className="absolute inset-0 flex items-center justify-center">
+                <BarChart3 className="w-16 h-16 text-white/85" style={{ filter: 'drop-shadow(0 4px 14px rgba(0,0,0,.4))' }} />
+              </div>
+            </div>
+            {/* 漂浮数据块 1：迷你柱状图 */}
+            <div className="absolute right-[8%] top-[22%] w-24 h-16 rounded-lg flex items-end gap-1.5 p-2.5 pointer-events-none"
+                 style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.12)', backdropFilter: 'blur(6px)', animation: 'orb-float 6s ease-in-out infinite' }}>
+              {[45, 75, 55, 90].map((h, i) => (
+                <span key={i} className="flex-1 rounded-sm" style={{ height: `${h}%`, background: 'linear-gradient(180deg, #7fb3e8, #0f4c81)', animation: `live-grow .8s cubic-bezier(.22,1,.36,1) ${i * .12}s both` }} />
+              ))}
+            </div>
+            {/* 漂浮数据块 2：折线点 */}
+            <div className="absolute left-[4%] top-[38%] w-24 h-16 rounded-lg p-2.5 pointer-events-none"
+                 style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.12)', backdropFilter: 'blur(6px)', animation: 'orb-float 8s ease-in-out infinite reverse' }}>
+              <svg viewBox="0 0 80 40" className="w-full h-full"><polyline points="4,30 20,22 36,26 52,12 68,16 76,6" fill="none" stroke="#7fb3e8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            </div>
+            {/* 漂浮数据点 */}
+            {[['16%', '18%', 5], ['84%', '58%', 4], ['30%', '74%', 6]].map(([x, y, s], i) => (
+              <span key={i} className="absolute rounded-full pointer-events-none" style={{ left: x, top: y, width: s, height: s, background: 'rgba(143,195,238,.9)', boxShadow: '0 0 12px rgba(143,195,238,.8)', animation: `orb-float ${5 + i}s ease-in-out infinite`, animationDelay: `${i * .9}s` }} />
+            ))}
+          </div>
+
+          <div className="relative z-10">
             <h1
-              className="text-[2.6rem] leading-[1.15] font-bold tracking-tight"
+              className="text-[3.2rem] leading-[1.12] font-bold tracking-tight"
               style={{
-                background: 'linear-gradient(92deg, #ffffff 20%, #8fc3ee 45%, #ffffff 70%)',
+                background: 'linear-gradient(92deg, #ffffff 18%, #8fc3ee 45%, #ffffff 72%)',
                 backgroundSize: '200% auto',
                 WebkitBackgroundClip: 'text',
                 WebkitTextFillColor: 'transparent',
@@ -141,7 +198,7 @@ export default function Login() {
             </div>
           </div>
 
-          <p className="text-xs text-slate-500">登录后数据按账号隔离 · 演示模式免登录</p>
+          <p className="text-xs text-slate-500 mt-6 relative z-10">登录后数据按账号隔离 · 演示模式免登录</p>
         </div>
 
         {/* 右：表单区（深色玻璃） */}
