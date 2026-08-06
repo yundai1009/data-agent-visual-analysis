@@ -1,14 +1,14 @@
 # LLM Provider 配置（参考 Reasonix 的 [[providers]] 接入方式）
-# kind: openai（OpenAI 兼容 chat/completions；anthropic 暂未支持，后续扩展）
+# 仅收录「官方/知名服务」供应商；你自己的中转站请在页面「自定义供应商」中添加。
+# kind: openai（OpenAI 兼容 chat/completions；anthropic 协议暂未支持，故 Claude 官方未列入）
 # label: 前端「推荐预设」卡片显示名（中文）
 # api_key_env: 服务端读取该环境变量的值作为该 provider 的 Key（放在项目 .env 或系统环境）；
 #              用户页面 BYOK 的 Key 优先级更高（请求头 X-LLM-API-Key > 账号 key > 本 provider Key > 服务端 LLM_API_KEY）
-# models: 常用模型列表（官方模型会更新，可在配置中扩展；用户也可 BYOK 后用模型下拉选择）
+# models: 常用模型列表（官方模型会更新，可在配置中扩展；也可 BYOK 后在模型下拉选择）
 
 [[providers]]
 name        = "deepseek"
 label       = "DeepSeek 官方"
-kind        = "openai"
 base_url    = "https://api.deepseek.com/v1"
 models      = ["deepseek-chat", "deepseek-reasoner"]
 default     = "deepseek-chat"
@@ -17,16 +17,55 @@ api_key_env = "DEEPSEEK_API_KEY"
 [[providers]]
 name        = "openai"
 label       = "OpenAI 官方"
-kind        = "openai"
 base_url    = "https://api.openai.com/v1"
-models      = ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "o3-mini"]
+models      = ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "o3-mini"]
 default     = "gpt-4o-mini"
 api_key_env = "OPENAI_API_KEY"
 
 [[providers]]
+name        = "gemini"
+label       = "Google Gemini"
+base_url    = "https://generativelanguage.googleapis.com/v1beta/openai"
+models      = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+default     = "gemini-2.5-flash"
+api_key_env = "GEMINI_API_KEY"
+
+[[providers]]
+name        = "claude"
+label       = "Anthropic Claude（需中转）"
+base_url    = "https://api.anthropic.com/v1"
+models      = ["claude-sonnet-4-5", "claude-opus-4-5", "claude-haiku-4-5"]
+default     = "claude-sonnet-4-5"
+api_key_env = "ANTHROPIC_API_KEY"
+note        = "官方为 anthropic 协议，需配置 OpenAI 兼容中转（自定义供应商）"
+
+[[providers]]
+name        = "mistral"
+label       = "Mistral AI"
+base_url    = "https://api.mistral.ai/v1"
+models      = ["mistral-large-latest", "mistral-medium-latest", "mistral-small-latest", "codestral-latest"]
+default     = "mistral-small-latest"
+api_key_env = "MISTRAL_API_KEY"
+
+[[providers]]
+name        = "groq"
+label       = "Groq"
+base_url    = "https://api.groq.com/openai/v1"
+models      = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"]
+default     = "llama-3.3-70b-versatile"
+api_key_env = "GROQ_API_KEY"
+
+[[providers]]
+name        = "xai"
+label       = "xAI Grok"
+base_url    = "https://api.x.ai/v1"
+models      = ["grok-4", "grok-3", "grok-3-mini", "grok-2-latest"]
+default     = "grok-3"
+api_key_env = "XAI_API_KEY"
+
+[[providers]]
 name        = "glm"
 label       = "智谱 GLM"
-kind        = "openai"
 base_url    = "https://open.bigmodel.cn/api/paas/v4"
 models      = ["glm-4.5", "glm-4.5-air", "glm-4.7", "glm-4-flash", "glm-4v-flash"]
 default     = "glm-4.5-air"
@@ -34,17 +73,15 @@ api_key_env = "GLM_API_KEY"
 
 [[providers]]
 name        = "qwen"
-label       = "通义千问"
-kind        = "openai"
+label       = "阿里通义千问"
 base_url    = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-models      = ["qwen-max", "qwen-plus", "qwen-turbo", "qwen2.5-72b-instruct", "qwen3-235b-a22b"]
+models      = ["qwen-max", "qwen-plus", "qwen-turbo", "qwen3-235b-a22b", "qwen2.5-72b-instruct"]
 default     = "qwen-plus"
 api_key_env = "QWEN_API_KEY"
 
 [[providers]]
 name        = "kimi"
 label       = "Kimi 月之暗面"
-kind        = "openai"
 base_url    = "https://api.moonshot.cn/v1"
 models      = ["kimi-k2-0905-preview", "kimi-k2-turbo-preview", "moonshot-v1-32k", "moonshot-v1-8k"]
 default     = "kimi-k2-0905-preview"
@@ -52,53 +89,65 @@ api_key_env = "MOONSHOT_API_KEY"
 
 [[providers]]
 name        = "doubao"
-label       = "豆包（火山引擎）"
-kind        = "openai"
+label       = "字节豆包"
 base_url    = "https://ark.cn-beijing.volces.com/api/v3"
 models      = ["doubao-1-5-pro-32k-250115", "doubao-1-5-lite-32k-250115", "doubao-seed-1-6-250615"]
 default     = "doubao-1-5-pro-32k-250115"
 api_key_env = "DOUBAO_API_KEY"
 
 [[providers]]
+name        = "ernie"
+label       = "百度文心"
+base_url    = "https://qianfan.baidubce.com/v2"
+models      = ["ernie-4.5-turbo-8k", "ernie-4.0-8k", "ernie-3.5-8k"]
+default     = "ernie-4.0-8k"
+api_key_env = "ERNIE_API_KEY"
+
+[[providers]]
+name        = "hunyuan"
+label       = "腾讯混元"
+base_url    = "https://api.hunyuan.cloud.tencent.com/v1"
+models      = ["hunyuan-turbos-latest", "hunyuan-pro", "hunyuan-lite"]
+default     = "hunyuan-turbos-latest"
+api_key_env = "HUNYUAN_API_KEY"
+
+[[providers]]
+name        = "minimax"
+label       = "MiniMax"
+base_url    = "https://api.minimax.chat/v1"
+models      = ["MiniMax-M3", "MiniMax-M2.7", "abab6.5s-chat"]
+default     = "MiniMax-M3"
+api_key_env = "MINIMAX_API_KEY"
+
+[[providers]]
+name        = "stepfun"
+label       = "阶跃星辰 StepFun"
+base_url    = "https://api.stepfun.com/v1"
+models      = ["step-2-16k", "step-1-32k", "step-1-flash"]
+default     = "step-1-flash"
+api_key_env = "STEPFUN_API_KEY"
+
+[[providers]]
+name        = "yi"
+label       = "零一万物 Yi"
+base_url    = "https://api.lingyiwanwu.com/v1"
+models      = ["yi-large", "yi-medium", "yi-lightning"]
+default     = "yi-lightning"
+api_key_env = "YI_API_KEY"
+
+[[providers]]
+name        = "openrouter"
+label       = "OpenRouter（聚合全球模型）"
+base_url    = "https://openrouter.ai/api/v1"
+models      = ["openai/gpt-4o", "anthropic/claude-sonnet-4-5", "google/gemini-2.5-pro", "deepseek/deepseek-chat", "meta-llama/llama-3.3-70b-instruct", "qwen/qwen3-235b-a22b"]
+default     = "openai/gpt-4o"
+api_key_env = "OPENROUTER_API_KEY"
+note        = "一个 Key 覆盖全球数百个模型（含 Claude/GPT/Gemini/Llama 等）"
+
+[[providers]]
 name        = "siliconflow"
-label       = "硅基流动"
-kind        = "openai"
+label       = "硅基流动（聚合）"
 base_url    = "https://api.siliconflow.cn/v1"
 models      = ["Qwen/Qwen2.5-7B-Instruct", "Qwen/Qwen3-235B-A22B-Instruct", "deepseek-ai/DeepSeek-V3", "THUDM/GLM-4-9B-0414"]
 default     = "Qwen/Qwen2.5-7B-Instruct"
 api_key_env = "SILICONFLOW_API_KEY"
-
-# ---- 用户自配中转（保留，自定义供应商可替代）----
-
-[[providers]]
-name        = "yundai2"
-label       = "Yundai2（中转）"
-kind        = "openai"
-base_url    = "https://api.kkdmx.com/v1"
-models      = [
-    "abacusai/dracarys-llama-3.1-70b-instruct",
-    "deepseek-ai/deepseek-v4-flash",
-    "deepseek-ai/deepseek-v4-pro",
-    "google/gemma-4-31b-it",
-    "meta/llama-3.3-70b-instruct",
-    "meta/llama-4-maverick-17b-128e-instruct",
-    "minimaxai/minimax-m3",
-    "moonshotai/kimi-k2.6",
-    "openai/gpt-oss-120b",
-    "qwen/qwen3-coder-480b-a35b-instruct",
-    "qwen/qwen3.5-397b-a17b",
-    "stepfun-ai/step-3.7-flash",
-    "z-ai/glm-5.1",
-    "z-ai/glm-5.2",
-]
-default     = "abacusai/dracarys-llama-3.1-70b-instruct"
-api_key_env = "YUNDAI2_API_KEY"
-
-[[providers]]
-name        = "rika"
-label       = "Rika（中转）"
-kind        = "openai"
-base_url    = "https://inferaichat.com/v1"
-models      = ["deepseek-v4-flash", "deepseek-v4-pro", "mimo-v2.5", "mimo-v2.5-pro"]
-default     = "deepseek-v4-flash"
-api_key_env = "CUSTOM_14aa6c93_API_KEY"
