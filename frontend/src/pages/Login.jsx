@@ -83,14 +83,14 @@ export default function Login() {
 
   return (
     <div className="min-h-dvh relative overflow-hidden">
-      {/* 背景：地球夜景（本地静态图，暗化 + 渐变遮罩保证可读） */}
+      {/* 背景：地球夜景（本地静态图，提亮 + 轻遮罩保证可读） */}
       <div className="absolute inset-0 bg-cover bg-center"
-           style={{ backgroundImage: 'url(/login-bg.jpg)' }} />
+           style={{ backgroundImage: 'url(/login-bg.jpg)', filter: 'brightness(1.18) contrast(1.04) saturate(1.05)' }} />
       <div className="absolute inset-0"
            style={{
              background:
-               'linear-gradient(90deg, rgba(4,10,22,.6) 0%, rgba(4,10,22,.4) 45%, rgba(4,10,22,.2) 100%), ' +
-               'linear-gradient(180deg, rgba(4,10,22,.25) 0%, rgba(4,10,22,.05) 40%, rgba(4,10,22,.45) 100%)',
+               'linear-gradient(90deg, rgba(4,10,22,.5) 0%, rgba(4,10,22,.3) 45%, rgba(4,10,22,.12) 100%), ' +
+               'linear-gradient(180deg, rgba(4,10,22,.18) 0%, rgba(4,10,22,0) 45%, rgba(4,10,22,.38) 100%)',
            }} />
       {/* 底部轻微氛围光 */}
       <div className="absolute inset-x-0 bottom-0 h-64 pointer-events-none" style={{ background: 'linear-gradient(180deg, transparent, rgba(15,76,129,.25))' }} />
