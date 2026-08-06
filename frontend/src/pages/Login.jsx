@@ -89,8 +89,8 @@ export default function Login() {
       <div className="absolute inset-0"
            style={{
              background:
-               'linear-gradient(90deg, rgba(4,10,22,.82) 0%, rgba(4,10,22,.55) 45%, rgba(4,10,22,.35) 100%), ' +
-               'linear-gradient(180deg, rgba(4,10,22,.35) 0%, rgba(4,10,22,.15) 40%, rgba(4,10,22,.6) 100%)',
+               'linear-gradient(90deg, rgba(4,10,22,.6) 0%, rgba(4,10,22,.4) 45%, rgba(4,10,22,.2) 100%), ' +
+               'linear-gradient(180deg, rgba(4,10,22,.25) 0%, rgba(4,10,22,.05) 40%, rgba(4,10,22,.45) 100%)',
            }} />
       {/* 底部轻微氛围光 */}
       <div className="absolute inset-x-0 bottom-0 h-64 pointer-events-none" style={{ background: 'linear-gradient(180deg, transparent, rgba(15,76,129,.25))' }} />
@@ -109,10 +109,11 @@ export default function Login() {
             </div>
           </div>
 
-          <h1 className="text-[3.4rem] leading-[1.08] font-bold tracking-tight text-white max-w-[12em]">
+          <h1 className="text-[3.4rem] leading-[1.08] font-bold tracking-tight text-white max-w-[12em]"
+              style={{ textShadow: '0 4px 24px rgba(0,0,0,.5)' }}>
             把数据说成一句话<br /><span className="text-transparent bg-clip-text" style={{ backgroundImage: 'linear-gradient(92deg, #cfe6f8, #8fc3ee)' }}>图表就出来了</span>
           </h1>
-          <p className="mt-6 text-[15px] text-white/70 leading-relaxed max-w-[30em]">
+          <p className="mt-6 text-[15px] text-white/85 leading-relaxed max-w-[30em]" style={{ textShadow: '0 2px 12px rgba(0,0,0,.5)' }}>
             上传 CSV，用自然语言描述分析需求，AI 自动选字段生成 18 种图表，附 Agent 决策记录与实时分析直播。
           </p>
 
