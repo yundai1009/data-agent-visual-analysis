@@ -126,6 +126,10 @@ function buildOption(chartType, config) {
   if (type === 'pie' || type === 'donut') {
     const nk = nameField || xField;
     const vk = valueField || (yFields[0] || Object.keys(rows[0]).find(k => k !== nk) || '');
+    // 取值回退：值字段与数据列不匹配时（如旧报表"值=职位ID"但数据只有"记录数"），
+    // 自动用数据里第一个非名称列，避免全部显示 0%
+    const fallbackVk = (rows[0] && rows[0][vk] !== undefined) ? vk
+      : (Object.keys(rows[0] || {}).find(k => k !== nk) || vk);
     return {
       ...base,
       // 用 formatter 函数手动算百分比（不依赖 {d} 占位符，避免显示 0%）
@@ -135,7 +139,7 @@ function buildOption(chartType, config) {
       },
       series: [{
         type: 'pie', radius: type === 'donut' ? ['45%', '70%'] : ['0%', '60%'],
-        data: rows.map(r => ({ name: String(r[nk] ?? ''), value: Number(r[vk]) || 0 })),
+        data: rows.map(r => ({ name: String(r[nk] ?? ''), value: Number(r[fallbackVk]) || 0 })),
         label: { formatter: (p) => `${p.name}\n${(p.percent ?? 0).toFixed(1)}%` },
       }],
     };
