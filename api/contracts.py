@@ -81,6 +81,13 @@ class ReportGenerateResponse(BaseModel):
         populate_by_name = True
 
 
+class DashboardRequest(BaseModel):
+    """新建 / 更新看板：名称 + 归属用户的报表ID列表。"""
+
+    名称: str = Field(..., min_length=1, max_length=50)
+    报表ID列表: list[str] = Field(default_factory=list, max_length=50)
+
+
 class TaskResponse(BaseModel):
     任务ID: str
     状态: TaskStatus

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { Database, Zap, BarChart3, ChevronLeft, ChevronRight, LogOut, KeyRound, X, UserRoundPen } from 'lucide-react';
+import { Database, Zap, BarChart3, LayoutDashboard, ChevronLeft, ChevronRight, LogOut, KeyRound, X, UserRoundPen } from 'lucide-react';
 import { useApp } from '../AppContext';
 import { changePassword, changeUsername } from '../api';
 
@@ -8,6 +8,7 @@ const navItems = [
   { to: '/data', icon: Database, label: '数据管理' },
   { to: '/analysis', icon: Zap, label: '智能分析' },
   { to: '/report', icon: BarChart3, label: '报表历史' },
+  { to: '/dashboard', icon: LayoutDashboard, label: '图表看板' },
 ];
 
 export default function Sidebar({ collapsed, onToggle }) {

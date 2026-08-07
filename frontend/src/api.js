@@ -297,6 +297,34 @@ export async function deleteReport(reportId) {
   return request(`/reports/${reportId}`, { method: 'DELETE' });
 }
 
+// ---- 图表看板（批次 4：多报表并排对比）----
+
+export async function listDashboards() {
+  return request('/dashboards/');
+}
+
+export async function getDashboard(dashboardId) {
+  return request(`/dashboards/${dashboardId}`);
+}
+
+export async function createDashboard(name, reportIds) {
+  return request('/dashboards/', {
+    method: 'POST',
+    body: JSON.stringify({ 名称: name, 报表ID列表: reportIds }),
+  });
+}
+
+export async function updateDashboard(dashboardId, name, reportIds) {
+  return request(`/dashboards/${dashboardId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ 名称: name, 报表ID列表: reportIds }),
+  });
+}
+
+export async function deleteDashboard(dashboardId) {
+  return request(`/dashboards/${dashboardId}`, { method: 'DELETE' });
+}
+
 export async function healthCheck() {
   return request('/health');
 }

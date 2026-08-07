@@ -609,6 +609,58 @@ def test_报表追问链路(client):
     assert "用户追问：按月份对比呢？" in injected.分析需求
 
 
+def test_看板CRUD与隔离(client):
+    """图表看板：新建/列表/详情/更新/删除 + 归属校验（跨用户 404 + 非法引用 400）。"""
+    tok = _register(client, "dashuser1")
+    did = _upload(client, tok).json()["数据集ID"]
+    h = {"Authorization": f"Bearer {tok}"}
+    rids = []
+    for 需求 in ("按地区统计", "按月份统计"):
+        r = client.post("/reports/generate", json={"数据集ID": did, "分析需求": 需求}, headers=h)
+        assert r.status_code == 200
+        rids.append(r.json()["报表ID"])
+    assert len(set(rids)) == 2
+
+    # 新建
+    r = client.post("/dashboards", json={"名称": "月度对比", "报表ID列表": rids}, headers=h)
+    assert r.status_code == 200, r.text
+    dbid = r.json()["看板ID"]
+
+    # 列表
+    r = client.get("/dashboards/", headers=h)
+    assert r.status_code == 200
+    lst = r.json()["看板列表"]
+    assert len(lst) == 1 and lst[0]["看板ID"] == dbid and lst[0]["报表数"] == 2
+
+    # 详情（含每份报表完整内容）
+    r = client.get(f"/dashboards/{dbid}", headers=h)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["名称"] == "月度对比"
+    assert len(body["报表列表"]) == 2
+    assert body["报表列表"][0]["报表"]["图表配置"], "详情应包含图表配置"
+
+    # 更新（改名 + 只留一份）
+    r = client.put(f"/dashboards/{dbid}", json={"名称": "精简看板", "报表ID列表": [rids[0]]}, headers=h)
+    assert r.status_code == 200
+    r = client.get(f"/dashboards/{dbid}", headers=h)
+    assert r.json()["名称"] == "精简看板" and len(r.json()["报表列表"]) == 1
+
+    # 引用他人报表 → 400
+    tok_b = _register(client, "dashuser2")
+    h_b = {"Authorization": f"Bearer {tok_b}"}
+    r = client.post("/dashboards", json={"名称": "偷看", "报表ID列表": rids}, headers=h_b)
+    assert r.status_code == 400
+
+    # 跨用户读/删 → 404
+    assert client.get(f"/dashboards/{dbid}", headers=h_b).status_code == 404
+    assert client.delete(f"/dashboards/{dbid}", headers=h_b).status_code == 404
+
+    # 删除
+    assert client.delete(f"/dashboards/{dbid}", headers=h).status_code == 200
+    assert client.get(f"/dashboards/{dbid}", headers=h).status_code == 404
+
+
 # ---- 8.5 LLM 安全 ----
 
 def test_非法provider_400(client):
