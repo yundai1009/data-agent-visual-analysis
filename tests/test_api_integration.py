@@ -829,6 +829,25 @@ def test_修改密码_成功与旧密码校验(client):
     assert r.status_code == 200
 
 
+def test_修改用户名_唯一性校验(client):
+    """改用户名成功；新用户名可登录；与现有账号冲突 → 400。"""
+    tok_a = _register(client, "un_a")
+    tok_b = _register(client, "un_b")
+    h_b = {"Authorization": f"Bearer {tok_b}"}
+    # 与已有账号 un_a 冲突
+    r = client.post("/auth/change-username", json={"username": "un_a"}, headers=h_b)
+    assert r.status_code == 400, r.text
+    # 成功修改
+    r = client.post("/auth/change-username", json={"username": "renamed_b"}, headers=h_b)
+    assert r.status_code == 200, r.text
+    # 新用户名可登录
+    r = client.post("/auth/login", json={"username": "renamed_b", "password": "secret123"})
+    assert r.status_code == 200
+    # 旧用户名不可再用
+    r = client.post("/auth/login", json={"username": "un_b", "password": "secret123"})
+    assert r.status_code == 401
+
+
 # ---- 9. 分析直播（SSE） ----
 
 def _parse_sse(body: str):

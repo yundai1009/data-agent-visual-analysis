@@ -295,3 +295,20 @@ def change_password(payload: dict, user: dict = Depends(get_current_user)) -> Di
 
     user_repo.更新密码(user["user_id"], auth_service.hash_password(new_password))
     return {"message": "密码已修改"}
+
+
+@router.post("/change-username")
+def change_username(payload: dict, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
+    """修改用户名（唯一性校验：与现有用户名冲突则拒绝）。"""
+    new_username = str(payload.get("username") or "").strip()
+    if not new_username or len(new_username) < 2 or len(new_username) > 50:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="用户名需 2-50 个字符")
+    if new_username == user.get("username"):
+        return {"message": "用户名未变化", "username": new_username}
+    if user_repo.按用户名查询(new_username):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="用户名已被使用，请换一个")
+    try:
+        user_repo.更新用户名(user["user_id"], new_username)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {"message": "用户名已修改", "username": new_username}

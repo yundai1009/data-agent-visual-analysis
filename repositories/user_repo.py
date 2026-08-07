@@ -215,6 +215,21 @@ def 更新密码(user_id: str, new_hash: str) -> None:
         )
 
 
+def 更新用户名(user_id: str, new_username: str) -> None:
+    """更新用户名；用户名唯一冲突抛 ValueError。"""
+    初始化用户表()
+    try:
+        with _write_lock, _get_conn() as conn:
+            conn.execute(
+                "UPDATE users SET username = ?, updated_at = ? WHERE user_id = ?",
+                (new_username, _now_iso(), user_id),
+            )
+    except Exception as exc:
+        if "UNIQUE" in str(exc):
+            raise ValueError(f"用户名已存在：{new_username}") from exc
+        raise
+
+
 # ---- 用户自定义 LLM 供应商（阶段 13.6，参考 Reasonix 自定义供应商）----
 
 import json as _json

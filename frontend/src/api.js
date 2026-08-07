@@ -118,6 +118,13 @@ export async function changePassword(oldPassword, newPassword) {
   });
 }
 
+export async function changeUsername(username) {
+  return request('/auth/change-username', {
+    method: 'POST',
+    body: JSON.stringify({ username }),
+  });
+}
+
 export async function sendCode(email) {
   return request('/auth/send-code', {
     method: 'POST',
