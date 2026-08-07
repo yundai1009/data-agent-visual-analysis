@@ -1,4 +1,4 @@
-# CI 流水线：push 到 main 自动回归（后端测试 + 前端构建/lint + 双冒烟）
+﻿# CI 流水线：push 到 main 自动回归（后端测试 + 前端构建/lint + 双冒烟）
 # 必须用 windows-latest：PDF 导出测试依赖 C:/Windows/Fonts/msyh.ttc（微软雅黑），Linux/macOS 无此字体。
 name: CI
 
@@ -35,7 +35,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -67,7 +67,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -103,3 +103,4 @@ jobs:
 
       - name: Smoke - real browser (Playwright)
         run: python scripts/smoke_e2e_browser.py
+
