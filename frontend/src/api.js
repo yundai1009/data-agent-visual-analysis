@@ -194,6 +194,17 @@ export async function listDatasets(limit = 50) {
   return request(`/datasets/?limit=${limit}`);
 }
 
+export async function deleteDataset(id) {
+  return request(`/datasets/${id}`, { method: 'DELETE' });
+}
+
+export async function renameDataset(id, 文件名) {
+  return request(`/datasets/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ 文件名 }),
+  });
+}
+
 export async function cleanDataset(id, ops) {
   const params = new URLSearchParams();
   if (ops.deduplicate) params.set('deduplicate', 'true');

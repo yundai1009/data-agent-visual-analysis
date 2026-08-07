@@ -829,6 +829,43 @@ def test_修改密码_成功与旧密码校验(client):
     assert r.status_code == 200
 
 
+# ---- 14. 数据洞察 + 数据集管理 ----
+
+def test_数据画像_自动洞察存在(client):
+    """上传含异常值/相关性/分布的数据 → 画像含自动洞察。"""
+    tok = _register(client, "ins1")
+    content = ("地区,销售额,利润\n"
+               "华东,100,10\n华东,110,12\n华东,95,9\n华东,9999,500\n"  # 9999 为异常值
+               "华南,200,20\n华南,210,21\n华北,150,15\n")
+    r = _upload(client, tok, filename="ins.csv", content=content)
+    assert r.status_code == 200, r.text
+    画像 = r.json()["数据画像"]
+    assert "自动洞察" in 画像, "画像应含自动洞察"
+    assert len(画像["自动洞察"]) > 0, "应至少一条洞察"
+
+
+def test_数据集_重命名与删除(client):
+    """PATCH 重命名 → 列表更新；DELETE 删除 → 列表移除。"""
+    tok = _register(client, "ds1")
+    h = {"Authorization": f"Bearer {tok}"}
+    did = _upload(client, tok).json()["数据集ID"]
+    # 重命名
+    r = client.patch(f"/datasets/{did}", json={"文件名": "我的销售数据"}, headers=h)
+    assert r.status_code == 200, r.text
+    r = client.get("/datasets/", headers=h)
+    item = next((d for d in r.json()["数据集列表"] if d["数据集ID"] == did), None)
+    assert item and item["文件名"] == "我的销售数据", "重命名应生效"
+    # 删除
+    r = client.delete(f"/datasets/{did}", headers=h)
+    assert r.status_code == 200, r.text
+    r = client.get("/datasets/", headers=h)
+    assert all(d["数据集ID"] != did for d in r.json()["数据集列表"]), "删除后列表应移除"
+    # 他人不可删
+    tok2 = _register(client, "ds2")
+    r = client.delete(f"/datasets/{did}", headers={"Authorization": f"Bearer {tok2}"})
+    assert r.status_code == 404
+
+
 def test_修改用户名_唯一性校验(client):
     """改用户名成功；新用户名可登录；与现有账号冲突 → 400。"""
     tok_a = _register(client, "un_a")

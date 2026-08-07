@@ -137,6 +137,52 @@ def _生成数据质量(df: pd.DataFrame, 缺失值: Dict[str, int]) -> Dict[str
     }
 
 
+def _生成自动洞察(df: pd.DataFrame, 字段: Dict[str, List[str]]) -> List[Dict[str, str]]:
+    """自动数据洞察：异常值（IQR）/数值相关性/分类分布集中度。"""
+    insights: List[Dict[str, str]] = []
+    row_count = max(len(df), 1)
+
+    # 异常值（数值字段 IQR 法）
+    for column in 字段["数值字段"][:5]:
+        series = df[column].dropna()
+        if len(series) < 5 or series.nunique() < 3:
+            continue
+        q1, q3 = series.quantile([0.25, 0.75])
+        iqr = q3 - q1
+        if not iqr or iqr == 0:
+            continue
+        outliers = int(((series < q1 - 1.5 * iqr) | (series > q3 + 1.5 * iqr)).sum())
+        if outliers:
+            insights.append({"类型": "异常值", "字段": column,
+                             "说明": f"{column} 检出 {outliers} 个异常值（IQR 法，占 {outliers / len(series):.1%}）"})
+
+    # 相关性（数值字段两两，|r| >= 0.5 取前 3）
+    数值 = df[字段["数值字段"]]
+    if len(数值.columns) >= 2:
+        corr = 数值.corr(numeric_only=True)
+        pairs = []
+        for i in range(len(corr.columns)):
+            for j in range(i + 1, len(corr.columns)):
+                v = corr.iloc[i, j]
+                if abs(v) >= 0.5 and not pd.isna(v):
+                    pairs.append((corr.columns[i], corr.columns[j], float(v)))
+        pairs.sort(key=lambda x: -abs(x[2]))
+        for a, b, v in pairs[:3]:
+            insights.append({"类型": "相关", "字段": f"{a}×{b}",
+                             "说明": f"{a} 与 {b} 相关系数 {v:.2f}（{'正相关' if v > 0 else '负相关'}）"})
+
+    # 分类分布集中度
+    for column in 字段["分类字段"][:4]:
+        vc = df[column].astype(str).value_counts(dropna=True)
+        if len(vc) >= 2:
+            top, top_count = vc.index[0], int(vc.iloc[0])
+            if top_count / row_count >= 0.3:
+                insights.append({"类型": "分布", "字段": column,
+                                 "说明": f"{column} 分布集中：'{top}' 占 {top_count / row_count:.1%}"})
+
+    return insights[:8]
+
+
 def 生成数据画像(df: pd.DataFrame) -> Dict[str, Any]:
     """生成上传数据的字段类型、缺失值、质量提示和基础统计摘要。"""
     字段 = _字段分组(df)
@@ -154,6 +200,7 @@ def 生成数据画像(df: pd.DataFrame) -> Dict[str, Any]:
         **字段,
         "字段建议": _生成字段建议(df, 字段),
         "数据质量": _生成数据质量(df, 缺失值),
+        "自动洞察": _生成自动洞察(df, 字段),
         "数值摘要": _数值摘要(df, 字段["数值字段"]),
         "分类摘要": _分类摘要(df, 分类候选[:12]),
     }

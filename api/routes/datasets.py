@@ -102,3 +102,22 @@ async def list_datasets(
 ) -> Dict[str, Any]:
     """列出最近的数据集（阶段 2 新增；前端不依赖此接口）。"""
     return {"数据集列表": _仓储.列表(user["user_id"], limit=limit)}
+
+
+@router.delete("/{dataset_id}")
+async def delete_dataset(dataset_id: str, user: dict = Depends(get_current_user)) -> Dict[str, str]:
+    """删除一个数据集（仅限归属用户）。"""
+    if not _仓储.删除(user["user_id"], dataset_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在")
+    return {"message": "已删除"}
+
+
+@router.patch("/{dataset_id}")
+async def rename_dataset(dataset_id: str, payload: dict, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
+    """重命名一个数据集（仅限归属用户）。"""
+    新名 = str(payload.get("文件名") or "").strip()
+    if not 新名 or len(新名) > 120:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="文件名需 1-120 字符")
+    if not _仓储.重命名(user["user_id"], dataset_id, 新名):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在")
+    return {"message": "已重命名", "文件名": 新名}

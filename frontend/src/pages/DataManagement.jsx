@@ -1,7 +1,7 @@
 ﻿import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Upload, Download, Database, FileText, AlertTriangle, Search, Sparkles, Loader2, BarChart3, LineChart } from 'lucide-react';
-import { uploadFile, loadExample, cleanDataset, healthCheck } from '../api';
+import { Upload, Download, Database, FileText, AlertTriangle, Search, Sparkles, Loader2, BarChart3, LineChart, Pencil, Trash2, Lightbulb } from 'lucide-react';
+import { uploadFile, loadExample, cleanDataset, healthCheck, listDatasets, deleteDataset, renameDataset, getDataset } from '../api';
 import { useApp } from '../AppContext';
 
 // 演示模式（vite --mode demo 构建）：打开页面自动加载示例数据，零基础用户无需上传即可体验
@@ -29,6 +29,10 @@ export default function DataManagement() {
   const [uploading, setUploading] = useState(false);
   const [backendOk, setBackendOk] = useState(true);
   const [error, setError] = useState('');
+  const [dsList, setDsList] = useState([]);          // 我的数据集列表
+  const [dsOpen, setDsOpen] = useState(false);       // 数据集管理面板
+  const [renaming, setRenaming] = useState(null);    // 正在重命名的数据集（ID）
+  const [newName, setNewName] = useState('');
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [detailField, setDetailField] = useState(null);
@@ -58,6 +62,50 @@ export default function DataManagement() {
       .catch(() => { if (!cancelled) setBackendOk(false); });
     return () => { cancelled = true; };
   }, []);
+
+  // 加载我的数据集列表
+  useEffect(() => {
+    let cancelled = false;
+    listDatasets(100).then(res => { if (!cancelled) setDsList(res?.数据集列表 || []); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [dataset?.数据集ID]);
+
+  // 切换数据集
+  const handleSwitchDataset = async (id) => {
+    try {
+      const res = await getDataset(id);
+      setDataset({ 数据集ID: id, 文件名: res.文件名, 数据画像: res.数据画像 });
+      setAppDataset({ 数据集ID: id, 文件名: res.文件名, 数据画像: res.数据画像 });
+      setProfile(res.数据画像);
+      setDsOpen(false);
+    } catch (e) { setError(e.message || '切换失败'); }
+  };
+
+  // 删除数据集
+  const handleDeleteDataset = async (id, name) => {
+    if (!window.confirm(`删除数据集「${name}」？此操作不可恢复。`)) return;
+    try {
+      await deleteDataset(id);
+      setDsList(prev => prev.filter(d => d.数据集ID !== id));
+      if (dataset?.数据集ID === id) {
+        setDataset(null); setProfile(null); setAppDataset(null);
+      }
+    } catch (e) { setError(e.message || '删除失败'); }
+  };
+
+  // 重命名数据集
+  const handleRenameDataset = async (id) => {
+    if (!newName.trim()) return;
+    try {
+      await renameDataset(id, newName.trim());
+      setDsList(prev => prev.map(d => d.数据集ID === id ? { ...d, 文件名: newName.trim() } : d));
+      if (dataset?.数据集ID === id) {
+        setDataset(d => ({ ...d, 文件名: newName.trim() }));
+        setAppDataset(d => ({ ...d, 文件名: newName.trim() }));
+      }
+      setRenaming(null); setNewName('');
+    } catch (e) { setError(e.message || '重命名失败'); }
+  };
 
   async function handleUpload(file) {
     setError('');
@@ -152,6 +200,49 @@ export default function DataManagement() {
           <p className="text-xs text-gray-400 mt-1">支持 CSV / Excel 上传，自动识别字段类型与数据质量</p>
         </div>
         <div className="flex items-center gap-3">
+          {/* 我的数据集（多数据集切换/删除/重命名） */}
+          <div className="relative">
+            <button onClick={() => setDsOpen(!dsOpen)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all">
+              <Database className="w-3.5 h-3.5" />我的数据集{dsList.length > 0 ? `（${dsList.length}）` : ''}
+            </button>
+            {dsOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setDsOpen(false)} />
+                <div className="absolute right-0 top-full mt-2 z-20 w-72 bg-white border border-gray-200 rounded-xl shadow-xl p-3">
+                  <p className="text-xs font-semibold text-gray-700 mb-2">我的数据集</p>
+                  {dsList.length === 0 ? (
+                    <p className="text-xs text-gray-400 py-3 text-center">暂无数据集，上传一个吧</p>
+                  ) : (
+                    <div className="space-y-1 max-h-64 overflow-y-auto">
+                      {dsList.map(d => (
+                        <div key={d.数据集ID} className="flex items-center gap-2 px-2.5 py-2 rounded-lg hover:bg-gray-50 transition-colors">
+                          {renaming === d.数据集ID ? (
+                            <div className="flex-1 flex gap-1.5">
+                              <input className="flex-1 border border-gray-200 rounded-md px-2 py-1 text-xs focus:outline-none focus:border-accent" value={newName} onChange={(e) => setNewName(e.target.value)} autoFocus />
+                              <button className="text-[11px] text-accent hover:text-accent-deep" onClick={() => handleRenameDataset(d.数据集ID)}>保存</button>
+                            </div>
+                          ) : (
+                            <>
+                              <button className="flex-1 text-left min-w-0" onClick={() => handleSwitchDataset(d.数据集ID)}>
+                                <p className={`text-xs truncate ${dataset?.数据集ID === d.数据集ID ? 'text-accent font-medium' : 'text-gray-700'}`}>{d.文件名}</p>
+                                <p className="text-[10px] text-gray-400">{d.行数} 行 · {d.列数} 列</p>
+                              </button>
+                              <button className="text-gray-300 hover:text-accent transition-colors" title="重命名" onClick={() => { setRenaming(d.数据集ID); setNewName(d.文件名); }}>
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button className="text-gray-300 hover:text-red-500 transition-colors" title="删除" onClick={() => handleDeleteDataset(d.数据集ID, d.文件名)}>
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
           <button onClick={handleLoadExample} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all">
             <Download className="w-3.5 h-3.5" />导入示例数据
           </button>
@@ -266,6 +357,27 @@ export default function DataManagement() {
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* 数据洞察（自动生成：异常值/相关性/分布集中度） */}
+      {profile?.自动洞察?.length > 0 && (
+        <div className="mt-6">
+          <div className="flex items-center gap-2 mb-3">
+            <Lightbulb className="w-4 h-4 text-amber-500" />
+            <p className="text-xs font-semibold text-gray-700">数据洞察</p>
+            <span className="text-[10px] text-gray-400">AI 自动发现 · {profile.自动洞察.length} 条</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {profile.自动洞察.map((ins, i) => (
+              <div key={i} className="bg-white rounded-xl border border-gray-200 p-3.5 transition-all hover:shadow-sm">
+                <span className={`inline-block text-[10px] px-2 py-0.5 rounded font-medium ${
+                  ins.类型 === '异常值' ? 'bg-amber-50 text-amber-600' : ins.类型 === '相关' ? 'bg-accent-soft text-accent' : 'bg-emerald-50 text-emerald-600'
+                }`}>{ins.类型}</span>
+                <p className="text-xs text-gray-700 mt-2 leading-relaxed">{ins.说明}</p>
+              </div>
+            ))}
           </div>
         </div>
       )}

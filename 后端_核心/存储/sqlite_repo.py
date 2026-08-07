@@ -285,6 +285,16 @@ def 删除数据集(user_id: str, dataset_id: str) -> bool:
     return deleted
 
 
+def 重命名数据集(user_id: str, dataset_id: str, 新文件名: str) -> bool:
+    """重命名数据集（仅限归属用户）。返回是否成功。"""
+    with _write_lock, _get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE datasets SET file_name = ?, updated_at = ? WHERE dataset_id = ? AND user_id = ?",
+            (新文件名, _now_iso(), dataset_id, user_id),
+        )
+        return cur.rowcount > 0
+
+
 # ---- 仓储类（依赖注入友好） ---------------------------------------------------
 
 
@@ -309,3 +319,6 @@ class 数据集仓储:
 
     def 删除(self, user_id: str, dataset_id: str) -> bool:
         return 删除数据集(user_id, dataset_id)
+
+    def 重命名(self, user_id: str, dataset_id: str, 新文件名: str) -> bool:
+        return 重命名数据集(user_id, dataset_id, 新文件名)
