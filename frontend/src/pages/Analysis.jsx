@@ -244,7 +244,7 @@ export default function Analysis() {
   return (
     <div className="p-8 max-w-5xl mx-auto">
       <div className="mb-7">
-        <h1 className="text-lg font-semibold text-gray-900">智能分析</h1>
+        <h1 className="text-xl font-semibold tracking-tight text-gray-900">智能分析</h1>
         <p className="text-xs text-gray-400 mt-1">用自然语言描述分析需求，AI 自动生成报表</p>
         {dataset && <p className="text-xs text-accent mt-1">当前数据集：{dataset.文件名}</p>}
         {error && (
@@ -256,7 +256,7 @@ export default function Analysis() {
         )}
       </div>
 
-      {/* Input */}
+      {/* Input（输入容器保留边框，区别于展示卡） */}
       <div className="bg-white rounded-xl border border-gray-200">
         <div className="px-5 py-4 rounded-t-xl">
           <textarea
@@ -331,7 +331,7 @@ export default function Analysis() {
       {generating && (
         <div className="mt-4 grid grid-cols-1 lg:grid-cols-5 gap-4">
           {/* 左：决策流 */}
-          <div className="lg:col-span-3 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="lg:col-span-3 bg-white rounded-xl shadow-[var(--shadow-card)] overflow-hidden">
             <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100">
               <span
                 className="w-2 h-2 rounded-full bg-emerald-500 shrink-0"
@@ -386,7 +386,7 @@ export default function Analysis() {
           </div>
 
           {/* 右：图表生长舞台 */}
-          <div className="lg:col-span-2 bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col">
+          <div className="lg:col-span-2 bg-white rounded-xl shadow-[var(--shadow-card)] p-4 flex flex-col">
             <div className="flex items-center justify-between">
               <p className="text-[11px] font-semibold tracking-wide text-gray-400">生成中的报表</p>
               {liveDone && <span className="text-[10px] px-2 py-0.5 rounded-md bg-ok-soft text-ok font-medium">已完成</span>}
@@ -430,7 +430,7 @@ export default function Analysis() {
 
       {/* 多轮追问条：分析完成后停留本页，可继续追问或查看报表 */}
       {liveDone && !generating && (
-        <div className="mt-3 bg-white rounded-xl border border-gray-200 px-4 py-3">
+        <div className="mt-3 bg-white rounded-xl shadow-[var(--shadow-card)] px-4 py-3">
           <div className="flex items-center gap-2 mb-2">
             <MessageSquare className="w-4 h-4 text-accent" />
             <span className="text-xs font-semibold text-gray-700">继续追问</span>
@@ -571,7 +571,11 @@ function TraceRow({ step }) {
   const statusLabel = kind === 'active' ? '进行中' : (kind === 'failed' ? '失败' : '完成');
 
   return (
-    <div className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-all ${kind === 'active' ? 'bg-accent-soft' : ''}`}>
+    <div className={`relative flex items-center gap-3 px-3 py-2 rounded-lg transition-all ${kind === 'active' ? 'bg-accent-soft' : ''}`}>
+      {kind === 'active' && (
+        <span className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-[3px]"
+              style={{ background: 'linear-gradient(180deg, #4a8ac2, #0f4c81)' }} />
+      )}
       <span
         className={`w-7 h-7 rounded-lg flex items-center justify-center text-[13px] shrink-0 ${
           kind === 'active'

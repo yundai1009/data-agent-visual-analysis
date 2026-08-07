@@ -26,12 +26,27 @@
   --color-amber: #b45309;
   --color-amber-soft: #fef3c7;
   --color-err: #b91c1c;
+
+  /* 卡片层次：藏青有色投影（替代泛黑阴影，与主色同色系，非纯黑 0.05） */
+  --shadow-card: 0 10px 30px -12px rgba(15, 76, 129, 0.14);
+  --shadow-card-lg: 0 18px 44px -16px rgba(15, 76, 129, 0.22);
 }
 
 /* 数据工具基本功：数字等宽对齐 */
 body {
   font-family: var(--font-sans);
   font-variant-numeric: tabular-nums;
+}
+
+/* 极淡噪点质感：破纯平（pointer-events 不拦交互，透明度极低） */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+  opacity: 0.022;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/><feColorMatrix type='saturate' values='0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
 }
 
 /* 统一交互基调：过渡 + 按下反馈 + 键盘焦点环 */

@@ -9,7 +9,7 @@ import EChartsChart from '../components/EChartsChart';
 function Modal({ title, onClose, children }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-5" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl shadow-[var(--shadow-card-lg)] w-full max-w-lg p-5" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
           <button onClick={onClose} className="p-1 rounded hover:bg-gray-100 text-gray-400"><X className="w-4 h-4" /></button>
@@ -187,7 +187,7 @@ export default function Dashboard() {
       {/* Header */}
       <div className="flex items-center justify-between mb-5">
         <div>
-          <h1 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+          <h1 className="text-xl font-semibold tracking-tight text-gray-900 flex items-center gap-2">
             <LayoutDashboard className="w-5 h-5 text-accent" /> 图表看板
           </h1>
           <p className="text-xs text-gray-400 mt-1">把多份报表放到同一页面对比查看</p>
@@ -222,7 +222,7 @@ export default function Dashboard() {
 
       {/* 当前看板工具条 */}
       {detail && (
-        <div className="flex items-center gap-2 flex-wrap mb-4 px-4 py-2.5 rounded-xl bg-white border border-gray-200">
+                <div className="flex items-center gap-2 flex-wrap mb-4 px-4 py-2.5 rounded-xl bg-white shadow-[var(--shadow-card)]">
           <span className="text-sm font-medium text-gray-800">{detail.名称}</span>
           <span className="text-[11px] text-gray-400">共 {reports.length} 张图</span>
           <div className="ml-auto flex items-center gap-1.5">
@@ -250,7 +250,7 @@ export default function Dashboard() {
 
       {/* 空状态 */}
       {!loading && boards.length === 0 && (
-        <div className="bg-white rounded-2xl border border-gray-200 p-14 text-center">
+                <div className="bg-white rounded-2xl shadow-[var(--shadow-card)] p-14 text-center">
           <ImageOff className="w-10 h-10 text-gray-300 mx-auto mb-3" />
           <p className="text-sm text-gray-500 mb-1">还没有看板</p>
           <p className="text-xs text-gray-400 mb-5">先在「智能分析」生成报表，再挑选多份报表建看板对比</p>
@@ -273,7 +273,7 @@ export default function Dashboard() {
             const chartTypeKey = cfg.类型 || 'bar';
             const conclusion = item.报表?.结论 || '';
             return (
-              <div key={item.报表ID} className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                            <div key={item.报表ID} className="bg-white rounded-2xl shadow-[var(--shadow-card)] overflow-hidden">
                 <div className="flex items-center gap-2 px-4 pt-3.5">
                   <span className="text-[11px] px-2 py-0.5 rounded-md bg-accent-soft text-accent font-medium shrink-0">{item.图表类型 || '图表'}</span>
                   <p className="text-xs font-medium text-gray-700 truncate">{item.标题}</p>

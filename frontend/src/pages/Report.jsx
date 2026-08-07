@@ -245,7 +245,7 @@ export default function Report() {
       {/* Header */}
       <div className="flex items-center justify-between mb-7">
         <div>
-          <h1 className="text-lg font-semibold text-gray-900">报表查看</h1>
+          <h1 className="text-xl font-semibold tracking-tight text-gray-900">报表查看</h1>
           <p className="text-xs text-gray-400 mt-1">
             AI 自动生成的智能分析报告
             {dataProfile.行数 ? ` · 数据集共 ${dataProfile.行数} 行 ${dataProfile.列数} 列` : ''}
@@ -368,7 +368,7 @@ export default function Report() {
       )}
 
       {/* Tabs */}
-      <div className="bg-white rounded-xl border border-gray-200 mt-5 overflow-hidden">
+      <div className="bg-white rounded-xl shadow-[var(--shadow-card)] mt-5 overflow-hidden">
         <div className="flex items-center gap-6 px-5 pt-3.5 border-b border-gray-100">
           {['table', 'trace'].map((t) => (
             <span key={t}
@@ -471,7 +471,7 @@ export default function Report() {
       {/* 分享弹窗：生成带权限的只读链接 + 管理已有链接 */}
       {showShare && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowShare(false)}>
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl shadow-[var(--shadow-card-lg)] w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
                 <Share2 className="w-4 h-4 text-emerald-600" /> 分享报表
@@ -518,7 +518,7 @@ export default function Report() {
                 {shareLinks.map((s) => {
                   const link = `${window.location.origin}/s/${s.链接ID}`;
                   return (
-                    <div key={s.链接ID} className="flex items-center gap-2 border border-gray-100 rounded-lg px-3 py-2">
+                    <div key={s.链接ID} className="flex items-center gap-2 bg-surface rounded-lg px-3 py-2">
                       <div className="flex-1 min-w-0">
                         <p className="text-[11px] text-gray-700 font-mono truncate">{link}</p>
                         <p className="text-[10px] text-gray-400 flex items-center gap-1 mt-0.5">
