@@ -8,6 +8,9 @@ import io
 import re
 import sys
 
+# CI runner（en-US）默认 stdout 是 cp1252，中文 print 会 UnicodeEncodeError；强制 UTF-8
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 import requests
 
 BASE = "http://127.0.0.1:8010"

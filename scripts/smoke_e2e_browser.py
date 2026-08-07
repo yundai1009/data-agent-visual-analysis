@@ -13,6 +13,9 @@ import time
 import urllib.request
 from pathlib import Path
 
+# CI runner（en-US）默认 stdout 是 cp1252，中文 print 会 UnicodeEncodeError；强制 UTF-8
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parent.parent
