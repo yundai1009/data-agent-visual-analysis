@@ -615,6 +615,8 @@ def test_报表追问链路(client):
     assert detail["报表"]["上一报表ID"] == rid1
     assert detail["报表"]["agent_mode"] == "single"
     assert detail.get("上一报表标题"), "详情应附追问来源报表标题"
+    # 追问报表标题用用户原话（不被注入的上下文污染）
+    assert detail["标题"] == "那华南区呢？", f"标题被上下文污染: {detail['标题'][:50]}"
 
 
 def test_看板CRUD与隔离(client):

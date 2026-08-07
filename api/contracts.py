@@ -56,6 +56,7 @@ class ReportGenerateRequest(BaseModel):
     agent_mode: str = "single"  # "single" | "multi"
     model: Optional[str] = None  # 临时覆盖 LLM 模型名，None=使用 .env 默认
     上一报表ID: Optional[str] = None  # 追问上下文：延续上一份报表继续分析
+    原始分析需求: Optional[str] = None  # 内部：追问注入上下文前的原话（用于报表标题）
 
 
 class ReportGenerateResponse(BaseModel):

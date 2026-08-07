@@ -131,6 +131,8 @@ def _注入追问上下文(
     if not payload.上一报表ID:
         return payload
 
+    payload.原始分析需求 = payload.分析需求
+
     from repositories import report_repo
     item = report_repo.读取报表(user["user_id"], payload.上一报表ID)
     if not item:
@@ -174,6 +176,9 @@ def _生成报表流式(
     # 追溯信息落库：追问来源 + 生成模式（重放/溯源时使用）
     report["上一报表ID"] = payload.上一报表ID
     report["agent_mode"] = payload.agent_mode
+    # 追问报表标题用用户原话（避免被注入的上下文污染）
+    if payload.原始分析需求:
+        report["标题"] = payload.原始分析需求.strip()
 
     # 报表持久化到后端（阶段 6）
     from repositories import report_repo
