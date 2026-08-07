@@ -23,18 +23,50 @@ router = APIRouter(prefix="/share-data", tags=["share"])
 # 公开视图只透传展示所需字段（不含 Agent Trace 等内部数据）
 _公开字段 = ("标题", "图表类型", "图表配置", "报表数据", "结论", "风险提示", "数据画像")
 
+# P0 加固：密码尝试限频（固定窗口：10 分钟最多 10 次失败，防在线暴破）
+_PWD_WINDOW_SEC = 600
+_PWD_MAX_FAILS = 10
+_pwd_fails: Dict[str, tuple] = {}  # share_id -> (window_start, fail_count)
+
+
+def _密码尝试超限(share_id: str) -> bool:
+    import time
+    now = time.time()
+    start, count = _pwd_fails.get(share_id, (now, 0))
+    if now - start > _PWD_WINDOW_SEC:
+        _pwd_fails[share_id] = (now, 0)
+        return False
+    return count >= _PWD_MAX_FAILS
+
+
+def _记录密码失败(share_id: str) -> None:
+    import time
+    now = time.time()
+    start, count = _pwd_fails.get(share_id, (now, 0))
+    _pwd_fails[share_id] = (now if now - start > _PWD_WINDOW_SEC else start, count + 1)
+
 
 @router.get("/{share_id}")
 def 公开查看报表(share_id: str, request: Request) -> Dict[str, Any]:
-    """按分享令牌读取报表只读视图；过期/撤销/报表已删 → 404；设置了密码需凭密码（401）。"""
+    """按分享令牌读取报表只读视图；过期/撤销/报表已删 → 404；设置了密码需凭密码（401）。
+
+    P0 加固：密码以 HMAC 哈希存储、恒定时间比对、失败限频（10 分钟 10 次 → 429）。
+    """
     share = share_repo.读取有效分享(share_id)
     if not share:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分享链接不存在或已过期")
 
-    # 密码保护：分享设置了密码时，请求需带 ?password= 且匹配，否则 401
+    # 密码保护：分享设置了密码时，请求需带 ?password= 且匹配，否则 401；连续失败限频 429
     if share["需密码"]:
+        if _密码尝试超限(share_id):
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="尝试次数过多，请稍后再试")
         given = (request.query_params.get("password") or "").strip()
-        if given != share["密码"]:
+        import hashlib
+        import hmac as _hmac
+        from config.settings import EnvConfig
+        calc = _hmac.new(EnvConfig.JWT_SECRET_KEY.encode(), given.encode(), hashlib.sha256).hexdigest()
+        if not _hmac.compare_digest(calc, share["密码哈希"]):
+            _记录密码失败(share_id)
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="需要访问密码")
 
     # 报表可能已被创建者删除：分享随之失效（不暴露内部信息）

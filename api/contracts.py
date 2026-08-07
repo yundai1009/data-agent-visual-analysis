@@ -46,17 +46,19 @@ class DatasetPreviewResponse(BaseModel):
 
 
 class ReportGenerateRequest(BaseModel):
-    数据集ID: str
-    分析需求: str = ""
-    图表类型: str = "自动推荐"
-    x轴: Optional[str] = None
-    y轴: list[str] = Field(default_factory=list)
-    分组字段: Optional[str] = None
-    聚合方式: str = "求和"
-    agent_mode: str = "single"  # "single" | "multi"
-    model: Optional[str] = None  # 临时覆盖 LLM 模型名，None=使用 .env 默认
-    上一报表ID: Optional[str] = None  # 追问上下文：延续上一份报表继续分析
-    原始分析需求: Optional[str] = None  # 内部：追问注入上下文前的原话（用于报表标题）
+    """生成报表请求（P0 加固：全部字段设长度上限，防超大请求体 DoS）。"""
+
+    数据集ID: str = Field(..., max_length=64)
+    分析需求: str = Field("", max_length=2000)
+    图表类型: str = Field("自动推荐", max_length=32)
+    x轴: Optional[str] = Field(None, max_length=64)
+    y轴: list[str] = Field(default_factory=list, max_length=8)
+    分组字段: Optional[str] = Field(None, max_length=64)
+    聚合方式: str = Field("求和", max_length=16)
+    agent_mode: str = Field("single", max_length=16)  # "single" | "multi"
+    model: Optional[str] = Field(None, max_length=64)  # 临时覆盖 LLM 模型名，None=使用 .env 默认
+    上一报表ID: Optional[str] = Field(None, max_length=64)  # 追问上下文：延续上一份报表继续分析
+    原始分析需求: Optional[str] = Field(None, max_length=2000)  # 内部：追问注入上下文前的原话（用于报表标题）
 
 
 class ReportGenerateResponse(BaseModel):

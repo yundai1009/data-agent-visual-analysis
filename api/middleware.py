@@ -13,6 +13,27 @@ import uuid
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
+# P0 加固：全局请求体上限（与上传 50MB 限制一致；超限直接 413，防超大 body 撑爆内存 DoS）
+MAX_BODY_BYTES = 50 * 1024 * 1024
+
+
+class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
+    """拒绝 Content-Length 超上限的请求（chunked 请求不在此列，由各端点自限）。"""
+
+    async def dispatch(self, request: Request, call_next):
+        cl = request.headers.get("content-length")
+        if cl:
+            try:
+                if int(cl) > MAX_BODY_BYTES:
+                    from starlette.responses import JSONResponse
+                    return JSONResponse(
+                        status_code=413,
+                        content={"code": "PAYLOAD_TOO_LARGE", "message": "请求体过大（上限 50MB）", "request_id": ""},
+                    )
+            except ValueError:
+                pass
+        return await call_next(request)
+
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
     """为每个请求注入 request_id。"""

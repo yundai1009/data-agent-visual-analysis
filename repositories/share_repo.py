@@ -47,19 +47,28 @@ def 初始化分享表() -> None:
             conn.execute("ALTER TABLE share_links ADD COLUMN password TEXT")
 
 
+def _密码哈希(password: str) -> str:
+    """HMAC-SHA256（密钥复用 JWT_SECRET_KEY，与验证码同款方案）：分享密码不落明文。"""
+    import hashlib
+    import hmac as _hmac
+    from config.settings import EnvConfig
+    return _hmac.new(EnvConfig.JWT_SECRET_KEY.encode(), password.encode(), hashlib.sha256).hexdigest()
+
+
 def 创建分享(user_id: str, report_id: str, hours: int = 24, password: str = "") -> Dict[str, Any]:
-    """为指定报表创建分享链接，可设访问密码（password 非空时访问需凭密码）。"""
+    """为指定报表创建分享链接，可设访问密码（password 非空时访问需凭密码，落库仅存哈希）。"""
     初始化分享表()
     share_id = uuid.uuid4().hex
     now = _now_iso()
     expires = (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
+    password_hash = _密码哈希(password) if password else None
     with _write_lock, _get_conn() as conn:
         conn.execute(
             """
             INSERT INTO share_links (share_id, user_id, report_id, expires_at, created_at, password)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (share_id, user_id, report_id, expires, now, password or None),
+            (share_id, user_id, report_id, expires, now, password_hash),
         )
     logger.info("创建分享 %s → 报表 %s（%dh%s）", share_id, report_id, hours,
                "，带密码" if password else "")
@@ -84,7 +93,7 @@ def 读取有效分享(share_id: str) -> Optional[Dict[str, Any]]:
         "report_id": row["report_id"],
         "过期时间": row["expires_at"],
         "创建时间": row["created_at"],
-        "密码": row["password"] or "",
+        "密码哈希": row["password"] or "",
         "需密码": bool(row["password"]),
     }
 

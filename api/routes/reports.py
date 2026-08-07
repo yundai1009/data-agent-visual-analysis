@@ -67,6 +67,7 @@ def _准备上下文(
     provider_conf = providers.get(user_provider)
     # 用户自定义供应商：base_url/key 来自账号存储（参考 Reasonix 自定义供应商）
     custom_api_key = ""
+    is_custom = False
     if not provider_conf:
         from repositories import user_repo as _ur
         custom_conf = next(
@@ -74,12 +75,19 @@ def _准备上下文(
             None,
         )
         if custom_conf:
+            # P0 加固：SSRF 防护——历史入库的 base_url 也要校验（含内网/云元数据拒绝）
+            from services.llm_security import 校验LLM供应商URL
+            try:
+                base_url = 校验LLM供应商URL(custom_conf["base_url"])
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
             provider_conf = {
-                "base_url": custom_conf["base_url"],
+                "base_url": base_url,
                 "default_model": custom_conf.get("default", "") or "",
                 "models": custom_conf.get("models") or [],
             }
             custom_api_key = custom_conf.get("api_key", "")
+            is_custom = True
     if not provider_conf:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -109,6 +117,12 @@ def _准备上下文(
     # provider 级 Key（api_key_env 对应环境变量，参考 Reasonix 接入方式）
     if not user_api_key and provider_conf.get("api_key_env"):
         user_api_key = os.getenv(provider_conf["api_key_env"], "")
+    # P0 加固：自定义供应商绝不回退服务端 .env 密钥（防服务端 LLM_API_KEY 外泄到用户控制的 URL）
+    if is_custom and not user_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="自定义 LLM 供应商必须提供 API Key（请求头 / 账号 Key / 供应商自带 Key）",
+        )
     llm_config = LLMRequestConfig(
         provider=user_provider,
         base_url=provider_conf["base_url"],
@@ -183,9 +197,9 @@ def _生成报表流式(
     """生成报表 + 持久化；on_event 实时推送决策事件（SSE 直播）。返回 (report_id, report)。"""
     payload = _注入追问上下文(payload, user)
     if payload.agent_mode == "multi":
-        report = _多智能体报表(df, payload, llm_config, on_event=on_event)
+        report = _多智能体报表(df, payload, llm_config, on_event=on_event, user_id=user["user_id"])
     else:
-        report = _单Agent报表(df, payload, llm_config, on_event=on_event)
+        report = _单Agent报表(df, payload, llm_config, on_event=on_event, user_id=user["user_id"])
 
     # 追溯信息落库：追问来源 + 生成模式（重放/溯源时使用）
     report["上一报表ID"] = payload.上一报表ID
@@ -217,15 +231,24 @@ async def generate_report(
     request: Request,
     user: dict = Depends(get_current_user),
 ) -> ReportGenerateResponse:
-    df, llm_config = _准备上下文(payload, request, user)
-    try:
-        report_id, report = _生成报表流式(payload, df, llm_config, user)
-    except ValueError as exc:
+    # P0 加固：与流式共享并发信号量，超出立即 503（非流式端点曾不受限，可并发刷爆）
+    if not _STREAM_SEMAPHORE.acquire(blocking=False):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-    return _构建响应(payload, report, report_id)
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="当前分析任务已满（并发上限 4），请稍后重试",
+        )
+    try:
+        df, llm_config = _准备上下文(payload, request, user)
+        try:
+            report_id, report = _生成报表流式(payload, df, llm_config, user)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+        return _构建响应(payload, report, report_id)
+    finally:
+        _STREAM_SEMAPHORE.release()
 
 
 @router.post("/generate-stream")
@@ -361,12 +384,17 @@ def export_report(
             headers={"Content-Disposition": f"attachment; filename=report.csv; filename*=UTF-8''{quote(f'{标题}.csv')}"},
         )
     # PDF（reportlab + 微软雅黑中文字体）
+    import html  # P0 加固：Paragraph 按 HTML 子集解析，数据须转义防 <img> 任意文件读取/注入
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    def _esc(value) -> str:
+        """全部用户/数据内容进入 Paragraph 前转义（防 reportlab 解析 tags 与文件引用）。"""
+        return html.escape(str(value), quote=False)
 
     pdfmetrics.registerFont(TTFont("MSYH", "C:/Windows/Fonts/msyh.ttc"))
     styles = getSampleStyleSheet()
@@ -375,18 +403,18 @@ def export_report(
     head = ParagraphStyle("Head", parent=styles["Heading2"], fontName="MSYH", fontSize=11, leading=16, spaceBefore=10)
 
     doc = SimpleDocTemplate(buf, pagesize=A4)
-    story = [Paragraph(f"报表：{标题}", title), Spacer(1, 8)]
-    story.append(Paragraph(f"图表类型：{report.get('图表类型', '')} · 意图来源：{report.get('意图来源', '')}", body))
+    story = [Paragraph(f"报表：{_esc(标题)}", title), Spacer(1, 8)]
+    story.append(Paragraph(f"图表类型：{_esc(report.get('图表类型', ''))} · 意图来源：{_esc(report.get('意图来源', ''))}", body))
     story.append(Spacer(1, 6))
     if report.get("结论"):
         story.append(Paragraph("分析结论", head))
-        story.append(Paragraph(str(report["结论"]), body))
+        story.append(Paragraph(_esc(report["结论"]), body))
     if rows:
         story.append(Paragraph("数据明细", head))
         cols = list(rows[0].keys())
-        data = [[Paragraph(str(c), body) for c in cols]]
+        data = [[Paragraph(_esc(c), body) for c in cols]]
         for row in rows[:200]:
-            data.append([Paragraph(str(row.get(c, "")), body) for c in cols])
+            data.append([Paragraph(_esc(row.get(c, "")), body) for c in cols])
         table = Table(data, repeatRows=1)
         table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8eef5")),
@@ -399,12 +427,12 @@ def export_report(
     if 推荐:
         story.append(Paragraph("推荐依据", head))
         for r in 推荐:
-            story.append(Paragraph(f"· {r}", body))
+            story.append(Paragraph(f"· {_esc(r)}", body))
     风险 = report.get("风险提示", [])
     if 风险:
         story.append(Paragraph("注意事项", head))
         for w in 风险:
-            story.append(Paragraph(f"· {w}", body))
+            story.append(Paragraph(f"· {_esc(w)}", body))
     doc.build(story)
     buf.seek(0)
     return StreamingResponse(
@@ -511,12 +539,21 @@ def 重放报表(
         agent_mode=prev.get("agent_mode", "single"),
     )
 
-    df, llm_config = _准备上下文(payload, request, user)
+    # P0 加固：与流式共享并发信号量（replay 同样消耗 LLM/线程资源）
+    if not _STREAM_SEMAPHORE.acquire(blocking=False):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="当前分析任务已满（并发上限 4），请稍后重试",
+        )
     try:
-        new_id, new_report = _生成报表流式(payload, df, llm_config, user)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-    return _构建响应(payload, new_report, new_id)
+        df, llm_config = _准备上下文(payload, request, user)
+        try:
+            new_id, new_report = _生成报表流式(payload, df, llm_config, user)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        return _构建响应(payload, new_report, new_id)
+    finally:
+        _STREAM_SEMAPHORE.release()
 
 
 # ── 生成 ──────────────────────────────────────────────────────────────────────
@@ -527,6 +564,7 @@ def _单Agent报表(
     payload: ReportGenerateRequest,
     llm_config: LLMRequestConfig,
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
+    user_id: str = "",
 ) -> Dict[str, Any]:
     """标准单 Agent 生成报表。"""
     return 生成报表数据(
@@ -539,6 +577,7 @@ def _单Agent报表(
         聚合方式=payload.聚合方式,
         llm_config=llm_config,
         on_event=on_event,
+        user_id=user_id,
     )
 
 
@@ -547,6 +586,7 @@ def _多智能体报表(
     payload: ReportGenerateRequest,
     llm_config: LLMRequestConfig,
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
+    user_id: str = "",
 ) -> Dict[str, Any]:
     """多智能体模式生成报表。"""
     from 后端_核心.数据画像 import 生成数据画像
@@ -565,6 +605,7 @@ def _多智能体报表(
             聚合方式=payload.聚合方式,
             llm_config=llm_config,
             on_event=on_event,
+            user_id=user_id,
         )
 
     # 用多智能体返回的意图走标准报表链路
@@ -578,6 +619,7 @@ def _多智能体报表(
         聚合方式=result.get("聚合方式", "求和"),
         llm_config=llm_config,
         on_event=on_event,
+        user_id=user_id,
     )
 
 

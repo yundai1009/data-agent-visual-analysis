@@ -12,6 +12,14 @@ const CHART_TOOLTIP = {
   extraCssText: 'box-shadow: 0 8px 16px -8px rgba(15,76,129,.15); border-radius: 8px;',
 };
 
+// P0 加固：echarts tooltip 内容按 HTML 渲染，自定义 formatter 返回值须自行转义，
+// 否则上传数据中的 <img onerror=...> 可触发存储型 XSS（实测审计 P0-6）。
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
 export default function EChartsChart({ chartType, chartConfig, height = 320 }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
@@ -163,7 +171,8 @@ function buildOption(chartType, config) {
       // 用 formatter 函数手动算百分比（不依赖 {d} 占位符，避免显示 0%）
       tooltip: {
         ...CHART_TOOLTIP, trigger: 'item',
-        formatter: (p) => `${p.name}: ${p.value} (${(p.percent ?? 0).toFixed(1)}%)`,
+        // P0 加固：p.name 来自上传数据，转义防存储型 XSS
+        formatter: (p) => `${escapeHtml(p.name)}: ${p.value} (${(p.percent ?? 0).toFixed(1)}%)`,
       },
       series: [{
         type: 'pie', radius: type === 'donut' ? ['45%', '70%'] : ['0%', '60%'],
@@ -273,7 +282,7 @@ function buildOption(chartType, config) {
     const nk = nameField || xField || Object.keys(rows[0])[0];
     const vk = valueField || (yFields[0] || Object.keys(rows[0]).find(k => k !== nk) || '');
     return {
-      ...base, tooltip: { ...CHART_TOOLTIP, trigger: 'item', formatter: '{b}: {c}' },
+      ...base, tooltip: { ...CHART_TOOLTIP, trigger: 'item', formatter: (p) => `${escapeHtml(p.name)}: ${p.value}` },
       series: [{
         type: 'funnel', left: '12%', width: '76%', top: 40, bottom: 20,
         label: { formatter: '{b} {c}' },
