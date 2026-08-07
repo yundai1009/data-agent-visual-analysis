@@ -66,6 +66,10 @@ class EnvConfig:
         ).split(",") if o.strip()
     ]
 
+    # LLM Key 静态加密密钥（P1 加固）：建议显式配置 Fernet 兼容随机值；
+    # 缺省从 JWT_SECRET_KEY SHA-256 派生（本地开发兼容，生产请显式设置）
+    LLM_KEY_ENCRYPTION_KEY = os.getenv("LLM_KEY_ENCRYPTION_KEY", "")
+
     # LLM provider 白名单（阶段 5）：用户只能选 provider+model，不能传任意 URL/Key
     # 结构：provider -> {base_url, default_model, models: [可选模型列表]}
     # 阶段 13.5：provider 配置外置到 config/providers.toml（参考 Reasonix 接入方式，

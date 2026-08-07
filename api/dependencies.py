@@ -49,6 +49,14 @@ def get_current_user(
             detail="认证令牌无效或已过期",
         )
 
+    # P1 加固：JWT 吊销校验——载荷 token_version 必须等于当前用户版本（改密/改用户名后旧 token 失效）
+    from repositories import user_repo as _repo
+    if int(payload.get("ver") or 0) != _repo.读取token版本(payload.get("sub", "")):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="认证令牌已失效，请重新登录",
+        )
+
     return {
         "user_id": payload.get("sub", ""),
         "username": payload.get("username", ""),

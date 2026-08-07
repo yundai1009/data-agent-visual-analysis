@@ -50,6 +50,9 @@ def 初始化用户表() -> None:
         # 用户自定义 LLM 供应商（JSON 数组，阶段 13.6）
         if "llm_custom_providers" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN llm_custom_providers TEXT")
+        # P1 加固：token_version（改密/改用户名时 +1，旧 JWT 吊销）
+        if "token_version" not in columns:
+            conn.execute("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0")
             logger.info("users 表已迁移：新增 llm_custom_providers 列")
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)"
@@ -154,24 +157,27 @@ def 确保管理员存在(username: str, password_hash: str) -> Dict[str, Any]:
 
 
 def 保存LLMKey(user_id: str, api_key: str) -> None:
-    """保存账号级 LLM Key（明文存库，仅服务端使用，不回传前端）。"""
+    """保存账号级 LLM Key（P1 加固：加密后落库，仅服务端使用，不回传前端）。"""
     初始化用户表()
+    from services.crypto import 加密
     with _write_lock, _get_conn() as conn:
         conn.execute(
             "UPDATE users SET llm_api_key = ?, updated_at = ? WHERE user_id = ?",
-            (api_key.strip(), _now_iso(), user_id),
+            (加密(api_key.strip()), _now_iso(), user_id),
         )
 
 
 def 读取LLMKey(user_id: str) -> str:
-    """读取账号级 LLM Key；未配置返回空串。"""
+    """读取账号级 LLM Key（解密返回）；未配置返回空串；历史明文兼容。"""
     初始化用户表()
+    from services.crypto import 解密
     with _get_conn() as conn:
         row = conn.execute(
             "SELECT llm_api_key FROM users WHERE user_id = ?",
             (user_id,),
         ).fetchone()
-    return (row["llm_api_key"] or "") if row else ""
+    stored = (row["llm_api_key"] or "") if row else ""
+    return 解密(stored) if stored else ""
 
 
 def 清除LLMKey(user_id: str) -> None:
@@ -180,6 +186,24 @@ def 清除LLMKey(user_id: str) -> None:
     with _write_lock, _get_conn() as conn:
         conn.execute(
             "UPDATE users SET llm_api_key = NULL, updated_at = ? WHERE user_id = ?",
+            (_now_iso(), user_id),
+        )
+
+
+def 读取token版本(user_id: str) -> int:
+    """读取用户 token_version（P1 加固：JWT 吊销用）。"""
+    初始化用户表()
+    with _get_conn() as conn:
+        row = conn.execute("SELECT token_version FROM users WHERE user_id = ?", (user_id,)).fetchone()
+    return int(row["token_version"] or 0) if row else 0
+
+
+def 增加token版本(user_id: str) -> None:
+    """token_version +1：使已签发的旧 JWT 全部失效（改密/改用户名时调用）。"""
+    初始化用户表()
+    with _write_lock, _get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET token_version = token_version + 1, updated_at = ? WHERE user_id = ?",
             (_now_iso(), user_id),
         )
 
@@ -236,8 +260,9 @@ import json as _json
 
 
 def 读取自定义供应商(user_id: str) -> list:
-    """读取用户自定义 LLM 供应商列表（JSON 数组）。"""
+    """读取用户自定义 LLM 供应商列表（JSON 数组；api_key 解密，历史明文兼容）。"""
     初始化用户表()
+    from services.crypto import 解密
     with _get_conn() as conn:
         row = conn.execute(
             "SELECT llm_custom_providers FROM users WHERE user_id = ?",
@@ -246,16 +271,27 @@ def 读取自定义供应商(user_id: str) -> list:
     raw = (row["llm_custom_providers"] if row else "") or ""
     try:
         data = _json.loads(raw)
-        return data if isinstance(data, list) else []
+        if not isinstance(data, list):
+            return []
+        for p in data:
+            if isinstance(p, dict) and p.get("api_key"):
+                p["api_key"] = 解密(p["api_key"])
+        return data
     except (ValueError, TypeError):
         return []
 
 
 def 保存自定义供应商(user_id: str, providers: list) -> None:
-    """整体保存用户自定义 LLM 供应商列表（JSON 数组）。"""
+    """整体保存用户自定义 LLM 供应商列表（JSON 数组；api_key 加密落库）。"""
     初始化用户表()
+    from services.crypto import 加密
+    import copy as _copy
+    stored = _copy.deepcopy(providers)
+    for p in stored:
+        if isinstance(p, dict) and p.get("api_key"):
+            p["api_key"] = 加密(p["api_key"])
     with _write_lock, _get_conn() as conn:
         conn.execute(
             "UPDATE users SET llm_custom_providers = ?, updated_at = ? WHERE user_id = ?",
-            (_json.dumps(providers, ensure_ascii=False), _now_iso(), user_id),
+            (_json.dumps(stored, ensure_ascii=False), _now_iso(), user_id),
         )

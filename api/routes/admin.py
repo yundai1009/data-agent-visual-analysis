@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from api.dependencies import require_admin
 from repositories import admin_repo
@@ -44,3 +44,13 @@ def get_statistics(user: dict = Depends(require_admin)) -> Dict[str, Any]:
 def list_users(user: dict = Depends(require_admin)) -> Dict[str, Any]:
     """用户列表与用量（已剥离密码与密钥字段）。"""
     return {"用户列表": admin_repo.用户用量列表()}
+
+
+@router.get("/usage")
+def get_llm_usage(
+    days: int = Query(7, ge=1, le=90),
+    user: dict = Depends(require_admin),
+) -> Dict[str, Any]:
+    """LLM token 用量统计（P1 加固：成本可见性，近 N 天总量/按天/按 provider）。"""
+    from repositories import usage_repo
+    return usage_repo.统计用量(days=days)

@@ -152,7 +152,10 @@ def login(payload: LoginRequest, request: Request) -> AuthResponse:
     if not user or not auth_service.verify_password(payload.password, user["password_hash"]):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
     _清除登录限流(identifier, client_host)
-    token = auth_service.create_access_token(user["user_id"], user["role"], user["username"])
+    token = auth_service.create_access_token(
+        user["user_id"], user["role"], user["username"],
+        token_version=user_repo.读取token版本(user["user_id"]),
+    )
     return AuthResponse(
         access_token=token,
         user={
@@ -342,6 +345,8 @@ def change_password(payload: dict, user: dict = Depends(get_current_user)) -> Di
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="旧密码不正确")
 
     user_repo.更新密码(user["user_id"], auth_service.hash_password(new_password))
+    # P1 加固：改密后旧 JWT 全部吊销（token_version +1）
+    user_repo.增加token版本(user["user_id"])
     return {"message": "密码已修改"}
 
 
@@ -359,4 +364,6 @@ def change_username(payload: dict, user: dict = Depends(get_current_user)) -> Di
         user_repo.更新用户名(user["user_id"], new_username)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    # P1 加固：改用户名后旧 JWT 全部吊销
+    user_repo.增加token版本(user["user_id"])
     return {"message": "用户名已修改", "username": new_username}

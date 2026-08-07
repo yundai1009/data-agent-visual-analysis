@@ -1,27 +1,29 @@
+# 版本已锁定（P1 加固）：防止依赖漂移导致 CI/生产行为不一致（如 pandas 3 日期推断变更）
+
 # 后端
-fastapi
-uvicorn
-python-multipart
-python-dotenv
-requests
-pandas<3
-openpyxl
-reportlab
+fastapi==0.141.1
+uvicorn==0.34.0
+python-multipart==0.0.20
+python-dotenv==1.1.1
+requests==2.32.3
+pandas==2.2.3
+openpyxl==3.1.5
+reportlab==5.0.0
 
 # Agent 记忆
-chromadb
+chromadb==1.5.9
 
 # 前端
-# - HTML/ECharts 主前端无 Python 依赖（纯静态 + Jinja2 模板，FastAPI 自带 Jinja2 依赖）
-# - 下面是 Streamlit 调试前端的依赖；不跑 streamlit 调试可注释掉
-streamlit
-streamlit-option-menu
-streamlit-ace
-plotly
+streamlit==1.59.2
+streamlit-option-menu==0.4.0
+streamlit-ace==0.1.1
+plotly==6.3.1
 
 # 测试
-pytest
-pytest-timeout
-# E2E 浏览器冒烟（scripts/smoke_e2e_browser.py）
-playwright
-jieba
+pytest==8.4.2
+pytest-timeout==2.4.0
+jieba==0.42.1
+playwright==1.61.0
+
+# 静态加密（LLM Key 落库加密）
+cryptography==44.0.3

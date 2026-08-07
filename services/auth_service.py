@@ -93,8 +93,9 @@ def create_access_token(
     role: str,
     username: str = "",
     expires_minutes: Optional[int] = None,
+    token_version: int = 0,
 ) -> str:
-    """签发 JWT access token。"""
+    """签发 JWT access token（P1 加固：载荷带 token_version 供吊销校验）。"""
     from config.settings import EnvConfig
     minutes = expires_minutes or getattr(EnvConfig, "JWT_EXPIRE_MINUTES", 60)
     now = int(time.time())
@@ -102,6 +103,7 @@ def create_access_token(
         "sub": user_id,
         "username": username,
         "role": role,
+        "ver": int(token_version or 0),
         "iat": now,
         "exp": now + int(minutes) * 60,
     }

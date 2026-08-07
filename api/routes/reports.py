@@ -208,6 +208,19 @@ def _生成报表流式(
     if payload.原始分析需求:
         report["标题"] = payload.原始分析需求.strip()
 
+    # P1 加固：LLM 用量统计（成本可见性）——从 Agent Trace 汇总 token 写入 llm_usage
+    try:
+        from repositories import usage_repo
+        _p = _c = 0
+        for _step in report.get("Agent Trace") or []:
+            _t = _step.get("token") or {}
+            _p += int(_t.get("prompt_tokens") or 0)
+            _c += int(_t.get("completion_tokens") or 0)
+        if _p or _c:
+            usage_repo.记录用量(user["user_id"], llm_config.provider, llm_config.model, _p, _c)
+    except Exception as _exc:
+        logger.warning("记录 LLM 用量失败: %s", _exc)
+
     # 报表持久化到后端（阶段 6）
     from repositories import report_repo
     report_id = report_repo.保存报表(
@@ -376,7 +389,14 @@ def export_report(
             headers={"Content-Disposition": f"attachment; filename=report.xlsx; filename*=UTF-8''{quote(f'{标题}.xlsx')}"},
         )
     if format == "csv":
-        pd.DataFrame(rows).to_csv(buf, index=False)
+        # P1 加固：CSV 公式注入——以 = + - @ 开头的单元格加前缀 '（防 Excel 打开执行公式）
+        import re as _re
+        _危险前缀 = _re.compile(r"^[=+\-@]")
+        esc_rows = [
+            {k: ("'" + v if isinstance(v, str) and _危险前缀.match(v) else v) for k, v in row.items()}
+            for row in rows
+        ]
+        pd.DataFrame(esc_rows).to_csv(buf, index=False)
         buf.seek(0)
         return StreamingResponse(
             buf,
