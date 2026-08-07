@@ -809,6 +809,26 @@ def test_自定义供应商_生成报表不报400(client):
         orc_mod.chat_completion = orig_cc
 
 
+# ---- 13. 修改密码 ----
+
+def test_修改密码_成功与旧密码校验(client):
+    """改密成功 → 旧密码登录失败、新密码登录成功；旧密码错误 → 400。"""
+    tok = _register(client, "pw1")
+    h = {"Authorization": f"Bearer {tok}"}
+    # 旧密码错误
+    r = client.post("/auth/change-password", json={"old_password": "wrong-old", "new_password": "newpass123"}, headers=h)
+    assert r.status_code == 400, r.text
+    # 正确修改
+    r = client.post("/auth/change-password", json={"old_password": "secret123", "new_password": "newpass123"}, headers=h)
+    assert r.status_code == 200, r.text
+    # 旧密码不能再登录
+    r = client.post("/auth/login", json={"username": "pw1", "password": "secret123"})
+    assert r.status_code == 401
+    # 新密码可登录
+    r = client.post("/auth/login", json={"username": "pw1", "password": "newpass123"})
+    assert r.status_code == 200
+
+
 # ---- 9. 分析直播（SSE） ----
 
 def _parse_sse(body: str):

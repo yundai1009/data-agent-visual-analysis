@@ -111,6 +111,13 @@ export async function login(username, password) {
   });
 }
 
+export async function changePassword(oldPassword, newPassword) {
+  return request('/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+  });
+}
+
 export async function sendCode(email) {
   return request('/auth/send-code', {
     method: 'POST',

@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { Database, Zap, BarChart3, ChevronLeft, ChevronRight, LogOut } from 'lucide-react';
+import { Database, Zap, BarChart3, ChevronLeft, ChevronRight, LogOut, KeyRound, X } from 'lucide-react';
 import { useApp } from '../AppContext';
+import { changePassword } from '../api';
 
 const navItems = [
   { to: '/data', icon: Database, label: '数据管理' },
@@ -11,11 +13,31 @@ const navItems = [
 export default function Sidebar({ collapsed, onToggle }) {
   const navigate = useNavigate();
   const { user, logout } = useApp();
+  const [pwdOpen, setPwdOpen] = useState(false);
+  const [oldPwd, setOldPwd] = useState('');
+  const [newPwd, setNewPwd] = useState('');
+  const [pwdMsg, setPwdMsg] = useState('');
+  const [pwdBusy, setPwdBusy] = useState(false);
 
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
+
+  const handleChangePwd = async () => {
+    setPwdMsg('');
+    setPwdBusy(true);
+    try {
+      await changePassword(oldPwd, newPwd);
+      setPwdMsg('密码已修改');
+      setOldPwd(''); setNewPwd('');
+      setTimeout(() => setPwdOpen(false), 1100);
+    } catch (e) {
+      setPwdMsg(e.message || '修改失败');
+    }
+    setPwdBusy(false);
+  };
+  const pwdInput = "w-full border border-white/15 rounded-lg px-3 py-2 text-xs bg-white/[0.07] text-white placeholder:text-slate-400/60 focus:outline-none focus:border-white/40 transition-all";
   return (
     <aside
       className={`flex flex-col shrink-0 transition-all duration-250 ease-in-out overflow-hidden ${
@@ -88,6 +110,16 @@ export default function Sidebar({ collapsed, onToggle }) {
           <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 ml-auto" />
         </div>
 
+        {/* 修改密码 */}
+        <button
+          onClick={() => { setPwdOpen(true); setPwdMsg(''); setOldPwd(''); setNewPwd(''); }}
+          className="flex items-center justify-center w-full py-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] transition-all"
+          title="修改密码"
+        >
+          <KeyRound className="w-4 h-4 shrink-0" />
+          {!collapsed && <span className="ml-2 text-xs">修改密码</span>}
+        </button>
+
         <button
           onClick={handleLogout}
           className="flex items-center justify-center w-full py-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-all"
@@ -105,6 +137,39 @@ export default function Sidebar({ collapsed, onToggle }) {
           {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
         </button>
       </div>
+
+      {/* 修改密码弹窗 */}
+      {pwdOpen && (
+        <>
+          <div className="fixed inset-0 z-50 bg-black/50" onClick={() => setPwdOpen(false)} />
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[320px] rounded-2xl p-6"
+               style={{ background: 'linear-gradient(165deg, rgba(18,30,50,.97), rgba(10,20,36,.97))', border: '1px solid rgba(255,255,255,.12)', boxShadow: '0 30px 80px -20px rgba(0,0,0,.7)' }}>
+            <div className="flex items-center justify-between mb-5">
+              <p className="text-sm font-semibold text-white">修改密码</p>
+              <button className="text-slate-400 hover:text-white transition-colors" onClick={() => setPwdOpen(false)}><X className="w-4 h-4" /></button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-slate-300 block mb-1.5">旧密码</label>
+                <input type="password" className={pwdInput} value={oldPwd} onChange={(e) => setOldPwd(e.target.value)} placeholder="输入当前密码" autoComplete="current-password" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-300 block mb-1.5">新密码</label>
+                <input type="password" className={pwdInput} value={newPwd} onChange={(e) => setNewPwd(e.target.value)} placeholder="至少 6 位" autoComplete="new-password" />
+              </div>
+              {pwdMsg && <p className={`text-xs ${pwdMsg.includes('成功') || pwdMsg.includes('已修改') ? 'text-emerald-400' : 'text-red-400'}`}>{pwdMsg}</p>}
+              <button
+                onClick={handleChangePwd}
+                disabled={pwdBusy || !oldPwd || newPwd.length < 6}
+                className="w-full py-2.5 rounded-lg text-sm font-medium text-white hover:opacity-90 transition-all disabled:opacity-40"
+                style={{ background: 'linear-gradient(135deg, #2e7ab8, #0f4c81)' }}
+              >
+                {pwdBusy ? '提交中…' : '确认修改'}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </aside>
   );
 }

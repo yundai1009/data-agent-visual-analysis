@@ -277,3 +277,21 @@ def delete_llm_key(user: dict = Depends(get_current_user)) -> Dict[str, str]:
 def logout() -> Dict[str, str]:
     """登出。无服务端 token 黑名单，由前端清理 token。"""
     return {"message": "已登出"}
+
+
+@router.post("/change-password")
+def change_password(payload: dict, user: dict = Depends(get_current_user)) -> Dict[str, str]:
+    """修改登录密码：验证旧密码后更新为新密码。"""
+    old_password = str(payload.get("old_password") or "")
+    new_password = str(payload.get("new_password") or "")
+    if not old_password or not new_password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="旧密码和新密码不能为空")
+    if len(new_password) < 6:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="新密码至少 6 位")
+
+    current = user_repo.按用户ID查询(user["user_id"])
+    if not current or not auth_service.verify_password(old_password, current["password_hash"]):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="旧密码不正确")
+
+    user_repo.更新密码(user["user_id"], auth_service.hash_password(new_password))
+    return {"message": "密码已修改"}

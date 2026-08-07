@@ -184,6 +184,37 @@ def 清除LLMKey(user_id: str) -> None:
         )
 
 
+def 按用户ID查询(user_id: str) -> Optional[Dict[str, Any]]:
+    """按 user_id 查询（含密码哈希）。"""
+    初始化用户表()
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT user_id, username, password_hash, role, email, created_at, updated_at "
+            "FROM users WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "user_id": row["user_id"],
+        "username": row["username"],
+        "password_hash": row["password_hash"],
+        "role": row["role"],
+        "email": row["email"],
+        "created_at": row["created_at"],
+    }
+
+
+def 更新密码(user_id: str, new_hash: str) -> None:
+    """更新用户密码哈希。"""
+    初始化用户表()
+    with _write_lock, _get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET password_hash = ?, updated_at = ? WHERE user_id = ?",
+            (new_hash, _now_iso(), user_id),
+        )
+
+
 # ---- 用户自定义 LLM 供应商（阶段 13.6，参考 Reasonix 自定义供应商）----
 
 import json as _json
