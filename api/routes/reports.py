@@ -286,11 +286,12 @@ def generate_report_stream(
 @router.get("/")
 def list_reports(
     limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """列出当前用户的报表历史。"""
+    """列出当前用户的报表历史（支持分页）。"""
     from repositories import report_repo
-    return {"报表列表": report_repo.列出报表(user["user_id"], limit=limit)}
+    return {"报表列表": report_repo.列出报表(user["user_id"], limit=limit, offset=offset)}
 
 
 @router.get("/{report_id}")

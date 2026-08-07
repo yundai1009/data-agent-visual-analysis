@@ -794,6 +794,29 @@ def test_报表重放(client):
     assert r3.status_code == 404
 
 
+def test_报表分页(client):
+    """列表分页：limit/offset 生效，页间不重叠且覆盖全部。"""
+    tok = _register(client, "pager1")
+    did = _upload(client, tok).json()["数据集ID"]
+    h = {"Authorization": f"Bearer {tok}"}
+    ids = []
+    for i in range(3):
+        r = client.post("/reports/generate", json={"数据集ID": did, "分析需求": f"分析需求{i}"}, headers=h)
+        assert r.status_code == 200
+        ids.append(r.json()["报表ID"])
+    assert len(set(ids)) == 3
+
+    page1 = client.get("/reports/?limit=2&offset=0", headers=h).json()["报表列表"]
+    page2 = client.get("/reports/?limit=2&offset=2", headers=h).json()["报表列表"]
+    assert len(page1) == 2 and len(page2) == 1
+    # 按创建时间倒序：第一页是后生成的
+    assert page1[0]["报表ID"] == ids[2]
+    assert page2[0]["报表ID"] == ids[0]
+    # 两页不重叠
+    ids1 = {r["报表ID"] for r in page1}
+    assert all(r["报表ID"] not in ids1 for r in page2)
+
+
 # ---- 8.5 LLM 安全 ----
 
 def test_非法provider_400(client):

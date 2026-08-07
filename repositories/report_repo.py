@@ -84,14 +84,14 @@ def 读取报表(user_id: str, report_id: str) -> Optional[Dict[str, Any]]:
     }
 
 
-def 列出报表(user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
-    """列出某用户最近的报表（按创建时间倒序）。"""
+def 列出报表(user_id: str, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+    """列出某用户最近的报表（按创建时间倒序，支持分页）。"""
     初始化报表表()
     with _get_conn() as conn:
         rows = conn.execute(
             "SELECT report_id, dataset_id, title, chart_type, created_at "
-            "FROM reports WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
-            (user_id, limit),
+            "FROM reports WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (user_id, limit, offset),
         ).fetchall()
     return [
         {

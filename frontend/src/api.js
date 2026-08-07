@@ -267,8 +267,8 @@ export async function generateReportStream(payload, { onEvent, signal } = {}) {
 
 // ---- 报表历史（阶段 6：后端持久化）----
 
-export async function listReports(limit = 50) {
-  return request(`/reports/?limit=${limit}`);
+export async function listReports(limit = 50, offset = 0) {
+  return request(`/reports/?limit=${limit}&offset=${offset}`);
 }
 
 export async function getReport(reportId) {

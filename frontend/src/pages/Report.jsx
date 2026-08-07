@@ -22,6 +22,10 @@ export default function Report() {
   const [copied, setCopied] = useState(false);
   // 历史重放状态
   const [replaying, setReplaying] = useState(false);
+  // 分页：是否有更多历史 + 加载更多中
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const PAGE_SIZE = 50;
 
   // 挂载时：报表状态只来自后端 —— 历史列表 GET /reports/，详情 GET /reports/{id}
   // reportId（路由参数）优先展示指定报表，否则展示最新一张
@@ -30,10 +34,11 @@ export default function Report() {
     setLoading(true);
     (async () => {
       try {
-        const res = await listReports(50);
+        const res = await listReports(PAGE_SIZE, 0);
         const items = res?.报表列表 || [];
         if (cancelled) return;
         setReportMeta(items);
+        setHasMore(items.length >= PAGE_SIZE);
         const targetId = reportId || items[0]?.报表ID;
         if (targetId) {
           const detail = await getReport(targetId);
@@ -70,6 +75,22 @@ export default function Report() {
 
   const prevReport = () => switchTo(currentIndex - 1);
   const nextReport = () => switchTo(currentIndex + 1);
+
+  // 加载更多历史报表（追加到列表尾部）
+  const handleLoadMore = async () => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await listReports(PAGE_SIZE, reportMeta.length);
+      const extra = res?.报表列表 || [];
+      setReportMeta((prev) => [...prev, ...extra]);
+      setHasMore(extra.length >= PAGE_SIZE);
+    } catch (e) {
+      setLoadError('加载更多报表失败：' + (e.message || e));
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   // 清空历史：删除后端全部报表；删除失败项保留（不误清 UI），带确认框
   const handleClearHistory = async () => {
@@ -255,6 +276,12 @@ export default function Report() {
                 className="ml-2 text-xs text-gray-400 hover:text-red-500 transition-colors">
                 清空
               </button>
+              {hasMore && (
+                <button onClick={handleLoadMore} disabled={loadingMore}
+                  className="ml-2 text-xs text-accent hover:underline transition-colors disabled:opacity-50">
+                  {loadingMore ? '加载中…' : '加载更多'}
+                </button>
+              )}
             </div>
           )}
           <span className="flex items-center gap-1 px-2.5 py-1 rounded text-xs bg-accent-soft text-accent border border-accent/20">
