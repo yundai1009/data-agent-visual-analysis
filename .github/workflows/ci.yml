@@ -1,0 +1,105 @@
+# CI 流水线：push 到 main 自动回归（后端测试 + 前端构建/lint + 双冒烟）
+# 必须用 windows-latest：PDF 导出测试依赖 C:/Windows/Fonts/msyh.ttc（微软雅黑），Linux/macOS 无此字体。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # 手动触发
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run pytest
+        run: python -m pytest tests/ -q
+
+  frontend:
+    name: Frontend build + lint
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Lint
+        working-directory: frontend
+        run: npx oxlint src
+
+  smoke:
+    name: E2E smoke (service + browser)
+    runs-on: windows-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Python deps
+        run: python -m pip install -r requirements.txt
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build demo frontend (for smoke)
+        working-directory: frontend
+        run: npm run build -- --mode demo --outDir dist-demo
+
+      # Playwright 浏览器不做缓存（${{ env.LOCALAPPDATA }} 读不到 runner 系统变量，
+      # cache path 易踩坑；chromium 约 150MB，CI 每次下载约 1 分钟，先求稳）
+      - name: Install Playwright chromium
+        run: python -m playwright install chromium
+
+      - name: Smoke - service level
+        shell: pwsh
+        run: |
+          $env:DAA_SQLITE_PATH = Join-Path $env:RUNNER_TEMP 'smoke_ci.db'
+          $env:FRONTEND_DIST = Join-Path (Get-Location) 'frontend\dist-demo'
+          $p = Start-Process python -ArgumentList '-m','uvicorn','api.main:app','--host','127.0.0.1','--port','8010' -PassThru -WindowStyle Hidden
+          try {
+            Start-Sleep -Seconds 4
+            python scripts/smoke_e2e.py
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Smoke - real browser (Playwright)
+        run: python scripts/smoke_e2e_browser.py
