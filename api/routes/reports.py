@@ -122,11 +122,12 @@ def _注入追问上下文(
     payload: ReportGenerateRequest,
     user: dict,
 ) -> ReportGenerateRequest:
-    """多轮追问：带 上一报表ID 时读取上一份报表摘要，作为上下文拼进分析需求。
+    """多轮追问：带 上一报表ID 时回溯最近 N 份报表摘要，作为上下文拼进分析需求。
 
-    追问是「针对上一轮继续分析」——携带上一轮标题 / 图表配置 / 结论 / 数据样例，
-    让 LLM 与规则匹配都能接着上一轮的语境作答（如"那华南呢？"→ 沿用维度换过滤条件）。
-    跨用户读取上一报表 → 404。
+    追问是「针对上一轮继续分析」——携带追问链上每轮的 需求原文 / 图表配置 / 结论
+    （最近一份附数据样例），让 LLM 与规则匹配能接着整段对话语境作答
+    （如"那华南呢？"→ 沿用维度换过滤条件；连续追问 3 轮以上不丢前文）。
+    跨用户读取上一报表 → 404；链上某份已被删除则截断到已读部分。
     """
     if not payload.上一报表ID:
         return payload
@@ -134,26 +135,39 @@ def _注入追问上下文(
     payload.原始分析需求 = payload.分析需求
 
     from repositories import report_repo
-    item = report_repo.读取报表(user["user_id"], payload.上一报表ID)
-    if not item:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上一轮报表不存在或无权访问")
+    # 回溯最近 N 份（从最新向前），最后逆转为 旧→新 对话顺序
+    N = 3
+    chain = []
+    rid = payload.上一报表ID
+    seen = set()
+    while rid and len(chain) < N and rid not in seen:
+        seen.add(rid)
+        item = report_repo.读取报表(user["user_id"], rid)
+        if not item:
+            if not chain:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上一轮报表不存在或无权访问")
+            break  # 追溯链中断（中间某份已删）：保留已回溯部分
+        chain.append(item)
+        rid = item["报表"].get("上一报表ID")
+    chain.reverse()
 
-    prev = item["报表"]
-    配置 = prev.get("图表配置", {})
     lines = ["【上一轮分析上下文】（本次是针对上一轮的追问，可参考但不能照抄）"]
-    lines.append(f"- 标题：{(item.get('标题') or '') or '未命名'}")
-    lines.append(
-        f"- 图表：{prev.get('图表类型', '') or '自动'}（X 轴：{配置.get('x轴') or '-'}，"
-        f"Y 轴：{'、'.join(配置.get('y轴') or []) or '-'}，分组：{配置.get('分组字段') or '-'}，"
-        f"聚合：{配置.get('聚合方式') or '-'}）"
-    )
-    结论 = prev.get("结论")
-    if 结论:
-        lines.append(f"- 上一轮结论：{结论}")
-    数据 = prev.get("报表数据", [])
-    if 数据:
-        import json
-        lines.append(f"- 上一轮数据样例（前 5 条）：{json.dumps(数据[:5], ensure_ascii=False)}")
+    for idx, item in enumerate(chain, 1):
+        prev = item["报表"]
+        配置 = prev.get("图表配置", {})
+        lines.append(
+            f"- 第 {idx} 轮「{prev.get('分析需求') or item.get('标题') or '未命名'}」："
+            f"图表 {prev.get('图表类型', '') or '自动'}（X 轴：{配置.get('X轴') or '-'}，"
+            f"Y 轴：{'、'.join(配置.get('Y轴') or []) or '-'}，分组：{配置.get('颜色') or '-'}）"
+        )
+        结论 = prev.get("结论")
+        if 结论:
+            lines.append(f"  结论：{结论}")
+        if idx == len(chain):  # 仅最近一份附数据样例（控制 token 量）
+            数据 = prev.get("报表数据", [])
+            if 数据:
+                import json
+                lines.append(f"  数据样例（前 5 条）：{json.dumps(数据[:5], ensure_ascii=False)}")
 
     payload.分析需求 = "\n".join(lines) + f"\n\n用户追问：{payload.分析需求}"
     return payload

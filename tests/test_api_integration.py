@@ -618,6 +618,15 @@ def test_报表追问链路(client):
     # 追问报表标题用用户原话（不被注入的上下文污染）
     assert detail["标题"] == "那华南区呢？", f"标题被上下文污染: {detail['标题'][:50]}"
 
+    # 多轮回溯：连续追问到第 3 轮，注入上下文应含第 1/2 轮摘要（不丢前文）
+    r3 = client.post("/reports/generate", json={"数据集ID": did, "分析需求": "再按月份呢？", "上一报表ID": rid2}, headers=h)
+    assert r3.status_code == 200
+    rid3 = r3.json()["报表ID"]
+    from api.contracts import ReportGenerateRequest
+    p3 = ReportGenerateRequest(数据集ID=did, 分析需求="继续", 上一报表ID=rid3)
+    inj3 = _注入追问上下文(p3, user)
+    assert "第 1 轮" in inj3.分析需求 and "第 2 轮" in inj3.分析需求, "多轮回溯应含前两轮摘要"
+
 
 def test_看板CRUD与隔离(client):
     """图表看板：新建/列表/详情/更新/删除 + 归属校验（跨用户 404 + 非法引用 400）。"""
