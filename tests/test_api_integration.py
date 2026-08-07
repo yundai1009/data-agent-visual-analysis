@@ -721,12 +721,14 @@ def test_报表分享链接(client):
     sid = r.json()["链接ID"]
     assert link.startswith("/s/") and sid
 
-    # 匿名访问（无 token）→ 只读视图
-    r = client.get(link)
+    # 匿名访问（无 token）→ 只读数据端点返回 JSON 视图；页面路由返回 SPA HTML
+    r = client.get(f"/share-data/{sid}")
     assert r.status_code == 200
     body = r.json()
     assert body["标题"] and "图表配置" in body and "报表数据" in body
     assert "Agent Trace" not in str(body), "公开视图不应泄露内部 Trace"
+    r_page = client.get(link)
+    assert r_page.status_code == 200 and "text/html" in r_page.headers["content-type"], "分享页面应返回 SPA HTML"
 
     # 创建者列表
     r = client.get(f"/reports/{rid}/shares", headers=h)
@@ -738,9 +740,10 @@ def test_报表分享链接(client):
     assert client.post(f"/reports/{rid}/share", json={"有效小时数": 24}, headers=h_b).status_code == 404
     assert client.delete(f"/reports/{rid}/share/{sid}", headers=h_b).status_code == 404
 
-    # 撤销 → 匿名访问 404
+    # 撤销 → 数据端点 404；页面仍返回 SPA HTML（由前端提示失效）
     assert client.delete(f"/reports/{rid}/share/{sid}", headers=h).status_code == 200
-    assert client.get(link).status_code == 404
+    assert client.get(f"/share-data/{sid}").status_code == 404
+    assert client.get(link).status_code == 200
 
     # 过期：插入分享后把 expires_at 改到过去，匿名访问 404
     from repositories import share_repo
@@ -751,7 +754,7 @@ def test_报表分享链接(client):
     from 后端_核心.存储.sqlite_repo import _get_conn, _write_lock
     with _write_lock, _get_conn() as conn:
         conn.execute("UPDATE share_links SET expires_at = ? WHERE share_id = ?", (past, info["share_id"]))
-    assert client.get(f"/s/{info['share_id']}").status_code == 404
+    assert client.get(f"/share-data/{info['share_id']}").status_code == 404
 
 
 def test_报表重放(client):

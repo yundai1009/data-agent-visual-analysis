@@ -80,3 +80,6 @@ coverage.xml
 # 11. ChromaDB 向量数据
 # ──────────────────────────────────────────────
 data/chroma_db/
+
+# E2E ð�����в����ͼ/��ʱ���ݣ�
+scripts/.smoke/

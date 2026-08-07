@@ -77,9 +77,14 @@ print("\n== 8. 分享链接（公开只读）==")
 r = s.post(f"{BASE}/reports/{rid}/share", json={"有效小时数": 24}, timeout=10)
 check("创建分享 200", r.status_code == 200, r.text[:200])
 link = r.json().get("分享链接", "") if r.ok else ""
+sid = r.json().get("链接ID", "") if r.ok else ""
 check("分享链接格式", link.startswith("/s/"))
+# 页面路由：返回 SPA HTML（供前端渲染分享页）
 r = s.get(BASE + link, timeout=10)
-check("匿名访问 200", r.status_code == 200)
+check("分享页面返回 HTML", r.status_code == 200 and "text/html" in r.headers.get("content-type", ""))
+# 数据端点：匿名 JSON 只读视图
+r = s.get(f"{BASE}/share-data/{sid}", timeout=10)
+check("匿名数据端点 200", r.status_code == 200)
 check("公开视图含图表", r.ok and "图表配置" in r.json() and "Agent Trace" not in str(r.json()))
 
 print("\n== 9. 看板（多图对比）==")

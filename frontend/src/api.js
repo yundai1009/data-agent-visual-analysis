@@ -316,7 +316,7 @@ export async function revokeShare(reportId, shareId) {
 
 // 公开只读访问（无 token）
 export async function getSharedReport(shareId) {
-  const res = await fetch(`/s/${shareId}`);
+  const res = await fetch(`/share-data/${shareId}`);
   if (!res.ok) {
     const err = new Error(res.status === 404 ? '分享链接不存在或已过期' : `访问失败（HTTP ${res.status}）`);
     err.status = res.status;

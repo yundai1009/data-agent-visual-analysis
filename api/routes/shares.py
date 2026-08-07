@@ -1,7 +1,10 @@
-"""公开分享只读端点：GET /s/{share_id}。
+"""公开分享只读数据端点：GET /share-data/{share_id}。
 
-无需登录，凭分享令牌读取报表的只读视图（图表配置/报表数据/结论/风险提示）。
+无需登录，凭分享令牌读取报表的只读数据（图表配置/报表数据/结论/风险提示）。
 令牌过期或已撤销 → 404；报表已被删除 → 404。
+
+注意：分享页面本身在 /s/{share_id}（SPA 路由，由前端渲染，本端点只供其 fetch 数据）——
+曾把数据端点放在 /s/{id} 导致浏览器直连时返回 JSON 而非页面。
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ from repositories import report_repo, share_repo
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/s", tags=["share"])
+router = APIRouter(prefix="/share-data", tags=["share"])
 
 # 公开视图只透传展示所需字段（不含 Agent Trace 等内部数据）
 _公开字段 = ("标题", "图表类型", "图表配置", "报表数据", "结论", "风险提示", "数据画像")
