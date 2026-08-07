@@ -106,9 +106,22 @@ jobs:
         run: |
           $env:DAA_SQLITE_PATH = Join-Path $env:RUNNER_TEMP 'smoke_ci.db'
           $env:FRONTEND_DIST = Join-Path (Get-Location) 'frontend\dist-demo'
-          $p = Start-Process python -ArgumentList '-m','uvicorn','api.main:app','--host','127.0.0.1','--port','8010' -PassThru -WindowStyle Hidden
+          $p = Start-Process python -ArgumentList '-m','uvicorn','api.main:app','--host','127.0.0.1','--port','8010' -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:RUNNER_TEMP\uvicorn.out.log" -RedirectStandardError "$env:RUNNER_TEMP\uvicorn.err.log"
           try {
-            Start-Sleep -Seconds 4
+            # 轮询 /health 最多 30s（chromadb 等导入较慢，固定 sleep 不可靠）
+            $ready = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              try {
+                $r = Invoke-WebRequest 'http://127.0.0.1:8010/health' -UseBasicParsing -TimeoutSec 2
+                if ($r.StatusCode -eq 200) { $ready = $true; break }
+              } catch { }
+              Start-Sleep -Seconds 1
+            }
+            if (-not $ready) {
+              '::error::uvicorn 启动失败（30s 内 health 未就绪）'
+              Get-Content "$env:RUNNER_TEMP\uvicorn.err.log" -ErrorAction SilentlyContinue | Select-Object -Last 25 | ForEach-Object { "::error::$_" }
+              exit 1
+            }
             python scripts/smoke_e2e.py
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } finally {
