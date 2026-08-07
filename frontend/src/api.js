@@ -1,3 +1,5 @@
+import parseContentDispositionFilename from './validators/exportFilename';
+
 const BASE = '';
 
 // 从 localStorage 加载用户选择的 LLM provider + model + 可选自带 Key（BYOK）
@@ -285,12 +287,11 @@ export async function exportReport(reportId, format) {
     throw err;
   }
   const blob = await res.blob();
-  // 从 Content-Disposition 解析文件名（UTF-8 中文会被 RFC 5987 编码）
-  const cd = res.headers.get('Content-Disposition') || '';
-  let filename = `report.${format}`;
-  const m = cd.match(/filename\*=UTF-8''([^;]+)/i) || cd.match(/filename="?([^";]+)"?/i);
-  if (m) filename = decodeURIComponent(m[1]);
-  return { blob, filename };
+  // 从 Content-Disposition 解析文件名（UTF-8 中文走 RFC 5987 编码）
+  return {
+    blob,
+    filename: parseContentDispositionFilename(res.headers.get('Content-Disposition'), `report.${format}`),
+  };
 }
 
 export async function deleteReport(reportId) {
