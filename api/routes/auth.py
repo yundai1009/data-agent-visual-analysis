@@ -2,16 +2,43 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from api.dependencies import get_current_user
 from config.settings import EnvConfig
 from repositories import email_code_repo, user_repo
 from services import auth_service, email_service
+
+# ---- 登录限流（防暴力破解）：固定窗口 10 分钟，同 IP+账号最多 5 次失败 ----
+_LOGIN_ATTEMPTS: Dict[str, tuple] = {}  # key -> (window_start, fail_count)
+_LOGIN_LOCK = threading.Lock()
+_LOGIN_MAX_FAILS = 5
+_LOGIN_WINDOW_SEC = 600
+
+
+def _登录限流拦截(identifier: str, client_host: str) -> bool:
+    key = f"{identifier}|{client_host}"
+    now = time.time()
+    with _LOGIN_LOCK:
+        window_start, count = _LOGIN_ATTEMPTS.get(key, (now, 0))
+        if now - window_start > _LOGIN_WINDOW_SEC:
+            _LOGIN_ATTEMPTS[key] = (now, 0)
+            return False
+        if count >= _LOGIN_MAX_FAILS:
+            return True
+        _LOGIN_ATTEMPTS[key] = (window_start, count + 1)
+        return False
+
+
+def _清除登录限流(identifier: str, client_host: str) -> None:
+    with _LOGIN_LOCK:
+        _LOGIN_ATTEMPTS.pop(f"{identifier}|{client_host}", None)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -108,15 +135,23 @@ def register(payload: RegisterRequest) -> AuthResponse:
 
 
 @router.post("/login", response_model=AuthResponse)
-def login(payload: LoginRequest) -> AuthResponse:
+def login(payload: LoginRequest, request: Request) -> AuthResponse:
     """用户名或邮箱 + 密码登录，返回 token。"""
     identifier = payload.username.strip()
+    client_host = request.client.host if request.client else "unknown"
+    # 限流：同 IP+账号连续失败 5 次后拦截 10 分钟
+    if _登录限流拦截(identifier, client_host):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="尝试次数过多，请 10 分钟后再试",
+        )
     if "@" in identifier:
         user = user_repo.按邮箱查询(identifier)
     else:
         user = user_repo.按用户名查询(identifier)
     if not user or not auth_service.verify_password(payload.password, user["password_hash"]):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
+    _清除登录限流(identifier, client_host)
     token = auth_service.create_access_token(user["user_id"], user["role"], user["username"])
     return AuthResponse(
         access_token=token,
