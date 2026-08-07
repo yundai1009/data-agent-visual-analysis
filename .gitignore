@@ -88,3 +88,6 @@ scripts/.smoke/
 docs/浠庨浂鐞嗚В椤圭洰.md
 docs/闈㈣瘯闂瓟棰勬祴.md
 docs/鐢ㄦ埛浣跨敤鎸囧崡.md
+
+# 本地 CI 模拟环境
+.venv_ci_sim/
