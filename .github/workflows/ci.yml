@@ -41,19 +41,13 @@ jobs:
       - name: Use npmmirror registry
         run: npm config set registry https://registry.npmmirror.com
 
+      # lock 由 npm@11.16.0 生成（@emnapi 条目），pin 同一版本避免 npm 小版本行为差异
+      - name: Pin npm version
+        run: corepack prepare npm@11.16.0 --activate
+
       - name: Install deps
         working-directory: frontend
-        shell: pwsh
-        run: |
-          "::notice::node=$(node --version) npm=$(npm --version) cwd=$PWD"
-          npm ci --no-audit --no-fund 2>&1 | Tee-Object -Variable npmOut
-          $code = $LASTEXITCODE
-          if ($code -ne 0) {
-            $msg = (($npmOut | Select-Object -Last 80) -join "`n")
-            $esc = $msg -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
-            "::error::npm ci failed (exit $code): $esc"
-            exit $code
-          }
+        run: npm ci --no-audit --no-fund
 
       - name: Build
         working-directory: frontend
@@ -83,6 +77,9 @@ jobs:
 
       - name: Use npmmirror registry
         run: npm config set registry https://registry.npmmirror.com
+
+      - name: Pin npm version
+        run: corepack prepare npm@11.16.0 --activate
 
       - name: Install Python deps
         run: python -m pip install -r requirements.txt
