@@ -222,6 +222,12 @@ def save_custom_provider(payload: dict, user: dict = Depends(get_current_user)) 
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="名称和 API 地址必填")
     if len(base_url) > 300 or len(name) > 50:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="参数长度不合法")
+    # P0 加固：SSRF 防护——拒绝内网/保留/云元数据地址
+    from services.llm_security import 校验LLM供应商URL
+    try:
+        base_url = 校验LLM供应商URL(base_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     api_key = str(payload.get("api_key") or "").strip()
     if len(api_key) > 200:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="API Key 格式不合法")
@@ -266,11 +272,18 @@ def test_custom_provider(payload: dict, user: dict = Depends(get_current_user)) 
     api_key = str(payload.get("api_key") or "").strip()
     if not base_url or not api_key:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="API 地址和 Key 必填")
+    # P0 加固：SSRF 防护 + 禁重定向（防重定向到内网）
+    from services.llm_security import 校验LLM供应商URL
+    try:
+        base_url = 校验LLM供应商URL(base_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     try:
         resp = _requests.get(
             f"{base_url}/models",
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=15,
+            allow_redirects=False,
         )
     except _requests.RequestException as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"连接失败：{type(exc).__name__}") from exc

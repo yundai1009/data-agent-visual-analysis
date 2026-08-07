@@ -205,7 +205,8 @@ def chat_completion(
 
     request_timeout = timeout or EnvConfig.LLM_TIMEOUT or 30
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=request_timeout)
+        # P0 加固：禁重定向（防 SSRF 重定向绕过）
+        response = requests.post(url, headers=headers, json=payload, timeout=request_timeout, allow_redirects=False)
     except requests.RequestException as exc:
         logger.warning("LLM 网络异常: %s", exc)
         _record_llm_fail(f"LLM 网络异常（无法访问 {base_url}）：{type(exc).__name__}，请检查网络/代理")
@@ -285,7 +286,7 @@ def embed_text(text: str) -> Optional[List[float]]:
         "model": model,
     }
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        response = requests.post(url, headers=headers, json=payload, timeout=30, allow_redirects=False)
     except requests.RequestException as exc:
         logger.warning("Embedding 网络异常: %s", exc)
         return None
