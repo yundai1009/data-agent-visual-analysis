@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 
 from api.contracts import HealthResponse
 from api.error_handlers import register_error_handlers
-from api.middleware import RequestIDMiddleware
+from api.middleware import RequestBodyLimitMiddleware, RequestIDMiddleware
 from api.routes import datasets, reports, clean, examples, auth, admin, dashboards, shares
 from config.settings import EnvConfig
 
@@ -29,8 +29,38 @@ logger = logging.getLogger(__name__)
 FRONTEND_DIST = os.getenv("FRONTEND_DIST", str(Path(project_root) / "frontend" / "dist"))
 
 
+def _启动安全自检() -> None:
+    """P0 安全硬门槛：拒绝不安全默认配置启动。
+
+    - AUTH_ENABLED 必须显式设置（true=生产/测试，false=演示/开发），缺省拒绝
+      —— 默认关认证会让全站匿名可访问（审计 P0-1）。
+    - 认证开启时：JWT_SECRET_KEY 必须是显式非默认强密钥、SEED_ADMIN_PASSWORD
+      必须被覆盖（默认 admin123 公开已知）——否则可伪造 token / 直接登录管理员。
+    """
+    auth = os.getenv("AUTH_ENABLED")
+    if auth is None:
+        raise RuntimeError(
+            "安全拒绝启动：必须显式设置 AUTH_ENABLED=true（生产/测试）或 "
+            "AUTH_ENABLED=false（演示/开发）。缺省关闭认证会让全站匿名可访问。"
+        )
+    if str(auth).lower() in ("true", "1", "yes"):
+        secret = os.getenv("JWT_SECRET_KEY") or ""
+        if secret in ("", "change-me-in-production"):
+            raise RuntimeError(
+                "安全拒绝启动：AUTH_ENABLED=true 时 JWT_SECRET_KEY 必须显式配置为强随机密钥，"
+                "默认值公开已知可伪造任意 token。"
+            )
+        if os.getenv("SEED_ADMIN_PASSWORD", "admin123") in ("", "admin123"):
+            raise RuntimeError(
+                "安全拒绝启动：AUTH_ENABLED=true 时必须通过 SEED_ADMIN_PASSWORD "
+                "覆盖默认管理员密码（admin123 公开已知）。"
+            )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # P0 加固：启动即做安全自检，不通过则进程拒绝启动
+    _启动安全自检()
     # 阶段十三：启动时幂等创建种子管理员（密码来自 EnvConfig，生产务必覆盖默认值）
     try:
         from repositories import user_repo
@@ -39,14 +69,6 @@ async def lifespan(app: FastAPI):
             EnvConfig.SEED_ADMIN_USERNAME,
             auth_service.hash_password(EnvConfig.SEED_ADMIN_PASSWORD),
         )
-        if EnvConfig.SEED_ADMIN_PASSWORD == "admin123":
-            logger.warning(
-                "种子管理员 %s 正在使用默认密码 admin123，生产环境请通过 "
-                "SEED_ADMIN_PASSWORD 环境变量修改！", EnvConfig.SEED_ADMIN_USERNAME)
-        if EnvConfig.JWT_SECRET_KEY in ("change-me-in-production", ""):
-            logger.error(
-                "JWT_SECRET_KEY 为默认值，token 可被伪造！生产环境必须通过 "
-                "JWT_SECRET_KEY 环境变量配置强随机密钥！")
     except Exception as exc:
         logger.error("创建种子管理员失败：%s", exc)
     yield
@@ -62,7 +84,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    # P0 加固：通配符 + credentials 组合违规；改为显式白名单（EnvConfig.CORS_ORIGINS）
+    allow_origins=EnvConfig.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -70,6 +93,8 @@ app.add_middleware(
 
 # request_id 中间件：放在最外层，保证所有请求都有 request_id
 app.add_middleware(RequestIDMiddleware)
+# P0 加固：请求体上限中间件（放最外层，先于业务处理拦截超大 body）
+app.add_middleware(RequestBodyLimitMiddleware)
 
 # 统一错误响应：注册异常处理器
 register_error_handlers(app)
@@ -110,8 +135,9 @@ async def spa_fallback(full_path: str, request: Request):
         raise HTTPException(status_code=404, detail="前端构建产物不存在，请先运行构建")
     if full_path:
         target = (dist / full_path).resolve()
-        # 路径穿越防护：只允许读取 dist 目录内的文件
-        if target.is_file() and str(target).startswith(str(dist)):
+        # 路径穿越防护：目录边界校验（P0 加固：startswith 是字符串前缀匹配，
+        # 可命中 dist 前缀兄弟目录；is_relative_to 是真正的路径边界判断）
+        if target.is_file() and target.is_relative_to(dist):
             # hash 文件名内容指纹：可安全长缓存（浏览器内容变了 hash 自动变）
             if full_path.startswith("assets/") or "/assets/" in "/" + full_path:
                 return FileResponse(target, headers={"Cache-Control": "public, max-age=31536000, immutable"})

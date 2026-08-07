@@ -119,6 +119,7 @@ jobs:
         run: |
           $env:DAA_SQLITE_PATH = Join-Path $env:RUNNER_TEMP 'smoke_ci.db'
           $env:FRONTEND_DIST = Join-Path (Get-Location) 'frontend\dist-demo'
+          $env:AUTH_ENABLED = 'false'  # P0 加固：演示模式显式声明，满足启动自检
           $p = Start-Process python -ArgumentList '-m','uvicorn','api.main:app','--host','127.0.0.1','--port','8010' -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:RUNNER_TEMP\uvicorn.out.log" -RedirectStandardError "$env:RUNNER_TEMP\uvicorn.err.log"
           try {
             # 轮询 /health 最多 30s（chromadb 等导入较慢，固定 sleep 不可靠）

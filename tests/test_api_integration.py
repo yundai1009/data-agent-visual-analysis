@@ -20,8 +20,10 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-# 测试环境：开启认证、用临时数据库
+# 测试环境：开启认证、用临时数据库；密钥/管理员密码显式非默认（P0 启动自检要求）
 os.environ["AUTH_ENABLED"] = "true"
+os.environ["JWT_SECRET_KEY"] = "test-secret-0123456789abcdef0123456789abcdef"
+os.environ["SEED_ADMIN_PASSWORD"] = "test-admin-password"
 
 # 捕获 dry-run 验证码：monkeypatch 邮件发送函数
 _SENT_CODES: dict = {}
@@ -116,8 +118,8 @@ def test_普通用户访问admin_403(client):
 # ---- 8.1.5 阶段十三：种子管理员 + 邮箱验证码注册 ----
 
 def test_种子admin登录_并访问admin(client):
-    # lifespan 启动时幂等创建 admin / admin123
-    r = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
+    # lifespan 启动时幂等创建 admin（密码来自 SEED_ADMIN_PASSWORD，测试显式非默认）
+    r = client.post("/auth/login", json={"username": "admin", "password": os.environ["SEED_ADMIN_PASSWORD"]})
     assert r.status_code == 200
     tok = r.json()["access_token"]
     r = client.get("/admin/statistics", headers={"Authorization": f"Bearer {tok}"})
@@ -689,7 +691,8 @@ def test_管理后台统计与权限(client):
     assert client.get("/admin/users", headers=h).status_code == 403
 
     # 种子管理员登录
-    r = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
+    # 种子管理员登录（测试环境显式配置的 SEED_ADMIN_PASSWORD）
+    r = client.post("/auth/login", json={"username": "admin", "password": os.environ["SEED_ADMIN_PASSWORD"]})
     assert r.status_code == 200, r.text
     h_admin = {"Authorization": f"Bearer {r.json()['access_token']}"}
 

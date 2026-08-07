@@ -58,6 +58,14 @@ class EnvConfig:
     JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
     JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
 
+    # CORS 白名单（P0 加固）：生产用逗号分隔的显式域名；默认仅本地开发源
+    CORS_ORIGINS = [
+        o.strip() for o in os.getenv(
+            "CORS_ORIGINS",
+            "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000,http://127.0.0.1:8000",
+        ).split(",") if o.strip()
+    ]
+
     # LLM provider 白名单（阶段 5）：用户只能选 provider+model，不能传任意 URL/Key
     # 结构：provider -> {base_url, default_model, models: [可选模型列表]}
     # 阶段 13.5：provider 配置外置到 config/providers.toml（参考 Reasonix 接入方式，

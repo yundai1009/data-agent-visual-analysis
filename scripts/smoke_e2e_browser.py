@@ -52,6 +52,8 @@ def main():
     env = dict(os.environ)
     env["DAA_SQLITE_PATH"] = str(tmp_db)
     env["FRONTEND_DIST"] = str(ROOT / "frontend" / "dist-demo")
+    # P0 加固：显式设置 AUTH_ENABLED=false（演示模式），满足启动自检
+    env["AUTH_ENABLED"] = "false"
 
     server = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "api.main:app", "--host", "127.0.0.1", "--port", str(PORT)],
