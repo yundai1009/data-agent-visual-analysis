@@ -12,7 +12,7 @@ jobs:
     name: Backend tests
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -30,12 +30,16 @@ jobs:
     name: Frontend build + lint
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "24"
+
+      # lock 的 resolved 全部指向 npmmirror（本地镜像源生成）→ CI 必须用同一 registry
+      - name: Use npmmirror registry
+        run: npm config set registry https://registry.npmmirror.com
 
       - name: Install deps
         working-directory: frontend
@@ -54,7 +58,7 @@ jobs:
     runs-on: windows-latest
     needs: [backend, frontend]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -63,9 +67,12 @@ jobs:
           cache: pip
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "24"
+
+      - name: Use npmmirror registry
+        run: npm config set registry https://registry.npmmirror.com
 
       - name: Install Python deps
         run: python -m pip install -r requirements.txt
