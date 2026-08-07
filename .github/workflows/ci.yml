@@ -36,6 +36,8 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       # lock 的 resolved 全部指向 npmmirror（本地镜像源生成）→ CI 必须用同一 registry
       - name: Use npmmirror registry
@@ -78,6 +80,8 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Use npmmirror registry
         run: npm config set registry https://registry.npmmirror.com
@@ -96,8 +100,13 @@ jobs:
         working-directory: frontend
         run: npm run build -- --mode demo --outDir dist-demo
 
-      # Playwright 浏览器不做缓存（${{ env.LOCALAPPDATA }} 读不到 runner 系统变量，
-      # cache path 易踩坑；chromium 约 150MB，CI 每次下载约 1 分钟，先求稳）。
+      # Playwright 浏览器缓存：windows runner 的 ms-playwright 固定在 runneradmin 用户目录下
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: C:\Users\runneradmin\AppData\Local\ms-playwright
+          key: playwright-chromium-windows
+
       # 官方 CDN 在 CI 上不可达（与本地一致），用 npmmirror 镜像（本地验证过同一镜像可用）。
       - name: Install Playwright chromium
         shell: pwsh
