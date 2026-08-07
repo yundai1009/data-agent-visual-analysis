@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Download, DownloadCloud, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, Copy, Check, Clock, Link2, X } from 'lucide-react';
-import { listReports, getReport, deleteReport, exportReport, createShare, listShares, revokeShare } from '../api';
+import { Download, DownloadCloud, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, Copy, Check, Clock, Link2, X, RotateCcw } from 'lucide-react';
+import { listReports, getReport, deleteReport, exportReport, createShare, listShares, revokeShare, replayReport } from '../api';
 import EChartsChart from '../components/EChartsChart';
 
 export default function Report() {
@@ -19,6 +19,8 @@ export default function Report() {
   const [shareLinks, setShareLinks] = useState([]);
   const [shareMsg, setShareMsg] = useState('');
   const [copied, setCopied] = useState(false);
+  // 历史重放状态
+  const [replaying, setReplaying] = useState(false);
 
   // 挂载时：报表状态只来自后端 —— 历史列表 GET /reports/，详情 GET /reports/{id}
   // reportId（路由参数）优先展示指定报表，否则展示最新一张
@@ -158,6 +160,21 @@ export default function Report() {
     try { return new Date(iso).toLocaleString('zh-CN', { hour12: false }); } catch { return iso; }
   };
 
+  // 历史重放：用原报表参数重新执行分析（复现过程 → 新报表）
+  const handleReplay = async () => {
+    if (!currentReportId || replaying) return;
+    setReplaying(true);
+    setLoadError('');
+    try {
+      const res = await replayReport(currentReportId);
+      navigate(`/report/${res.报表ID}`);
+    } catch (e) {
+      setLoadError('重放失败：' + (e.message || e));
+    } finally {
+      setReplaying(false);
+    }
+  };
+
   const report = localReport;
 
   // 骨架屏（加载中且无数据）
@@ -236,6 +253,14 @@ export default function Report() {
             title="生成带权限的分享链接"
           >
             <Share2 className="w-3 h-3" /> 分享
+          </button>
+          <button
+            onClick={handleReplay}
+            disabled={replaying}
+            className="flex items-center gap-1 px-2.5 py-1 rounded text-xs bg-gray-50 text-gray-500 border border-gray-200 hover:bg-gray-100 transition-all disabled:opacity-50"
+            title="用本报表的分析参数重新执行（生成新报表）"
+          >
+            <RotateCcw className={`w-3 h-3 ${replaying ? 'animate-spin' : ''}`} /> {replaying ? '重放中…' : '重放'}
           </button>
         </div>
       </div>

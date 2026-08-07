@@ -744,6 +744,32 @@ def test_报表分享链接(client):
     assert client.get(f"/s/{info['share_id']}").status_code == 404
 
 
+def test_报表重放(client):
+    """历史重放：用原报表参数重新生成 → 新报表（ID 不同、内容一致）；跨用户 404。"""
+    tok = _register(client, "replayer1")
+    did = _upload(client, tok).json()["数据集ID"]
+    h = {"Authorization": f"Bearer {tok}"}
+    r = client.post("/reports/generate", json={"数据集ID": did, "分析需求": "按地区统计"}, headers=h)
+    assert r.status_code == 200
+    rid = r.json()["报表ID"]
+    orig = r.json()
+
+    # 重放 → 新报表
+    r2 = client.post(f"/reports/{rid}/replay", headers=h)
+    assert r2.status_code == 200, r2.text
+    body = r2.json()
+    assert body["报表ID"] != rid
+    # 规则链路（测试环境无 LLM key）：同需求同字段 → 标题/图表类型一致
+    assert body["标题"] == orig["标题"]
+    assert body["图表类型"] == orig["图表类型"]
+    assert len(body["报表数据"]) > 0
+
+    # 跨用户重放 → 404
+    tok_b = _register(client, "replayer2")
+    r3 = client.post(f"/reports/{rid}/replay", headers={"Authorization": f"Bearer {tok_b}"})
+    assert r3.status_code == 404
+
+
 # ---- 8.5 LLM 安全 ----
 
 def test_非法provider_400(client):

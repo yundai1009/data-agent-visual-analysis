@@ -325,6 +325,11 @@ export async function getSharedReport(shareId) {
   return res.json();
 }
 
+// 分析历史重放：用原报表参数重新生成（返回新报表）
+export async function replayReport(reportId) {
+  return request(`/reports/${reportId}/replay`, { method: 'POST' });
+}
+
 // ---- 图表看板（批次 4：多报表并排对比）----
 
 export async function listDashboards() {

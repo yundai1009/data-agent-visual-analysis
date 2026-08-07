@@ -446,6 +446,47 @@ def 撤销分享链接(
     return {"message": "已撤销"}
 
 
+# ── 重放（批次 7：分析历史重放）───────────────────────────────────────────────
+
+
+@router.post("/{report_id}/replay", response_model=ReportGenerateResponse)
+def 重放报表(
+    report_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+) -> ReportGenerateResponse:
+    """用原报表的分析需求与字段配置重新执行生成（复现分析过程）。
+
+    读取原报表（归属校验）→ 用其 分析需求/图表类型/X轴/Y轴/分组 走标准生成链路，
+    生成一份全新的报表（保留原 trace 语义、产生新 trace）。数据集已删 → 404。
+    """
+    from repositories import report_repo
+
+    item = report_repo.读取报表(user["user_id"], report_id)
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报表不存在")
+
+    prev = item["报表"]
+    配置 = prev.get("图表配置", {})
+    payload = ReportGenerateRequest(
+        数据集ID=item["数据集ID"],
+        分析需求=prev.get("分析需求") or prev.get("标题", ""),
+        图表类型=prev.get("图表类型", "自动推荐"),
+        x轴=配置.get("X轴") or None,
+        y轴=list(配置.get("Y轴") or []),
+        分组字段=配置.get("颜色") or None,
+        聚合方式="求和",
+        agent_mode="single",
+    )
+
+    df, llm_config = _准备上下文(payload, request, user)
+    try:
+        new_id, new_report = _生成报表流式(payload, df, llm_config, user)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return _构建响应(payload, new_report, new_id)
+
+
 # ── 生成 ──────────────────────────────────────────────────────────────────────
 
 
