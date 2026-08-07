@@ -46,8 +46,13 @@ jobs:
         shell: pwsh
         run: |
           npm ci --no-audit --no-fund 2>&1 | Tee-Object -Variable npmOut
-          $npmOut | Out-String | Add-Content -Path $env:GITHUB_STEP_SUMMARY
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            $npmOut | Select-Object -Last 50 | ForEach-Object { "::error::$($_)" }
+            $log = Get-ChildItem "$env:LOCALAPPDATA\npm-cache\_logs\*.log" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($log) { Get-Content $log.FullName | Select-Object -Last 40 | ForEach-Object { "::error::$($_)" } }
+            exit $code
+          }
 
       - name: Build
         working-directory: frontend
