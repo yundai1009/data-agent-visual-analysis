@@ -297,6 +297,34 @@ export async function deleteReport(reportId) {
   return request(`/reports/${reportId}`, { method: 'DELETE' });
 }
 
+// ---- 报表分享（批次 6：带权限的只读链接）----
+
+export async function createShare(reportId, hours = 24) {
+  return request(`/reports/${reportId}/share`, {
+    method: 'POST',
+    body: JSON.stringify({ 有效小时数: hours }),
+  });
+}
+
+export async function listShares(reportId) {
+  return request(`/reports/${reportId}/shares`);
+}
+
+export async function revokeShare(reportId, shareId) {
+  return request(`/reports/${reportId}/share/${shareId}`, { method: 'DELETE' });
+}
+
+// 公开只读访问（无 token）
+export async function getSharedReport(shareId) {
+  const res = await fetch(`/s/${shareId}`);
+  if (!res.ok) {
+    const err = new Error(res.status === 404 ? '分享链接不存在或已过期' : `访问失败（HTTP ${res.status}）`);
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
 // ---- 图表看板（批次 4：多报表并排对比）----
 
 export async function listDashboards() {

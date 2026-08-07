@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import ErrorBoundary from './components/ErrorBoundary';
 import Login from './pages/Login';
+import ShareView from './pages/ShareView';
 import DataManagement from './pages/DataManagement';
 import Analysis from './pages/Analysis';
 import Report from './pages/Report';
@@ -59,6 +60,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/s/:shareId" element={<ShareView />} />
           <Route
             path="/*"
             element={

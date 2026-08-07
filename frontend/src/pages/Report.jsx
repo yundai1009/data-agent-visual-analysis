@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Download, DownloadCloud, Sparkles, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
-import { listReports, getReport, deleteReport, exportReport } from '../api';
+import { Download, DownloadCloud, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, Copy, Check, Clock, Link2, X } from 'lucide-react';
+import { listReports, getReport, deleteReport, exportReport, createShare, listShares, revokeShare } from '../api';
 import EChartsChart from '../components/EChartsChart';
 
 export default function Report() {
@@ -13,6 +13,12 @@ export default function Report() {
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState('conclusion');
   const [loadError, setLoadError] = useState('');
+  // 分享弹窗状态
+  const [showShare, setShowShare] = useState(false);
+  const [shareHours, setShareHours] = useState(24);
+  const [shareLinks, setShareLinks] = useState([]);
+  const [shareMsg, setShareMsg] = useState('');
+  const [copied, setCopied] = useState(false);
 
   // 挂载时：报表状态只来自后端 —— 历史列表 GET /reports/，详情 GET /reports/{id}
   // reportId（路由参数）优先展示指定报表，否则展示最新一张
@@ -103,6 +109,55 @@ export default function Report() {
     URL.revokeObjectURL(url);
   };
 
+  // 分享：打开弹窗并加载已有链接
+  const openShareModal = async () => {
+    setShowShare(true);
+    setShareMsg('');
+    setCopied(false);
+    if (!currentReportId) return;
+    try {
+      const res = await listShares(currentReportId);
+      setShareLinks(res?.分享列表 || []);
+    } catch (e) {
+      setShareMsg('加载分享列表失败：' + (e.message || e));
+    }
+  };
+  const reloadShares = async () => {
+    const res = await listShares(currentReportId);
+    setShareLinks(res?.分享列表 || []);
+  };
+  const handleCreateShare = async () => {
+    if (!currentReportId) return;
+    try {
+      await createShare(currentReportId, shareHours);
+      setShareMsg(`已生成，有效期 ${shareHours} 小时`);
+      await reloadShares();
+    } catch (e) {
+      setShareMsg('生成失败：' + (e.message || e));
+    }
+  };
+  const handleRevokeShare = async (shareId) => {
+    if (!window.confirm('撤销后链接立即失效，确定？')) return;
+    try {
+      await revokeShare(currentReportId, shareId);
+      await reloadShares();
+    } catch (e) {
+      setShareMsg('撤销失败：' + (e.message || e));
+    }
+  };
+  const handleCopyShare = async (link) => {
+    try {
+      await navigator.clipboard.writeText(window.location.origin + link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setShareMsg('复制失败，请手动复制链接');
+    }
+  };
+  const fmtExpire = (iso) => {
+    try { return new Date(iso).toLocaleString('zh-CN', { hour12: false }); } catch { return iso; }
+  };
+
   const report = localReport;
 
   // 骨架屏（加载中且无数据）
@@ -175,6 +230,13 @@ export default function Report() {
             <Sparkles className="w-3 h-3" /> {intentSource === 'LLM' ? 'AI 生成' : intentSource === '规则' ? '规则匹配' : '自动'}
           </span>
           <span className="px-2.5 py-1 rounded text-xs bg-gray-50 text-gray-500 border border-gray-200">{chartTypeLabel}</span>
+          <button
+            onClick={openShareModal}
+            className="flex items-center gap-1 px-2.5 py-1 rounded text-xs bg-emerald-50 text-emerald-600 border border-emerald-200 hover:bg-emerald-100 transition-all"
+            title="生成带权限的分享链接"
+          >
+            <Share2 className="w-3 h-3" /> 分享
+          </button>
         </div>
       </div>
 
@@ -337,6 +399,83 @@ export default function Report() {
           </button>
         )}
       </div>
+
+      {/* 分享弹窗：生成带权限的只读链接 + 管理已有链接 */}
+      {showShare && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowShare(false)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
+                <Share2 className="w-4 h-4 text-emerald-600" /> 分享报表
+              </h3>
+              <button onClick={() => setShowShare(false)} className="p-1 rounded hover:bg-gray-100 text-gray-400">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* 生成区 */}
+            <div className="flex items-center gap-2 mb-4">
+              <select
+                value={shareHours}
+                onChange={(e) => setShareHours(Number(e.target.value))}
+                className="border border-gray-200 rounded-lg px-3 py-2 text-xs bg-white focus:outline-none focus:border-accent"
+              >
+                <option value={1}>1 小时</option>
+                <option value={24}>24 小时</option>
+                <option value={72}>3 天</option>
+                <option value={168}>7 天</option>
+              </select>
+              <button
+                onClick={handleCreateShare}
+                className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 transition-all"
+              >
+                <Link2 className="w-3.5 h-3.5" /> 生成分享链接
+              </button>
+            </div>
+            <p className="text-[11px] text-gray-400 mb-4">
+              任何人凭链接可查看本报表（只读），到期或撤销后立即失效
+            </p>
+
+            {shareMsg && <p className="text-xs text-emerald-600 mb-3">{shareMsg}</p>}
+
+            {/* 已有链接列表 */}
+            {shareLinks.length > 0 && (
+              <div className="space-y-2 max-h-56 overflow-auto">
+                {shareLinks.map((s) => {
+                  const link = `${window.location.origin}/s/${s.链接ID}`;
+                  return (
+                    <div key={s.链接ID} className="flex items-center gap-2 border border-gray-100 rounded-lg px-3 py-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[11px] text-gray-700 font-mono truncate">{link}</p>
+                        <p className="text-[10px] text-gray-400 flex items-center gap-1 mt-0.5">
+                          <Clock className="w-3 h-3" /> 有效期至 {fmtExpire(s.过期时间)}
+                        </p>
+                      </div>
+                      <button
+                        className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-accent transition-colors"
+                        title="复制链接"
+                        onClick={() => handleCopyShare(`/s/${s.链接ID}`)}
+                      >
+                        {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                      </button>
+                      <button
+                        className="p-1.5 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
+                        title="撤销链接"
+                        onClick={() => handleRevokeShare(s.链接ID)}
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {shareLinks.length === 0 && !shareMsg && (
+              <p className="text-xs text-gray-400 text-center py-4">还没有分享链接</p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

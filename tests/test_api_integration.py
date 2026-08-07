@@ -694,6 +694,56 @@ def test_管理后台统计与权限(client):
         assert "报表数" in u and "数据集数" in u and "最近报表时间" in u
 
 
+def test_报表分享链接(client):
+    """分享：创建（时效）→ 匿名只读访问 → 列表 → 跨用户 404 → 撤销 → 过期 404。"""
+    from services import auth_service
+    tok = _register(client, "sharer1")
+    did = _upload(client, tok).json()["数据集ID"]
+    h = {"Authorization": f"Bearer {tok}"}
+    r = client.post("/reports/generate", json={"数据集ID": did, "分析需求": "按地区统计"}, headers=h)
+    assert r.status_code == 200
+    rid = r.json()["报表ID"]
+
+    # 创建分享（24h）
+    r = client.post(f"/reports/{rid}/share", json={"有效小时数": 24}, headers=h)
+    assert r.status_code == 200, r.text
+    link = r.json()["分享链接"]
+    sid = r.json()["链接ID"]
+    assert link.startswith("/s/") and sid
+
+    # 匿名访问（无 token）→ 只读视图
+    r = client.get(link)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["标题"] and "图表配置" in body and "报表数据" in body
+    assert "Agent Trace" not in str(body), "公开视图不应泄露内部 Trace"
+
+    # 创建者列表
+    r = client.get(f"/reports/{rid}/shares", headers=h)
+    assert r.status_code == 200 and len(r.json()["分享列表"]) == 1
+
+    # 他人：不能创建（404 报表不可见）/ 不能撤销
+    tok_b = _register(client, "sharer2")
+    h_b = {"Authorization": f"Bearer {tok_b}"}
+    assert client.post(f"/reports/{rid}/share", json={"有效小时数": 24}, headers=h_b).status_code == 404
+    assert client.delete(f"/reports/{rid}/share/{sid}", headers=h_b).status_code == 404
+
+    # 撤销 → 匿名访问 404
+    assert client.delete(f"/reports/{rid}/share/{sid}", headers=h).status_code == 200
+    assert client.get(link).status_code == 404
+
+    # 过期：插入分享后把 expires_at 改到过去，匿名访问 404
+    from repositories import share_repo
+    user_id = auth_service.verify_access_token(tok)["sub"]
+    info = share_repo.创建分享(user_id, rid, 24)
+    from datetime import datetime, timedelta, timezone
+    past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    from 后端_核心.存储.sqlite_repo import _get_conn, _write_lock
+    with _write_lock, _get_conn() as conn:
+        conn.execute("UPDATE share_links SET expires_at = ? WHERE share_id = ?", (past, info["share_id"]))
+    assert client.get(f"/s/{info['share_id']}").status_code == 404
+
+
 # ---- 8.5 LLM 安全 ----
 
 def test_非法provider_400(client):

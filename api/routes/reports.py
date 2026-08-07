@@ -394,6 +394,58 @@ def delete_report(report_id: str, user: dict = Depends(get_current_user)) -> Dic
     return {"message": "已删除"}
 
 
+# ── 分享（批次 6：带权限的只读分享链接）──────────────────────────────────────
+
+
+def _确认报表归属(user_id: str, report_id: str) -> None:
+    """校验报表存在且归属该用户；否则 404。"""
+    from repositories import report_repo
+    if not report_repo.读取报表(user_id, report_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报表不存在")
+
+
+@router.post("/{report_id}/share")
+def 创建分享链接(
+    report_id: str,
+    有效小时数: int = Query(24, ge=1, le=720),
+    user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """为报表创建分享链接（仅创建者）。返回可公开访问的只读链接。"""
+    _确认报表归属(user["user_id"], report_id)
+    from repositories import share_repo
+    info = share_repo.创建分享(user["user_id"], report_id, 有效小时数)
+    return {
+        "链接ID": info["share_id"],
+        "分享链接": f"/s/{info['share_id']}",
+        "过期时间": info["过期时间"],
+    }
+
+
+@router.get("/{report_id}/shares")
+def 列出分享链接(
+    report_id: str,
+    user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """列出报表的全部分享链接（仅创建者）。"""
+    _确认报表归属(user["user_id"], report_id)
+    from repositories import share_repo
+    return {"分享列表": share_repo.按报表列出(user["user_id"], report_id)}
+
+
+@router.delete("/{report_id}/share/{share_id}")
+def 撤销分享链接(
+    report_id: str,
+    share_id: str,
+    user: dict = Depends(get_current_user),
+) -> Dict[str, str]:
+    """撤销分享（仅创建者）；报表或链接不存在 → 404。"""
+    _确认报表归属(user["user_id"], report_id)
+    from repositories import share_repo
+    if not share_repo.撤销分享(user["user_id"], share_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分享链接不存在")
+    return {"message": "已撤销"}
+
+
 # ── 生成 ──────────────────────────────────────────────────────────────────────
 
 
