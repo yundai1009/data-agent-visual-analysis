@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Zap, Sparkles, BarChart3, LineChart, PieChart, ScatterChart, Table, Layers, Loader2, Cpu, GitBranch, X, Brain, Wrench, Eye, AlertTriangle } from 'lucide-react';
+import { Zap, Sparkles, BarChart3, LineChart, PieChart, ScatterChart, Table, Layers, Loader2, Cpu, GitBranch, X, Brain, Wrench, Eye, AlertTriangle, MessageSquare, ArrowRight } from 'lucide-react';
 import LLMConfig from '../components/LLMConfig';
 import { generateReportStream } from '../api';
 import { useApp } from '../AppContext';
@@ -70,6 +70,9 @@ export default function Analysis() {
   const [elapsed, setElapsed] = useState(0);
   const abortRef = useRef(null);
   const scrollRef = useRef(null);
+  // 多轮追问：最近一次分析完成的报表ID（追问链），追问输入框内容
+  const lastReportIdRef = useRef(null);
+  const [followUp, setFollowUp] = useState('');
 
   const profile = dataset?.数据画像;
   const fields = profile?.字段列表 || [];
@@ -133,12 +136,8 @@ export default function Analysis() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [liveSteps.length]);
 
-  // 收到 done 事件后稍作停留，跳转报表详情
-  useEffect(() => {
-    if (!liveDone) return;
-    const t = setTimeout(() => { window.location.href = '/report/' + liveDone.报表ID; }, 1000);
-    return () => clearTimeout(t);
-  }, [liveDone]);
+  // 收到 done 事件后不再自动跳转：停留本页让用户选择「继续追问」或「查看报表」（批次3 多轮追问）
+  // （自动跳转会在 1 秒内打断追问流程，已移除）
 
   const handleCancel = () => {
     abortRef.current?.abort();
@@ -148,17 +147,20 @@ export default function Analysis() {
     setLiveDone(null);
   };
 
-  async function handleGenerate() {
+  // 生成报表：isFollowUp=true 表示「继续追问」——清空上一轮字段交给系统重选，并携带 上一报表ID
+  async function handleGenerate(isFollowUp = false) {
     if (!dataset) {
       setError('请先在数据管理页面上传数据');
       navigate('/data');
       return;
     }
-    // 字段前置校验
-    const validationError = validateChartFields(chartType, xAxis, yAxis, groupField, profile);
-    if (validationError) {
-      setError(validationError);
-      return;
+    // 字段前置校验（追问模式由系统按追问语义重选字段，跳过旧字段校验）
+    if (!isFollowUp) {
+      const validationError = validateChartFields(chartType, xAxis, yAxis, groupField, profile);
+      if (validationError) {
+        setError(validationError);
+        return;
+      }
     }
     setError('');
     setLiveError('');
@@ -169,14 +171,15 @@ export default function Analysis() {
 
     const payload = {
       数据集ID: dataset.数据集ID,
-      分析需求: nlInput,
-      图表类型: chartMap[chartType] || '自动推荐',
-      x轴: xAxis === '无' ? null : xAxis,
-      y轴: yAxis ? [yAxis] : [],
-      分组字段: groupField === '无' ? null : groupField,
-      聚合方式: aggMethod,
+      分析需求: isFollowUp ? (followUp.trim() || nlInput) : nlInput,
+      图表类型: isFollowUp ? '自动推荐' : (chartMap[chartType] || '自动推荐'),
+      x轴: isFollowUp ? null : (xAxis === '无' ? null : xAxis),
+      y轴: isFollowUp ? [] : (yAxis ? [yAxis] : []),
+      分组字段: isFollowUp ? null : (groupField === '无' ? null : groupField),
+      聚合方式: isFollowUp ? '求和' : aggMethod,
       agent_mode: agentMode,
       model: selectedModel || undefined,
+      上一报表ID: isFollowUp ? (lastReportIdRef.current || undefined) : undefined,
     };
     const controller = new AbortController();
     abortRef.current = controller;
@@ -194,6 +197,7 @@ export default function Analysis() {
           } else if (ev.type === 'done') {
             setLiveSteps(prev => prev.map(s => ({ ...s, status: 'done' })));
             setLiveDone({ 报表ID: ev.报表ID, 标题: ev.标题 });
+            lastReportIdRef.current = ev.报表ID;  // 更新追问链
             return 'stop';
           } else if (ev.type === 'error') {
             setLiveError(ev.message || '分析失败，请重试');
@@ -220,6 +224,19 @@ export default function Analysis() {
       setGenerating(false);
     }
   }
+
+  // 继续追问：基于最近一次分析结果发起新一轮分析
+  const handleFollowUp = async () => {
+    const q = followUp.trim();
+    if (!q) return;
+    if (!lastReportIdRef.current) {
+      setError('还没有可追问的分析结果，请先完成一次分析');
+      return;
+    }
+    setNlInput(q);          // 主输入框同步展示（便于观察本轮需求）
+    await handleGenerate(true);
+    setFollowUp('');
+  };
 
   // 图表类型字段适配校验
   function validateChartFields(type, x, y, group, profile) {
@@ -458,6 +475,39 @@ export default function Analysis() {
                   ? '决策完成，报表即将打开'
                   : 'AI 正在根据决策流生成图表与结论…'}
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* 多轮追问条：分析完成后停留本页，可继续追问或查看报表 */}
+      {liveDone && !generating && (
+        <div className="mt-3 bg-white rounded-xl border border-gray-200 px-4 py-3">
+          <div className="flex items-center gap-2 mb-2">
+            <MessageSquare className="w-4 h-4 text-accent" />
+            <span className="text-xs font-semibold text-gray-700">继续追问</span>
+            <span className="text-[11px] text-gray-400">基于刚才的分析结果接着问，例如「那华南区呢？」「按月份对比呢？」</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              value={followUp}
+              onChange={(e) => setFollowUp(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleFollowUp(); }}
+              placeholder="输入追问，如：那华南区呢？按月份对比呢？"
+              className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent transition-colors"
+            />
+            <button
+              disabled={!followUp.trim()}
+              onClick={handleFollowUp}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-deep transition-all disabled:opacity-40"
+            >
+              <Zap className="w-3.5 h-3.5" /> 追问分析
+            </button>
+            <button
+              onClick={() => navigate(`/report/${liveDone.报表ID}`)}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all"
+            >
+              查看报表 <ArrowRight className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
       )}

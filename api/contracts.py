@@ -55,6 +55,7 @@ class ReportGenerateRequest(BaseModel):
     聚合方式: str = "求和"
     agent_mode: str = "single"  # "single" | "multi"
     model: Optional[str] = None  # 临时覆盖 LLM 模型名，None=使用 .env 默认
+    上一报表ID: Optional[str] = None  # 追问上下文：延续上一份报表继续分析
 
 
 class ReportGenerateResponse(BaseModel):

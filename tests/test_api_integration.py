@@ -574,6 +574,41 @@ def test_报表导出(client):
     assert r.status_code == 404
 
 
+def test_报表追问链路(client):
+    """多轮追问：带 上一报表ID 生成新报表；上下文注入分析需求；跨用户 404。"""
+    tok = _register(client, "followup1")
+    did = _upload(client, tok).json()["数据集ID"]
+    h = {"Authorization": f"Bearer {tok}"}
+    r1 = client.post("/reports/generate", json={"数据集ID": did, "分析需求": "按地区统计"}, headers=h)
+    assert r1.status_code == 200
+    rid1 = r1.json()["报表ID"]
+
+    # 追问 → 生成新报表（ID 不同）
+    r2 = client.post("/reports/generate",
+                     json={"数据集ID": did, "分析需求": "那华南区呢？", "上一报表ID": rid1},
+                     headers=h)
+    assert r2.status_code == 200, r2.text
+    rid2 = r2.json()["报表ID"]
+    assert rid2 and rid2 != rid1
+
+    # 跨用户追问上一报表 → 404（归属校验在上下文注入处）
+    tok_b = _register(client, "followup2")
+    r3 = client.post("/reports/generate",
+                     json={"数据集ID": did, "分析需求": "x", "上一报表ID": rid1},
+                     headers={"Authorization": f"Bearer {tok_b}"})
+    assert r3.status_code == 404
+
+    # 上下文注入：上一报表摘要已拼进 分析需求
+    from api.contracts import ReportGenerateRequest
+    from api.routes.reports import _注入追问上下文
+    from services import auth_service
+    payload = ReportGenerateRequest(数据集ID=did, 分析需求="按月份对比呢？", 上一报表ID=rid1)
+    user = {"user_id": auth_service.verify_access_token(tok)["sub"]}
+    injected = _注入追问上下文(payload, user)
+    assert "上一轮分析上下文" in injected.分析需求
+    assert "用户追问：按月份对比呢？" in injected.分析需求
+
+
 # ---- 8.5 LLM 安全 ----
 
 def test_非法provider_400(client):

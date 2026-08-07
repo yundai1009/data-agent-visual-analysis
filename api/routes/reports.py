@@ -118,6 +118,45 @@ def _准备上下文(
     return df, llm_config
 
 
+def _注入追问上下文(
+    payload: ReportGenerateRequest,
+    user: dict,
+) -> ReportGenerateRequest:
+    """多轮追问：带 上一报表ID 时读取上一份报表摘要，作为上下文拼进分析需求。
+
+    追问是「针对上一轮继续分析」——携带上一轮标题 / 图表配置 / 结论 / 数据样例，
+    让 LLM 与规则匹配都能接着上一轮的语境作答（如"那华南呢？"→ 沿用维度换过滤条件）。
+    跨用户读取上一报表 → 404。
+    """
+    if not payload.上一报表ID:
+        return payload
+
+    from repositories import report_repo
+    item = report_repo.读取报表(user["user_id"], payload.上一报表ID)
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上一轮报表不存在或无权访问")
+
+    prev = item["报表"]
+    配置 = prev.get("图表配置", {})
+    lines = ["【上一轮分析上下文】（本次是针对上一轮的追问，可参考但不能照抄）"]
+    lines.append(f"- 标题：{(item.get('标题') or '') or '未命名'}")
+    lines.append(
+        f"- 图表：{prev.get('图表类型', '') or '自动'}（X 轴：{配置.get('x轴') or '-'}，"
+        f"Y 轴：{'、'.join(配置.get('y轴') or []) or '-'}，分组：{配置.get('分组字段') or '-'}，"
+        f"聚合：{配置.get('聚合方式') or '-'}）"
+    )
+    结论 = prev.get("结论")
+    if 结论:
+        lines.append(f"- 上一轮结论：{结论}")
+    数据 = prev.get("报表数据", [])
+    if 数据:
+        import json
+        lines.append(f"- 上一轮数据样例（前 5 条）：{json.dumps(数据[:5], ensure_ascii=False)}")
+
+    payload.分析需求 = "\n".join(lines) + f"\n\n用户追问：{payload.分析需求}"
+    return payload
+
+
 def _生成报表流式(
     payload: ReportGenerateRequest,
     df: Any,
@@ -126,6 +165,7 @@ def _生成报表流式(
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """生成报表 + 持久化；on_event 实时推送决策事件（SSE 直播）。返回 (report_id, report)。"""
+    payload = _注入追问上下文(payload, user)
     if payload.agent_mode == "multi":
         report = _多智能体报表(df, payload, llm_config, on_event=on_event)
     else:
