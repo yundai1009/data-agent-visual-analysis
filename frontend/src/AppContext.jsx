@@ -1,3 +1,4 @@
+/* oxlint-disable react/only-export-components -- Context 惯例：Provider 组件 + useApp hook 同文件导出 */
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 
 const AppContext = createContext(null);

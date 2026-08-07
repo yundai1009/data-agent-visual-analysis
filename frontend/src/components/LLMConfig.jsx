@@ -6,7 +6,7 @@ const STORAGE_KEY = 'llm_config';
 
 const DEFAULTS = { provider: 'deepseek', model: 'deepseek-chat' };
 
-export function loadLLMConfig() {
+function loadLLMConfig() {
   try { const c = localStorage.getItem(STORAGE_KEY); return c ? JSON.parse(c) : null; }
   catch { return null; }
 }

@@ -40,7 +40,7 @@ export default function DataManagement() {
   const [cleaning, setCleaning] = useState(false);
   const [cleanResult, setCleanResult] = useState(null);
   // 清洗选项（阶段 7：可配置）
-  const [cleanOps, setCleanOps] = useState({
+  const [cleanOps] = useState({
     deduplicate: true,
     fill_missing: true,
     fill_strategy: 'auto',
@@ -184,10 +184,6 @@ export default function DataManagement() {
 
   function handleNewAnalysis() {
     if (!dataset) return;
-    navigate('/analysis');
-  }
-
-  function handleCleanIgnore() {
     navigate('/analysis');
   }
 

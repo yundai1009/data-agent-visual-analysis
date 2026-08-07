@@ -1,6 +1,6 @@
 // 登录页科幻 3D 场景（Three.js / React Three Fiber）
 // 360° 鼠标环绕跟随 + 行星式发光核心 + 圆形数据球体环绕 + 双层宇宙繁星
-import { Suspense, useMemo, useRef } from 'react';
+import { Suspense, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Float, Sparkles, Stars } from '@react-three/drei';
 import * as THREE from 'three';

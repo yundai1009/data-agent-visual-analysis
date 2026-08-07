@@ -21,7 +21,7 @@ const AUTH_REQUIRED = import.meta.env.VITE_AUTH_REQUIRED !== 'false';
 // （实例切换、JWT 密钥变化、过期）。有效 → 刷新用户信息；401 → api.js
 // handleAuthExpired 自动登出并跳转登录页，避免用户带着坏 token 卡在报错页。
 function AuthBootstrap() {
-  const { isAuthed, setAuth } = useApp();
+  const { isAuthed } = useApp();
   useEffect(() => {
     if (!AUTH_REQUIRED || !isAuthed) return;
     let cancelled = false;
