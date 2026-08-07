@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Download, DownloadCloud, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, Copy, Check, Clock, Link2, X, RotateCcw } from 'lucide-react';
+import { Download, DownloadCloud, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, Copy, Check, Clock, Link2, X, RotateCcw, GitBranch } from 'lucide-react';
 import { listReports, getReport, deleteReport, exportReport, createShare, listShares, revokeShare, replayReport } from '../api';
 import EChartsChart from '../components/EChartsChart';
 
@@ -13,6 +13,7 @@ export default function Report() {
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState('conclusion');
   const [loadError, setLoadError] = useState('');
+  const [prevTitle, setPrevTitle] = useState(''); // 追问来源报表标题（溯源显示）
   // 分享弹窗状态
   const [showShare, setShowShare] = useState(false);
   const [shareHours, setShareHours] = useState(24);
@@ -38,6 +39,7 @@ export default function Report() {
           const detail = await getReport(targetId);
           if (!cancelled && detail?.报表) {
             setLocalReport(detail.报表);
+            setPrevTitle(detail.上一报表标题 || '');
             const idx = items.findIndex((i) => i.报表ID === targetId);
             if (idx >= 0) setCurrentIndex(idx);
           }
@@ -56,7 +58,10 @@ export default function Report() {
     setCurrentIndex(index);
     try {
       const detail = await getReport(reportMeta[index].报表ID);
-      if (detail?.报表) setLocalReport(detail.报表);
+      if (detail?.报表) {
+        setLocalReport(detail.报表);
+        setPrevTitle(detail.上一报表标题 || '');
+      }
     } catch (e) {
       console.error('报表详情加载失败:', e);
       setLoadError('报表详情加载失败，请稍后重试');
@@ -222,6 +227,15 @@ export default function Report() {
             AI 自动生成的智能分析报告
             {dataProfile.行数 ? ` · 数据集共 ${dataProfile.行数} 行 ${dataProfile.列数} 列` : ''}
           </p>
+          {report.上一报表ID && (
+            <button
+              onClick={() => navigate(`/report/${report.上一报表ID}`)}
+              className="mt-1.5 flex items-center gap-1 text-xs text-accent hover:underline transition-colors"
+              title="查看这份报表追问自哪一份"
+            >
+              <GitBranch className="w-3 h-3" /> 追问自：{prevTitle || '上一份报表'}
+            </button>
+          )}
           {loadError && <p className="mt-1.5 text-xs text-red-500">{loadError}</p>}
         </div>
         <div className="flex items-center gap-2">

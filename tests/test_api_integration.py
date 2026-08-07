@@ -608,6 +608,14 @@ def test_报表追问链路(client):
     assert "上一轮分析上下文" in injected.分析需求
     assert "用户追问：按月份对比呢？" in injected.分析需求
 
+    # 追溯信息落库：新报表 JSON 记录追问来源与生成模式；详情附来源标题
+    r = client.get(f"/reports/{rid2}", headers=h)
+    assert r.status_code == 200
+    detail = r.json()
+    assert detail["报表"]["上一报表ID"] == rid1
+    assert detail["报表"]["agent_mode"] == "single"
+    assert detail.get("上一报表标题"), "详情应附追问来源报表标题"
+
 
 def test_看板CRUD与隔离(client):
     """图表看板：新建/列表/详情/更新/删除 + 归属校验（跨用户 404 + 非法引用 400）。"""
@@ -763,6 +771,10 @@ def test_报表重放(client):
     assert body["标题"] == orig["标题"]
     assert body["图表类型"] == orig["图表类型"]
     assert len(body["报表数据"]) > 0
+    # 重放保留原生成模式（落库的 agent_mode 被读出并沿用）
+    r_orig = client.get(f"/reports/{rid}", headers=h)
+    assert r_orig.json()["报表"]["agent_mode"] == "single"
+    assert body["agent_mode"] == "single"
 
     # 跨用户重放 → 404
     tok_b = _register(client, "replayer2")

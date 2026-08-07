@@ -171,6 +171,10 @@ def _生成报表流式(
     else:
         report = _单Agent报表(df, payload, llm_config, on_event=on_event)
 
+    # 追溯信息落库：追问来源 + 生成模式（重放/溯源时使用）
+    report["上一报表ID"] = payload.上一报表ID
+    report["agent_mode"] = payload.agent_mode
+
     # 报表持久化到后端（阶段 6）
     from repositories import report_repo
     report_id = report_repo.保存报表(
@@ -286,12 +290,17 @@ def list_reports(
 
 @router.get("/{report_id}")
 def get_report(report_id: str, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
-    """读取一份报表详情（仅限归属用户）。"""
+    """读取一份报表详情（仅限归属用户）。附追溯信息：追问来源报表的标题。"""
     from repositories import report_repo
     item = report_repo.读取报表(user["user_id"], report_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报表不存在")
-    return item
+    result = dict(item)
+    prev_id = item["报表"].get("上一报表ID")
+    if prev_id:
+        prev = report_repo.读取报表(user["user_id"], prev_id)
+        result["上一报表标题"] = prev["标题"] if prev else ""
+    return result
 
 
 @router.get("/{report_id}/export")
@@ -476,7 +485,8 @@ def 重放报表(
         y轴=list(配置.get("Y轴") or []),
         分组字段=配置.get("颜色") or None,
         聚合方式="求和",
-        agent_mode="single",
+        # 保留原生成模式（多智能体报表重放不再降级为单 Agent）
+        agent_mode=prev.get("agent_mode", "single"),
     )
 
     df, llm_config = _准备上下文(payload, request, user)
