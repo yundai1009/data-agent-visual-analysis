@@ -43,7 +43,11 @@ jobs:
 
       - name: Install deps
         working-directory: frontend
-        run: npm ci --no-audit --no-fund
+        shell: pwsh
+        run: |
+          npm ci --no-audit --no-fund 2>&1 | Tee-Object -Variable npmOut
+          $npmOut | Out-String | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build
         working-directory: frontend
