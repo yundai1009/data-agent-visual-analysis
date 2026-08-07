@@ -76,6 +76,7 @@ def 编排Agent(
     enable_llm: Optional[bool] = None,
     llm_config: Optional[LLMRequestConfig] = None,
     on_event: Optional[Any] = None,
+    user_id: str = "",
 ) -> Optional[Dict[str, Any]]:
     """多轮 ReAct 编排：感知 → 推理 → 行动 → 观察 → 再推理。
 
@@ -103,7 +104,7 @@ def 编排Agent(
     # ═══ LLM 多轮 ReAct ═══
     if enable_llm and (分析需求 or "").strip():
         # ── 检索相似历史记忆（few-shot） ──
-        相似记忆 = 检索相似记忆(分析需求)
+        相似记忆 = 检索相似记忆(user_id, 分析需求)
         memory_hint = 生成_few_shot_prompt(相似记忆)
 
         messages: List[Dict[str, Any]] = [
@@ -147,7 +148,7 @@ def 编排Agent(
                         try:
                             from 后端_核心.数据画像 import 生成数据画像
                             画像摘要 = f"{画像.get('行数',0)}行/{画像.get('列数',0)}列"
-                            保存记忆(分析需求, intent_override, 画像摘要)
+                            保存记忆(user_id, 分析需求, intent_override, 画像摘要)
                         except Exception as exc:
                             logger.warning("保存长期记忆失败: %s", exc)
 

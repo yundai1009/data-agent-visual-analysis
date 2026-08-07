@@ -48,19 +48,23 @@ def _get_collection() -> chromadb.Collection:
 
 
 def 保存记忆(
+    user_id: str,
     需求: str,
     意图: Dict[str, Any],
     画像摘要: str,
     用户反馈: Optional[str] = None,
 ) -> bool:
-    """把一次分析结果存入向量记忆。
+    """把一次分析结果存入向量记忆（P0 加固：记忆按 user_id 隔离）。
 
     Args:
+        user_id: 归属用户（为空则不保存——无主记忆会被他人检索，跨用户泄漏）
         需求: 用户原始输入
         意图: 标准化意图 dict（含图表类型、x轴、y轴等）
         画像摘要: 数据画像的文本摘要
         用户反馈: 用户评分/纠错（可选）
     """
+    if not user_id:
+        return False
     try:
         text = f"需求：{需求}\n意图：{json.dumps(意图, ensure_ascii=False)}\n画像：{画像摘要}"
         vector = embed_text(text)
@@ -69,6 +73,7 @@ def 保存记忆(
             return False
 
         metadata = {
+            "user_id": user_id,
             "需求": 需求[:200],
             "图表类型": str(意图.get("图表类型", "")),
             "x轴": str(意图.get("x轴", "")),
@@ -91,12 +96,14 @@ def 保存记忆(
         return False
 
 
-def 检索相似记忆(需求: str, top_k: int = 3) -> List[Dict[str, Any]]:
-    """检索与当前需求最相似的 k 条历史记忆。
+def 检索相似记忆(user_id: str, 需求: str, top_k: int = 3) -> List[Dict[str, Any]]:
+    """检索与当前需求最相似的 k 条当前用户的记忆（P0 加固：where 按 user_id 过滤）。
 
     Returns:
         list of {"需求": str, "图表类型": str, "x轴": str, ...}
     """
+    if not user_id:
+        return []
     try:
         vector = embed_text(需求)
         if vector is None:
@@ -105,6 +112,7 @@ def 检索相似记忆(需求: str, top_k: int = 3) -> List[Dict[str, Any]]:
         results = col.query(
             query_embeddings=[vector],
             n_results=min(top_k, 10),
+            where={"user_id": user_id},
         )
         memories: List[Dict[str, Any]] = []
         if not results or not results.get("metadatas") or not results["metadatas"][0]:
