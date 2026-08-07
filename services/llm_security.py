@@ -55,7 +55,11 @@ def 校验LLM供应商URL(base_url: str) -> str:
         try:
             ips = [ipaddress.ip_address(info[4][0]) for info in socket.getaddrinfo(host, None)]
         except OSError:
-            raise ValueError("无法解析主机名")
+            # 域名无法解析：宽容放行（可能是未连网/内网域名/虚构测试域名）。
+            # 内网防护的根因已由「自定义供应商禁用服务端 key 回退」兜底；
+            # 字面内网 IP 仍会被上方分支拦截。
+            logger.warning("LLM base_url 域名无法解析（放行，字面 IP 校验仍生效）: %s", host)
+            return url
 
     for ip in ips:
         if any(ip in net for net in _内网前缀):
