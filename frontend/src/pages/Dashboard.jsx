@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Plus, Trash2, Pencil, ExternalLink, X, ImageOff } from 'lucide-react';
+import { LayoutDashboard, Plus, Trash2, Pencil, ExternalLink, X, ImageOff, ChevronLeft, ChevronRight } from 'lucide-react';
 import { listDashboards, getDashboard, createDashboard, updateDashboard, deleteDashboard, listReports } from '../api';
 import EChartsChart from '../components/EChartsChart';
 
@@ -125,6 +125,21 @@ export default function Dashboard() {
       await loadDetail(currentId);
     } catch (e) {
       setError('移除报表失败：' + (e.message || e));
+    }
+  };
+
+  // 调整顺序（左移/右移），持久化到后端
+  const handleMove = async (index, dir) => {
+    if (!currentId || !detail) return;
+    const list = [...(detail.报表列表 || [])];
+    const j = index + dir;
+    if (j < 0 || j >= list.length) return;
+    [list[index], list[j]] = [list[j], list[index]];
+    try {
+      await updateDashboard(currentId, detail.名称, list.map((r) => r.报表ID));
+      await loadDetail(currentId);
+    } catch (e) {
+      setError('调整顺序失败：' + (e.message || e));
     }
   };
 
@@ -262,7 +277,23 @@ export default function Dashboard() {
                 <div className="flex items-center gap-2 px-4 pt-3.5">
                   <span className="text-[11px] px-2 py-0.5 rounded-md bg-accent-soft text-accent font-medium shrink-0">{item.图表类型 || '图表'}</span>
                   <p className="text-xs font-medium text-gray-700 truncate">{item.标题}</p>
-                  <div className="ml-auto flex items-center gap-1">
+                  <div className="ml-auto flex items-center gap-0.5">
+                    <button
+                      title="左移"
+                      disabled={i === 0}
+                      className="p-1 rounded hover:bg-gray-100 text-gray-300 hover:text-accent transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+                      onClick={() => handleMove(i, -1)}
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      title="右移"
+                      disabled={i >= reports.length - 1}
+                      className="p-1 rounded hover:bg-gray-100 text-gray-300 hover:text-accent transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+                      onClick={() => handleMove(i, 1)}
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
                     <button
                       title="移除本图"
                       className="p-1 rounded hover:bg-red-50 text-gray-300 hover:text-red-500 transition-colors"
