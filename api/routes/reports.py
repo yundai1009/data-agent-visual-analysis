@@ -254,6 +254,97 @@ def get_report(report_id: str, user: dict = Depends(get_current_user)) -> Dict[s
     return item
 
 
+@router.get("/{report_id}/export")
+def export_report(
+    report_id: str,
+    format: str = Query("xlsx", pattern="^(xlsx|csv|pdf)$"),
+    user: dict = Depends(get_current_user),
+) -> StreamingResponse:
+    """导出报表：xlsx / csv / pdf（仅限归属用户）。"""
+    import io
+    from urllib.parse import quote
+
+    import pandas as pd
+    from repositories import report_repo
+
+    item = report_repo.读取报表(user["user_id"], report_id)
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报表不存在")
+    report = item["报表"]
+    rows = report.get("报表数据", [])
+    标题 = (item["标题"] or "报表").replace('"', '').replace('\\', '_')
+    buf = io.BytesIO()
+
+    if format == "xlsx":
+        pd.DataFrame(rows).to_excel(buf, index=False, engine="openpyxl")
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename=report.xlsx; filename*=UTF-8''{quote(f'{标题}.xlsx')}"},
+        )
+    if format == "csv":
+        pd.DataFrame(rows).to_csv(buf, index=False)
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f"attachment; filename=report.csv; filename*=UTF-8''{quote(f'{标题}.csv')}"},
+        )
+    # PDF（reportlab + 微软雅黑中文字体）
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    pdfmetrics.registerFont(TTFont("MSYH", "C:/Windows/Fonts/msyh.ttc"))
+    styles = getSampleStyleSheet()
+    body = ParagraphStyle("Body", parent=styles["Normal"], fontName="MSYH", fontSize=10, leading=15)
+    title = ParagraphStyle("Title", parent=styles["Title"], fontName="MSYH", fontSize=16, leading=22)
+    head = ParagraphStyle("Head", parent=styles["Heading2"], fontName="MSYH", fontSize=11, leading=16, spaceBefore=10)
+
+    doc = SimpleDocTemplate(buf, pagesize=A4)
+    story = [Paragraph(f"报表：{标题}", title), Spacer(1, 8)]
+    story.append(Paragraph(f"图表类型：{report.get('图表类型', '')} · 意图来源：{report.get('意图来源', '')}", body))
+    story.append(Spacer(1, 6))
+    if report.get("结论"):
+        story.append(Paragraph("分析结论", head))
+        story.append(Paragraph(str(report["结论"]), body))
+    if rows:
+        story.append(Paragraph("数据明细", head))
+        cols = list(rows[0].keys())
+        data = [[Paragraph(str(c), body) for c in cols]]
+        for row in rows[:200]:
+            data.append([Paragraph(str(row.get(c, "")), body) for c in cols])
+        table = Table(data, repeatRows=1)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8eef5")),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
+            ("FONTNAME", (0, 0), (-1, -1), "MSYH"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ]))
+        story.append(table)
+    推荐 = report.get("推荐说明", {}).get("理由", [])
+    if 推荐:
+        story.append(Paragraph("推荐依据", head))
+        for r in 推荐:
+            story.append(Paragraph(f"· {r}", body))
+    风险 = report.get("风险提示", [])
+    if 风险:
+        story.append(Paragraph("注意事项", head))
+        for w in 风险:
+            story.append(Paragraph(f"· {w}", body))
+    doc.build(story)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=report.pdf; filename*=UTF-8''{quote(f'{标题}.pdf')}"},
+    )
+
+
 @router.delete("/{report_id}")
 def delete_report(report_id: str, user: dict = Depends(get_current_user)) -> Dict[str, str]:
     """删除一份报表（仅限归属用户）。"""

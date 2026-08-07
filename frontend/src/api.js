@@ -273,6 +273,26 @@ export async function getReport(reportId) {
   return request(`/reports/${reportId}`);
 }
 
+// 导出报表（带 token 下载，返回 { blob, filename }）
+export async function exportReport(reportId, format) {
+  const token = localStorage.getItem('access_token') || '';
+  const res = await fetch(`/reports/${reportId}/export?format=${format}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    const err = new Error(`导出失败（HTTP ${res.status}）`);
+    err.status = res.status;
+    throw err;
+  }
+  const blob = await res.blob();
+  // 从 Content-Disposition 解析文件名（UTF-8 中文会被 RFC 5987 编码）
+  const cd = res.headers.get('Content-Disposition') || '';
+  let filename = `report.${format}`;
+  const m = cd.match(/filename\*=UTF-8''([^;]+)/i) || cd.match(/filename="?([^";]+)"?/i);
+  if (m) filename = decodeURIComponent(m[1]);
+  return { blob, filename };
+}
+
 export async function deleteReport(reportId) {
   return request(`/reports/${reportId}`, { method: 'DELETE' });
 }

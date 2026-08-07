@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Download, DownloadCloud, Sparkles, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
-import { listReports, getReport, deleteReport } from '../api';
+import { listReports, getReport, deleteReport, exportReport } from '../api';
 import EChartsChart from '../components/EChartsChart';
 
 export default function Report() {
@@ -73,6 +73,34 @@ export default function Report() {
       setReportMeta([]);
       setLocalReport(null);
     }
+  };
+
+  // 导出：Excel / CSV / PDF 走后端端点（带 token），Trace 前端本地生成 Markdown
+  const currentReportId = reportMeta[currentIndex]?.报表ID || localReport?._id;
+  const handleExport = async (format) => {
+    if (!currentReportId) return;
+    try {
+      const { blob, filename } = await exportReport(currentReportId, format);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert(`导出 ${format.toUpperCase()} 失败：${e.message || e}`);
+    }
+  };
+  const handleExportTrace = () => {
+    if (trace.length === 0) return;
+    const lines = [
+      `# Agent 决策记录 — ${report.标题 || '数据分析报表'}`,
+      '',
+      ...trace.map((step, i) => `## ${i + 1}. ${step.步骤 || step.说明 || `步骤 ${i + 1}`}${step.状态 === '成功' || step.状态 === '完成' ? ' ✓' : ''}\n${step.说明 || step.理由 || ''}`),
+    ];
+    const blob = new Blob([lines.join('\n\n')], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `Agent决策记录-${(report.标题 || '报表').replace(/[\\/:*?"<>|]/g, '_')}.md`; a.click();
+    URL.revokeObjectURL(url);
   };
 
   const report = localReport;
@@ -266,7 +294,22 @@ export default function Report() {
       </div>
 
       {/* Export + 继续分析 */}
-      <div className="flex gap-3 justify-end mt-4">
+      <div className="flex flex-wrap gap-2 justify-end mt-4 items-center">
+        <span className="flex items-center gap-1 text-xs text-gray-400 mr-1"><Download className="w-3.5 h-3.5" /> 导出</span>
+        <button className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all" onClick={() => handleExport('xlsx')}>
+          Excel
+        </button>
+        <button className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all" onClick={() => handleExport('csv')}>
+          CSV
+        </button>
+        <button className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all" onClick={() => handleExport('pdf')}>
+          PDF
+        </button>
+        {trace.length > 0 && (
+          <button className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all" onClick={handleExportTrace}>
+            决策记录
+          </button>
+        )}
         <button
           className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-deep transition-all"
           onClick={() => navigate('/analysis')}
@@ -280,7 +323,7 @@ export default function Report() {
             const a = document.createElement('a');
             a.href = url; a.download = 'report.html'; a.click();
           }}>
-            <Download className="w-3.5 h-3.5" /> 导出 HTML 报告
+            <Download className="w-3.5 h-3.5" /> HTML 报告
           </button>
         )}
         {exportData.JSON && (
@@ -290,7 +333,7 @@ export default function Report() {
             const a = document.createElement('a');
             a.href = url; a.download = 'report.json'; a.click();
           }}>
-            <DownloadCloud className="w-3.5 h-3.5" /> 导出 JSON 数据
+            <DownloadCloud className="w-3.5 h-3.5" /> JSON 数据
           </button>
         )}
       </div>

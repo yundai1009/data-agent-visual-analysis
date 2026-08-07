@@ -546,6 +546,34 @@ def test_报表隔离(client):
     assert r.status_code == 200
 
 
+def test_报表导出(client):
+    """导出端点：xlsx / csv / pdf 均返回附件流，非法 format 422，跨用户 404。"""
+    tok = _register(client, "exporter1")
+    did = _upload(client, tok).json()["数据集ID"]
+    r = client.post("/reports/generate", json={"数据集ID": did, "分析需求": "按地区统计"},
+                    headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200
+    rid = r.json()["报表ID"]
+    h = {"Authorization": f"Bearer {tok}"}
+
+    for fmt, ctype in [("xlsx", "spreadsheetml"), ("csv", "text/csv"), ("pdf", "application/pdf")]:
+        r = client.get(f"/reports/{rid}/export?format={fmt}", headers=h)
+        assert r.status_code == 200, f"{fmt}: {r.text[:200]}"
+        assert ctype in r.headers["content-type"], f"{fmt}: {r.headers['content-type']}"
+        assert r.content, f"{fmt}: 导出内容为空"
+        assert "filename" in r.headers["content-disposition"]
+
+    # 非法 format → 422
+    r = client.get(f"/reports/{rid}/export?format=docx", headers=h)
+    assert r.status_code == 422
+
+    # 跨用户导出 → 404（走报表归属校验）
+    tok_b = _register(client, "exporter2")
+    r = client.get(f"/reports/{rid}/export?format=xlsx",
+                   headers={"Authorization": f"Bearer {tok_b}"})
+    assert r.status_code == 404
+
+
 # ---- 8.5 LLM 安全 ----
 
 def test_非法provider_400(client):

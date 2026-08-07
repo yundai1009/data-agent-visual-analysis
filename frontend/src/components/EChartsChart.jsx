@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect } from 'react';
+import { Download } from 'lucide-react';
 
 // 藏青系协调色板 + 主题常量（阶段 13 重设计：与 UI 主色统一）
 const COLORS = ['#0f4c81', '#3d7bb8', '#5b8cb8', '#8aa9c4', '#b45309', '#0f766e', '#64748b', '#334155'];
@@ -78,8 +79,27 @@ export default function EChartsChart({ chartType, chartConfig, height = 320 }) {
 
   const hasData = Array.isArray(chartConfig?.数据) && chartConfig.数据.length > 0;
 
+  const handleDownloadPng = () => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const url = chart.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#ffffff' });
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${chartConfig?.标题 || 'chart'}.png`;
+    a.click();
+  };
+
   return (
     <div style={{ position: 'relative', width: '100%', height, minHeight: 160 }}>
+      {ready && hasData && (
+        <button
+          onClick={handleDownloadPng}
+          title="下载图表 PNG"
+          className="absolute top-1 right-1 z-[5] w-6 h-6 rounded-md bg-white/80 hover:bg-white border border-gray-200 flex items-center justify-center text-gray-400 hover:text-accent transition-all shadow-sm"
+        >
+          <Download className="w-3.5 h-3.5" />
+        </button>
+      )}
       {!ready && (
         <div style={{
           position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
