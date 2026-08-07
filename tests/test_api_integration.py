@@ -109,7 +109,7 @@ def test_无token_401(client):
 
 def test_普通用户访问admin_403(client):
     tok = _register(client, "carol")
-    r = client.get("/admin/golden-set", headers={"Authorization": f"Bearer {tok}"})
+    r = client.get("/admin/statistics", headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 403
 
 
@@ -120,7 +120,7 @@ def test_种子admin登录_并访问admin(client):
     r = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
     assert r.status_code == 200
     tok = r.json()["access_token"]
-    r = client.get("/admin/golden-set", headers={"Authorization": f"Bearer {tok}"})
+    r = client.get("/admin/statistics", headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 200
 
 
@@ -140,7 +140,7 @@ def test_注册带role字段_422(client):
 
 def test_注册成功固定analyst(client):
     tok = _register(client, "molly")
-    r = client.get("/admin/golden-set", headers={"Authorization": f"Bearer {tok}"})
+    r = client.get("/admin/statistics", headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 403  # 普通注册用户无 admin 权限
 
 
@@ -692,6 +692,13 @@ def test_管理后台统计与权限(client):
         assert k in body["总览"]
     assert len(body["趋势"]) == 7
     assert body["趋势"][0]["日期"] < body["趋势"][-1]["日期"]
+
+    # metrics 真实化（不再返回占位 0）
+    r = client.get("/admin/metrics", headers=h_admin)
+    assert r.status_code == 200
+    m = r.json()
+    for k in ("用户数", "数据集数", "报表数", "看板数", "今日生成报表", "近7天生成报表"):
+        assert k in m and isinstance(m[k], int), f"metrics 缺字段或非整数: {k}"
 
     # 用户列表：包含刚注册用户与 admin；无敏感字段；含用量字段
     r = client.get("/admin/users", headers=h_admin)

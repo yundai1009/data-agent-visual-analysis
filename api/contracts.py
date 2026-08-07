@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 
 class TaskStatus(str, Enum):
@@ -78,8 +78,7 @@ class ReportGenerateResponse(BaseModel):
     LLM失败原因: str = ""
     agent_mode: str = "single"
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class DashboardRequest(BaseModel):

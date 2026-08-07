@@ -1,45 +1,39 @@
+"""管理后台路由：平台用量统计与监控指标（管理员专属）。
+
+移除过占位的 golden-set / eval 评测端点（与本项目主线无关，未实现则不留假数据），
+metrics 改为返回真实用量；statistics / users 为用户与用量统计。
+"""
+
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 
-from api.contracts import GoldenSetItem
 from api.dependencies import require_admin
+from repositories import admin_repo
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
-@router.get("/golden-set", response_model=List[GoldenSetItem])
-async def list_golden_set(user: dict = Depends(require_admin)) -> List[GoldenSetItem]:
-    # TODO: 接入真实 Golden Set 存储
-    return []
-
-
-@router.post("/golden-set", response_model=GoldenSetItem)
-async def create_golden_set(
-    item: GoldenSetItem, user: dict = Depends(require_admin)
-) -> GoldenSetItem:
-    # TODO: 持久化并版本化
-    return item
-
-
-@router.post("/eval/run")
-async def trigger_eval(user: dict = Depends(require_admin)) -> dict[str, Any]:
-    # TODO: 触发全量评测回归
-    return {"status": "queued"}
-
-
 @router.get("/metrics")
-async def get_metrics(user: dict = Depends(require_admin)) -> dict[str, Any]:
-    # TODO: 聚合监控指标
-    return {"qps": 0, "p99_latency_ms": 0, "error_rate": 0.0}
+def get_metrics(user: dict = Depends(require_admin)) -> Dict[str, Any]:
+    """平台用量指标：资源总数 + 近 7 天与今日生成报表数。"""
+    stats = admin_repo.总览统计()
+    trend = admin_repo.报表趋势(7)
+    return {
+        "用户数": stats["用户数"],
+        "数据集数": stats["数据集数"],
+        "报表数": stats["报表数"],
+        "看板数": stats["看板数"],
+        "今日生成报表": trend[-1]["数量"],
+        "近7天生成报表": sum(t["数量"] for t in trend),
+    }
 
 
 @router.get("/statistics")
-async def get_statistics(user: dict = Depends(require_admin)) -> dict[str, Any]:
+def get_statistics(user: dict = Depends(require_admin)) -> Dict[str, Any]:
     """平台用量总览：资源总数 + 最近 7 天报表生成趋势。"""
-    from repositories import admin_repo
     return {
         "总览": admin_repo.总览统计(),
         "趋势": admin_repo.报表趋势(7),
@@ -47,7 +41,6 @@ async def get_statistics(user: dict = Depends(require_admin)) -> dict[str, Any]:
 
 
 @router.get("/users")
-async def list_users(user: dict = Depends(require_admin)) -> dict[str, Any]:
+def list_users(user: dict = Depends(require_admin)) -> Dict[str, Any]:
     """用户列表与用量（已剥离密码与密钥字段）。"""
-    from repositories import admin_repo
     return {"用户列表": admin_repo.用户用量列表()}
