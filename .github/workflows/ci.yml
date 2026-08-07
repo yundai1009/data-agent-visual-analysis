@@ -45,12 +45,13 @@ jobs:
         working-directory: frontend
         shell: pwsh
         run: |
+          "::notice::node=$(node --version) npm=$(npm --version) cwd=$PWD"
           npm ci --no-audit --no-fund 2>&1 | Tee-Object -Variable npmOut
           $code = $LASTEXITCODE
           if ($code -ne 0) {
-            $npmOut | Select-Object -Last 50 | ForEach-Object { "::error::$($_)" }
-            $log = Get-ChildItem "$env:LOCALAPPDATA\npm-cache\_logs\*.log" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-            if ($log) { Get-Content $log.FullName | Select-Object -Last 40 | ForEach-Object { "::error::$($_)" } }
+            $msg = (($npmOut | Select-Object -Last 80) -join "`n")
+            $esc = $msg -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+            "::error::npm ci failed (exit $code): $esc"
             exit $code
           }
 
