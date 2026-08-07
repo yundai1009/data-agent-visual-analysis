@@ -325,6 +325,16 @@ export async function deleteDashboard(dashboardId) {
   return request(`/dashboards/${dashboardId}`, { method: 'DELETE' });
 }
 
+// ---- 管理后台（管理员专用）----
+
+export async function fetchStatistics() {
+  return request('/admin/statistics');
+}
+
+export async function fetchAdminUsers() {
+  return request('/admin/users');
+}
+
 export async function healthCheck() {
   return request('/health');
 }

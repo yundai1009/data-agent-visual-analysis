@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { Database, Zap, BarChart3, LayoutDashboard, ChevronLeft, ChevronRight, LogOut, KeyRound, X, UserRoundPen } from 'lucide-react';
+import { Database, Zap, BarChart3, LayoutDashboard, Shield, ChevronLeft, ChevronRight, LogOut, KeyRound, X, UserRoundPen } from 'lucide-react';
 import { useApp } from '../AppContext';
 import { changePassword, changeUsername } from '../api';
 
@@ -10,6 +10,9 @@ const navItems = [
   { to: '/report', icon: BarChart3, label: '报表历史' },
   { to: '/dashboard', icon: LayoutDashboard, label: '图表看板' },
 ];
+
+// 管理员专属入口：仅 admin 角色显示
+const adminNav = { to: '/admin', icon: Shield, label: '管理后台' };
 
 export default function Sidebar({ collapsed, onToggle }) {
   const navigate = useNavigate();
@@ -83,7 +86,7 @@ export default function Sidebar({ collapsed, onToggle }) {
 
       {/* Nav */}
       <nav className="flex-1 p-2 space-y-0.5 mt-1">
-        {navItems.map((item) => (
+        {[...navItems, ...(user?.role === 'admin' ? [adminNav] : [])].map((item) => (
           <NavLink
             key={item.to}
             to={item.to}

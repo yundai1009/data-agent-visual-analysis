@@ -7,6 +7,7 @@ import DataManagement from './pages/DataManagement';
 import Analysis from './pages/Analysis';
 import Report from './pages/Report';
 import Dashboard from './pages/Dashboard';
+import Admin from './pages/Admin';
 import NotFound from './pages/NotFound';
 import { fetchMe } from './api';
 import { AppProvider, useApp } from './AppContext';
@@ -76,6 +77,7 @@ export default function App() {
                       <Route path="/report" element={<ProtectedRoute><Report /></ProtectedRoute>} />
                       <Route path="/report/:reportId" element={<ProtectedRoute><Report /></ProtectedRoute>} />
                       <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+                      <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
                       <Route path="*" element={<ProtectedRoute><NotFound /></ProtectedRoute>} />
                     </Routes>
                   </ErrorBoundary>

@@ -661,6 +661,39 @@ def test_看板CRUD与隔离(client):
     assert client.get(f"/dashboards/{dbid}", headers=h).status_code == 404
 
 
+def test_管理后台统计与权限(client):
+    """管理后台：种子管理员可看统计与用户列表（脱敏）；普通用户 403。"""
+    # 普通用户 → 403
+    tok = _register(client, "mgruser1")
+    h = {"Authorization": f"Bearer {tok}"}
+    assert client.get("/admin/statistics", headers=h).status_code == 403
+    assert client.get("/admin/users", headers=h).status_code == 403
+
+    # 种子管理员登录
+    r = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
+    assert r.status_code == 200, r.text
+    h_admin = {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+    # 统计总览：字段齐全 + 趋势 7 天升序
+    r = client.get("/admin/statistics", headers=h_admin)
+    assert r.status_code == 200
+    body = r.json()
+    for k in ("用户数", "数据集数", "报表数", "看板数"):
+        assert k in body["总览"]
+    assert len(body["趋势"]) == 7
+    assert body["趋势"][0]["日期"] < body["趋势"][-1]["日期"]
+
+    # 用户列表：包含刚注册用户与 admin；无敏感字段；含用量字段
+    r = client.get("/admin/users", headers=h_admin)
+    assert r.status_code == 200
+    users = r.json()["用户列表"]
+    assert any(u["用户名"] == "mgruser1" for u in users)
+    assert any(u["用户名"] == "admin" and u["角色"] == "admin" for u in users)
+    for u in users:
+        assert "password_hash" not in u and "llm_api_key" not in u
+        assert "报表数" in u and "数据集数" in u and "最近报表时间" in u
+
+
 # ---- 8.5 LLM 安全 ----
 
 def test_非法provider_400(client):
