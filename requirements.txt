@@ -22,4 +22,6 @@ plotly
 # 测试
 pytest
 pytest-timeout
+# E2E 浏览器冒烟（scripts/smoke_e2e_browser.py）
+playwright
 jieba
