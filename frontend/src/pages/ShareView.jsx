@@ -1,26 +1,64 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Share2, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { Share2, AlertTriangle, ShieldCheck, Lock } from 'lucide-react';
 import { getSharedReport } from '../api';
 import EChartsChart from '../components/EChartsChart';
 
-// 公开分享只读页：/s/:shareId（无需登录，仅展示）
+// 公开分享只读页：/s/:shareId（无需登录，仅展示；可设访问密码）
 export default function ShareView() {
   const { shareId } = useParams();
   const [report, setReport] = useState(null);
   const [error, setError] = useState('');
   const [tab, setTab] = useState('table');
   const [loading, setLoading] = useState(true);
+  // 密码保护状态
+  const [needsPassword, setNeedsPassword] = useState(false);
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState('');
 
-  useEffect(() => {
-    let cancelled = false;
+  const load = (pwd) => {
     setLoading(true);
-    getSharedReport(shareId)
-      .then((data) => { if (!cancelled) setReport(data); })
-      .catch((e) => { if (!cancelled) setError(e.message || '分享内容加载失败'); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [shareId]);
+    setAuthError('');
+    getSharedReport(shareId, pwd)
+      .then((data) => { setReport(data); setNeedsPassword(false); })
+      .catch((e) => {
+        if (e.status === 401) { setNeedsPassword(true); setAuthError('密码不正确，请重试'); }
+        else setError(e.message || '分享内容加载失败');
+      })
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(''); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [shareId]);
+
+  // 需密码：先展示密码输入卡片
+  if (!loading && needsPassword) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center p-8">
+        <div className="bg-white rounded-2xl border border-gray-200 p-8 text-center max-w-sm w-full">
+          <Lock className="w-9 h-9 text-gray-300 mx-auto mb-3" />
+          <p className="text-sm text-gray-700 font-medium mb-1">此分享已设置访问密码</p>
+          <p className="text-xs text-gray-400 mb-4">请输入分享者提供的密码后查看</p>
+          {authError && <p className="text-xs text-red-500 mb-2">{authError}</p>}
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && load(password)}
+            placeholder="访问密码"
+            autoFocus
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent mb-3"
+          />
+          <button
+            onClick={() => load(password)}
+            disabled={!password}
+            className="w-full px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-deep transition-all disabled:opacity-40"
+          >
+            查看报表
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

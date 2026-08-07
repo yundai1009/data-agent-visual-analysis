@@ -423,16 +423,18 @@ def _确认报表归属(user_id: str, report_id: str) -> None:
 def 创建分享链接(
     report_id: str,
     有效小时数: int = Query(24, ge=1, le=720),
+    密码: str = Query("", max_length=32, description="可选访问密码，空=无需密码"),
     user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """为报表创建分享链接（仅创建者）。返回可公开访问的只读链接。"""
     _确认报表归属(user["user_id"], report_id)
     from repositories import share_repo
-    info = share_repo.创建分享(user["user_id"], report_id, 有效小时数)
+    info = share_repo.创建分享(user["user_id"], report_id, 有效小时数, 密码.strip())
     return {
         "链接ID": info["share_id"],
         "分享链接": f"/s/{info['share_id']}",
         "过期时间": info["过期时间"],
+        "需密码": info["需密码"],
     }
 
 

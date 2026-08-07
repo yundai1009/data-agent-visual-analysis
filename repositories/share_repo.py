@@ -21,7 +21,7 @@ def _now_iso() -> str:
 
 
 def 初始化分享表() -> None:
-    """幂等创建 share_links 表。"""
+    """幂等创建 share_links 表（含 password 列；旧表自动迁移补列）。"""
     with _get_conn() as conn:
         conn.execute(
             """
@@ -30,7 +30,8 @@ def 初始化分享表() -> None:
                 user_id    TEXT NOT NULL,
                 report_id  TEXT NOT NULL,
                 expires_at TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                password   TEXT
             )
             """
         )
@@ -40,10 +41,14 @@ def 初始化分享表() -> None:
             ON share_links (report_id)
             """
         )
+        # 迁移：旧表没有 password 列时补列（ALTER TABLE 幂等由列检查保证）
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(share_links)").fetchall()}
+        if "password" not in cols:
+            conn.execute("ALTER TABLE share_links ADD COLUMN password TEXT")
 
 
-def 创建分享(user_id: str, report_id: str, hours: int = 24) -> Dict[str, Any]:
-    """为指定报表创建分享链接，返回 {share_id, expires_at, created_at}。"""
+def 创建分享(user_id: str, report_id: str, hours: int = 24, password: str = "") -> Dict[str, Any]:
+    """为指定报表创建分享链接，可设访问密码（password 非空时访问需凭密码）。"""
     初始化分享表()
     share_id = uuid.uuid4().hex
     now = _now_iso()
@@ -51,13 +56,14 @@ def 创建分享(user_id: str, report_id: str, hours: int = 24) -> Dict[str, Any
     with _write_lock, _get_conn() as conn:
         conn.execute(
             """
-            INSERT INTO share_links (share_id, user_id, report_id, expires_at, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO share_links (share_id, user_id, report_id, expires_at, created_at, password)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (share_id, user_id, report_id, expires, now),
+            (share_id, user_id, report_id, expires, now, password or None),
         )
-    logger.info("创建分享 %s → 报表 %s（%dh）", share_id, report_id, hours)
-    return {"share_id": share_id, "过期时间": expires, "创建时间": now}
+    logger.info("创建分享 %s → 报表 %s（%dh%s）", share_id, report_id, hours,
+               "，带密码" if password else "")
+    return {"share_id": share_id, "过期时间": expires, "创建时间": now, "需密码": bool(password)}
 
 
 def 读取有效分享(share_id: str) -> Optional[Dict[str, Any]]:
@@ -66,7 +72,7 @@ def 读取有效分享(share_id: str) -> Optional[Dict[str, Any]]:
     now = _now_iso()
     with _get_conn() as conn:
         row = conn.execute(
-            "SELECT share_id, user_id, report_id, expires_at, created_at "
+            "SELECT share_id, user_id, report_id, expires_at, created_at, password "
             "FROM share_links WHERE share_id = ? AND expires_at > ?",
             (share_id, now),
         ).fetchone()
@@ -78,6 +84,8 @@ def 读取有效分享(share_id: str) -> Optional[Dict[str, Any]]:
         "report_id": row["report_id"],
         "过期时间": row["expires_at"],
         "创建时间": row["created_at"],
+        "密码": row["password"] or "",
+        "需密码": bool(row["password"]),
     }
 
 

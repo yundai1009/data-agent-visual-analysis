@@ -17,6 +17,7 @@ export default function Report() {
   // 分享弹窗状态
   const [showShare, setShowShare] = useState(false);
   const [shareHours, setShareHours] = useState(24);
+  const [sharePassword, setSharePassword] = useState('');
   const [shareLinks, setShareLinks] = useState([]);
   const [shareMsg, setShareMsg] = useState('');
   const [copied, setCopied] = useState(false);
@@ -157,8 +158,9 @@ export default function Report() {
   const handleCreateShare = async () => {
     if (!currentReportId) return;
     try {
-      await createShare(currentReportId, shareHours);
-      setShareMsg(`已生成，有效期 ${shareHours} 小时`);
+      const res = await createShare(currentReportId, shareHours, sharePassword.trim());
+      setShareMsg(`已生成，有效期 ${shareHours} 小时${res.需密码 ? '，需访问密码' : ''}`);
+      setSharePassword('');
       await reloadShares();
     } catch (e) {
       setShareMsg('生成失败：' + (e.message || e));
@@ -480,7 +482,7 @@ export default function Report() {
             </div>
 
             {/* 生成区 */}
-            <div className="flex items-center gap-2 mb-4">
+            <div className="flex items-center gap-2 mb-2">
               <select
                 value={shareHours}
                 onChange={(e) => setShareHours(Number(e.target.value))}
@@ -491,15 +493,21 @@ export default function Report() {
                 <option value={72}>3 天</option>
                 <option value={168}>7 天</option>
               </select>
+              <input
+                value={sharePassword}
+                onChange={(e) => setSharePassword(e.target.value)}
+                placeholder="访问密码（可选，留空无需密码）"
+                className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-xs bg-white focus:outline-none focus:border-accent"
+              />
               <button
                 onClick={handleCreateShare}
-                className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 transition-all"
+                className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 transition-all whitespace-nowrap"
               >
                 <Link2 className="w-3.5 h-3.5" /> 生成分享链接
               </button>
             </div>
             <p className="text-[11px] text-gray-400 mb-4">
-              任何人凭链接可查看本报表（只读），到期或撤销后立即失效
+              任何人凭链接可查看本报表（只读）；设置密码后需输入密码访问；到期或撤销后立即失效
             </p>
 
             {shareMsg && <p className="text-xs text-emerald-600 mb-3">{shareMsg}</p>}

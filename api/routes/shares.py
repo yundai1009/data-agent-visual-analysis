@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 
 from repositories import report_repo, share_repo
 
@@ -25,11 +25,17 @@ _公开字段 = ("标题", "图表类型", "图表配置", "报表数据", "结�
 
 
 @router.get("/{share_id}")
-def 公开查看报表(share_id: str) -> Dict[str, Any]:
-    """按分享令牌读取报表只读视图；过期/撤销/报表已删 → 404。"""
+def 公开查看报表(share_id: str, request: Request) -> Dict[str, Any]:
+    """按分享令牌读取报表只读视图；过期/撤销/报表已删 → 404；设置了密码需凭密码（401）。"""
     share = share_repo.读取有效分享(share_id)
     if not share:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分享链接不存在或已过期")
+
+    # 密码保护：分享设置了密码时，请求需带 ?password= 且匹配，否则 401
+    if share["需密码"]:
+        given = (request.query_params.get("password") or "").strip()
+        if given != share["密码"]:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="需要访问密码")
 
     # 报表可能已被创建者删除：分享随之失效（不暴露内部信息）
     item = report_repo.读取报表(share["user_id"], share["report_id"])

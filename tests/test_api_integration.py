@@ -764,6 +764,34 @@ def test_报表分享链接(client):
     assert client.get(f"/share-data/{info['share_id']}").status_code == 404
 
 
+def test_分享密码保护(client):
+    """分享密码：创建带密码 → 无密码 401、错密码 401、对密码 200；旧数据兼容（无密码字段）。"""
+    tok = _register(client, "sharepwd1")
+    did = _upload(client, tok).json()["数据集ID"]
+    h = {"Authorization": f"Bearer {tok}"}
+    r = client.post("/reports/generate", json={"数据集ID": did, "分析需求": "按地区统计"}, headers=h)
+    rid = r.json()["报表ID"]
+
+    # 创建带密码的分享（query 参数 密码）
+    r = client.post(f"/reports/{rid}/share?密码=abc123", headers=h)
+    assert r.status_code == 200
+    assert r.json()["需密码"] is True
+    sid = r.json()["链接ID"]
+
+    # 无密码 → 401
+    assert client.get(f"/share-data/{sid}").status_code == 401
+    # 错密码 → 401
+    assert client.get(f"/share-data/{sid}?password=wrong").status_code == 401
+    # 对密码 → 200
+    r = client.get(f"/share-data/{sid}?password=abc123")
+    assert r.status_code == 200 and "图表配置" in r.json()
+
+    # 不带密码的普通分享不受影响
+    r2 = client.post(f"/reports/{rid}/share", headers=h)
+    sid2 = r2.json()["链接ID"]
+    assert client.get(f"/share-data/{sid2}").status_code == 200
+
+
 def test_报表重放(client):
     """历史重放：用原报表参数重新生成 → 新报表（ID 不同、内容一致）；跨用户 404。"""
     tok = _register(client, "replayer1")
