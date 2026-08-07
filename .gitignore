@@ -83,3 +83,8 @@ data/chroma_db/
 
 # E2E ð�����в����ͼ/��ʱ���ݣ�
 scripts/.smoke/
+
+# 私有文档：按约定不推送，仅保留本地
+docs/从零理解项目.md
+docs/面试问答预测.md
+docs/用户使用指南.md
