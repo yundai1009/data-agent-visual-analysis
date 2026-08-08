@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BarChart3 } from 'lucide-react';
-import { login, register, sendCode } from '../api';
+import { login, register, sendCode, sendResetCode, resetPassword } from '../api';
 import { useApp } from '../AppContext';
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -9,7 +9,8 @@ const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 export default function Login() {
   const navigate = useNavigate();
   const { setAuth } = useApp();
-  const [mode, setMode] = useState('login'); // login | register
+  const [mode, setMode] = useState('login'); // login | register | reset
+  const [info, setInfo] = useState('');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
@@ -41,7 +42,7 @@ export default function Login() {
     setError('');
     setSending(true);
     try {
-      await sendCode(target);
+      await (mode === 'reset' ? sendResetCode(target) : sendCode(target));
       setCooldown(60);
     } catch (err) {
       setError(err.message || '验证码发送失败');
@@ -67,6 +68,16 @@ export default function Login() {
           return;
         }
         res = await register(username.trim(), email.trim(), code.trim(), password);
+      } else if (mode === 'reset') {
+        // 密码重置：成功后回到登录模式提示用新密码登录
+        setInfo('');
+        await resetPassword(email.trim(), code.trim(), password);
+        setPassword('');
+        setCode('');
+        setMode('login');
+        setInfo('密码已重置，请用新密码登录');
+        setLoading(false);
+        return;
       } else {
         res = await login(username.trim(), password);
       }
@@ -132,9 +143,15 @@ export default function Login() {
                    style={{ background: 'linear-gradient(135deg, #2e7ab8, #0f4c81)' }}>
                 <BarChart3 className="w-5 h-5 text-white" />
               </div>
-              <h1 className="text-xl font-bold tracking-tight text-white">{mode === 'login' ? '欢迎回来' : '创建账号'}</h1>
-              <p className="text-xs text-white/50 mt-1.5">{mode === 'login' ? '登录你的数据工作台' : '注册后即可开始分析数据'}</p>
+              <h1 className="text-xl font-bold tracking-tight text-white">{mode === 'login' ? '欢迎回来' : mode === 'reset' ? '重置密码' : '创建账号'}</h1>
+              <p className="text-xs text-white/50 mt-1.5">{mode === 'login' ? '登录你的数据工作台' : mode === 'reset' ? '通过邮箱验证码重置登录密码' : '注册后即可开始分析数据'}</p>
             </div>
+
+            {info && (
+              <div className="mb-4 px-3 py-2.5 rounded-lg border border-emerald-400/30 text-xs text-emerald-300" style={{ background: 'rgba(16,185,129,.12)' }}>
+                {info}
+              </div>
+            )}
 
             {error && (
               <div className="mb-4 px-3 py-2.5 rounded-lg border border-red-400/30 text-xs text-red-300" style={{ background: 'rgba(220,38,38,.12)' }}>
@@ -143,13 +160,22 @@ export default function Login() {
             )}
 
             <form onSubmit={handleSubmit} className="space-y-3.5">
+              {mode !== 'reset' && (
               <div>
                 <label className={labelCls}>{mode === 'login' ? '用户名或邮箱' : '用户名'}</label>
                 <input className={inputCls} value={username} onChange={(e) => setUsername(e.target.value)}
                        placeholder={mode === 'login' ? '输入用户名或邮箱' : '输入用户名'} required />
               </div>
+              )}
 
-              {mode === 'register' && (
+              {mode === 'reset' && (
+                <div>
+                  <label className={labelCls}>邮箱</label>
+                  <input type="email" className={inputCls} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="注册时使用的邮箱" required />
+                </div>
+              )}
+
+              {(mode === 'register' || mode === 'reset') && (
                 <>
                   <div>
                     <label className={labelCls}>邮箱</label>
@@ -173,10 +199,18 @@ export default function Login() {
                 <input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} className={inputCls} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="至少 6 位" required />
               </div>
 
+              {mode === 'login' && (
+                <div className="text-right -mt-1">
+                  <button type="button" className="text-xs text-blue-200/80 hover:text-white transition-colors" onClick={() => { setInfo(''); setMode('reset'); setError(''); }}>
+                    忘记密码？
+                  </button>
+                </div>
+              )}
+
               <button type="submit" disabled={loading}
                 className="w-full py-2.5 rounded-lg text-sm font-semibold text-white hover:opacity-90 transition-all disabled:opacity-50"
                 style={{ background: 'linear-gradient(135deg, #2e7ab8, #0f4c81)', boxShadow: '0 10px 24px -10px rgba(15,76,129,.7)' }}>
-                {loading ? '处理中…' : mode === 'login' ? '登录' : '注册'}
+                {loading ? '处理中…' : mode === 'login' ? '登录' : mode === 'reset' ? '重置密码' : '注册'}
               </button>
             </form>
 

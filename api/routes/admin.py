@@ -54,3 +54,15 @@ def get_llm_usage(
     """LLM token 用量统计（P1 加固：成本可见性，近 N 天总量/按天/按 provider）。"""
     from repositories import usage_repo
     return usage_repo.统计用量(days=days)
+
+
+@router.get("/audit")
+def get_audit_log(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user_id: str = Query("", description="可选按用户过滤"),
+    user: dict = Depends(require_admin),
+) -> Dict[str, Any]:
+    """操作审计日志（P2 加固：谁在何时做了什么，支持分页与按用户过滤）。"""
+    from repositories import audit_repo
+    return {"审计列表": audit_repo.查询(limit=limit, offset=offset, user_id=user_id.strip())}

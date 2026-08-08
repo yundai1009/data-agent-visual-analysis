@@ -109,6 +109,8 @@ async def delete_dataset(dataset_id: str, user: dict = Depends(get_current_user)
     """删除一个数据集（仅限归属用户）。"""
     if not _仓储.删除(user["user_id"], dataset_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在")
+    from repositories import audit_repo
+    audit_repo.记录(user["user_id"], "删除数据集", target_type="dataset", target_id=dataset_id)
     return {"message": "已删除"}
 
 

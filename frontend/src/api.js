@@ -134,6 +134,21 @@ export async function sendCode(email) {
   });
 }
 
+// P2 加固：密码重置（重置验证码 + 重置密码）
+export async function sendResetCode(email) {
+  return request('/auth/reset-code', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function resetPassword(email, code, password) {
+  return request('/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ email, code, password }),
+  });
+}
+
 export async function register(username, email, code, password) {
   return request('/auth/register', {
     method: 'POST',

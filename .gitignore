@@ -91,3 +91,6 @@ docs/鐢ㄦ埛浣跨敤鎸囧崡.md
 
 # 本地 CI 模拟环境
 .venv_ci_sim/
+
+# 数据备份产物
+data/backups/

@@ -366,6 +366,9 @@ def export_report(
     user: dict = Depends(get_current_user),
 ) -> StreamingResponse:
     """导出报表：xlsx / csv / pdf（仅限归属用户）。"""
+    # P2 加固：数据导出属敏感操作，记审计
+    from repositories import audit_repo
+    audit_repo.记录(user["user_id"], "导出报表", target_type="report", target_id=report_id, detail=f"format={format}")
     import io
     from urllib.parse import quote
 
@@ -468,6 +471,8 @@ def delete_report(report_id: str, user: dict = Depends(get_current_user)) -> Dic
     from repositories import report_repo
     if not report_repo.删除报表(user["user_id"], report_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报表不存在")
+    from repositories import audit_repo
+    audit_repo.记录(user["user_id"], "删除报表", target_type="report", target_id=report_id)
     return {"message": "已删除"}
 
 
@@ -522,6 +527,8 @@ def 撤销分享链接(
     from repositories import share_repo
     if not share_repo.撤销分享(user["user_id"], share_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分享链接不存在")
+    from repositories import audit_repo
+    audit_repo.记录(user["user_id"], "撤销分享", target_type="share", target_id=share_id, detail=report_id)
     return {"message": "已撤销"}
 
 

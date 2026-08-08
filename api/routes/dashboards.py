@@ -106,4 +106,6 @@ def 删除看板(
     """删除看板（仅限归属用户）。"""
     if not dashboard_repo.删除看板(user["user_id"], dashboard_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="看板不存在")
+    from repositories import audit_repo
+    audit_repo.记录(user["user_id"], "删除看板", target_type="dashboard", target_id=dashboard_id)
     return {"看板ID": dashboard_id, "status": "deleted"}

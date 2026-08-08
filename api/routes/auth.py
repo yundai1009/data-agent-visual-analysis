@@ -150,12 +150,16 @@ def login(payload: LoginRequest, request: Request) -> AuthResponse:
     else:
         user = user_repo.按用户名查询(identifier)
     if not user or not auth_service.verify_password(payload.password, user["password_hash"]):
+        from repositories import audit_repo
+        audit_repo.记录(user.get("user_id", ""), "登录失败", username=payload.username.strip(), detail="密码错误")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
     _清除登录限流(identifier, client_host)
     token = auth_service.create_access_token(
         user["user_id"], user["role"], user["username"],
         token_version=user_repo.读取token版本(user["user_id"]),
     )
+    from repositories import audit_repo
+    audit_repo.记录(user["user_id"], "登录成功", username=user["username"])
     return AuthResponse(
         access_token=token,
         user={
@@ -347,6 +351,8 @@ def change_password(payload: dict, user: dict = Depends(get_current_user)) -> Di
     user_repo.更新密码(user["user_id"], auth_service.hash_password(new_password))
     # P1 加固：改密后旧 JWT 全部吊销（token_version +1）
     user_repo.增加token版本(user["user_id"])
+    from repositories import audit_repo
+    audit_repo.记录(user["user_id"], "修改密码", username=user.get("username", ""))
     return {"message": "密码已修改"}
 
 
@@ -367,3 +373,59 @@ def change_username(payload: dict, user: dict = Depends(get_current_user)) -> Di
     # P1 加固：改用户名后旧 JWT 全部吊销
     user_repo.增加token版本(user["user_id"])
     return {"message": "用户名已修改", "username": new_username}
+
+@router.post("/reset-code")
+def send_reset_code(payload: SendCodeRequest) -> Dict[str, str]:
+    """发送密码重置验证码：邮箱须已注册；60s 限频；未注册邮箱响应一致防枚举。"""
+    email = payload.email.strip().lower()
+    record = email_code_repo.查询验证码(email)
+    if record:
+        last_sent = datetime.fromisoformat(record["last_sent_at"])
+        if (datetime.now(timezone.utc) - last_sent).total_seconds() < email_service.SEND_COOLDOWN_SECONDS:
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="发送过于频繁，请稍后再试")
+    # 未注册邮箱不生成码（响应一致，防邮箱枚举）
+    if not user_repo.按邮箱查询(email):
+        return {"message": "验证码已发送"}
+    code = email_service.生成验证码()
+    expires_at = (datetime.now(timezone.utc) + timedelta(seconds=email_service.CODE_TTL_SECONDS)).isoformat()
+    email_code_repo.保存验证码(email, email_service.验证码哈希(code), expires_at)
+    email_service.发送验证码邮件(email, code)
+    return {"message": "验证码已发送"}
+
+
+@router.post("/reset-password")
+def reset_password(payload: dict) -> Dict[str, str]:
+    """邮箱 + 验证码 + 新密码重置密码；成功后吊销所有旧 token（P2 加固）。"""
+    email = str(payload.get("email") or "").strip().lower()
+    code = str(payload.get("code") or "").strip()
+    new_password = str(payload.get("password") or "")
+    if not email or not code or not new_password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="邮箱、验证码和新密码必填")
+    if len(new_password) < 6:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="新密码至少 6 位")
+
+    user = user_repo.按邮箱查询(email)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该邮箱未注册")
+
+    record = email_code_repo.查询验证码(email)
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请先获取验证码")
+    if record["used"]:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="验证码已使用，请重新获取")
+    now = datetime.now(timezone.utc)
+    if now > datetime.fromisoformat(record["expires_at"]):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="验证码已过期，请重新获取")
+    if record["verify_attempts"] >= email_service.MAX_VERIFY_ATTEMPTS:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="验证码尝试次数过多，请重新获取")
+    if not email_service.校验验证码(code, record["code_hash"]):
+        email_code_repo.增加尝试次数(email)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="验证码错误")
+
+    user_repo.更新密码(user["user_id"], auth_service.hash_password(new_password))
+    # 吊销旧 token + 标码已用
+    user_repo.增加token版本(user["user_id"])
+    email_code_repo.标记已用(email)
+    from repositories import audit_repo
+    audit_repo.记录(user["user_id"], "重置密码", username=user["username"])
+    return {"message": "密码已重置"}
