@@ -151,7 +151,7 @@ def login(payload: LoginRequest, request: Request) -> AuthResponse:
         user = user_repo.按用户名查询(identifier)
     if not user or not auth_service.verify_password(payload.password, user["password_hash"]):
         from repositories import audit_repo
-        audit_repo.记录(user.get("user_id", ""), "登录失败", username=payload.username.strip(), detail="密码错误")
+        audit_repo.记录((user or {}).get("user_id", ""), "登录失败", username=payload.username.strip(), detail="密码错误")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
     _清除登录限流(identifier, client_host)
     token = auth_service.create_access_token(
