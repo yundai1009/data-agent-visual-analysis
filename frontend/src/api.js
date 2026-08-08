@@ -402,3 +402,34 @@ export async function fetchAdminUsers() {
 export async function healthCheck() {
   return request('/health');
 }
+
+// C 修复：提交用户反馈（后端 /feedback 已落库，补齐前端入口）
+export async function submitFeedback({ taskId = '', score, correction = '', syncKb = false } = {}) {
+  return request('/feedback', {
+    method: 'POST',
+    body: JSON.stringify({ 任务ID: taskId, 评分: score, 纠错内容: correction, 同步知识库: syncKb }),
+  });
+}
+
+// D 合规：导出我的全部数据（JSON 下载）
+export async function exportUserData() {
+  const token = localStorage.getItem('access_token') || '';
+  const res = await fetch('/auth/export', {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    const err = new Error(`导出失败（HTTP ${res.status}）`);
+    err.status = res.status;
+    throw err;
+  }
+  const blob = await res.blob();
+  return { blob, filename: parseContentDispositionFilename(res.headers.get('Content-Disposition'), '我的数据.json') };
+}
+
+// D 合规：注销账号（验证密码，删除全部数据）
+export async function deleteAccount(password) {
+  return request('/auth/delete-account', {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  });
+}

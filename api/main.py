@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from api.contracts import HealthResponse
 from api.error_handlers import register_error_handlers
 from api.middleware import RequestBodyLimitMiddleware, RequestIDMiddleware
-from api.routes import datasets, reports, clean, examples, auth, admin, dashboards, shares
+from api.routes import datasets, reports, clean, examples, auth, admin, dashboards, shares, feedback
 from config.settings import EnvConfig
 
 logger = logging.getLogger(__name__)
@@ -116,6 +116,7 @@ app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(dashboards.router)
 app.include_router(shares.router)
+app.include_router(feedback.router)
 
 
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"], include_in_schema=False)

@@ -208,6 +208,33 @@ def 增加token版本(user_id: str) -> None:
         )
 
 
+def 删除用户及数据(user_id: str) -> None:
+    """D：注销——删除用户及其全部业务数据（数据集/报表/看板/分享/反馈/审计）。
+
+    事务内多表删除（注销请求一并清除审计中的个人标识）；chromadb 记忆同步按 user 清理。
+    """
+    初始化用户表()
+    try:
+        from 后端_核心.agent.记忆 import 删除用户记忆
+        删除用户记忆(user_id)  # 记忆向量库按 user 清理
+    except Exception as _exc:
+        logger.warning("删除记忆失败（不影响主库删除）: %s", _exc)
+    with _write_lock, _get_conn() as conn:
+        # 确保所有表存在（用户可能从未使用某功能，表未初始化时 DELETE 报 no such table）
+        from 后端_核心.存储.sqlite_repo import 初始化数据库
+        from repositories import audit_repo, dashboard_repo, feedback_repo, report_repo, share_repo
+        初始化数据库()
+        report_repo.初始化报表表()
+        dashboard_repo.初始化看板表()
+        share_repo.初始化分享表()
+        feedback_repo.初始化反馈表()
+        audit_repo.初始化审计表()
+        for table in ("datasets", "reports", "dashboards", "share_links", "feedback", "audit_log", "users"):
+            conn.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
+    logger.info("已删除用户及全部数据: %s", user_id)
+    return True
+
+
 def 按用户ID查询(user_id: str) -> Optional[Dict[str, Any]]:
     """按 user_id 查询（含密码哈希）。"""
     初始化用户表()

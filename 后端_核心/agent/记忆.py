@@ -157,6 +157,20 @@ def 清理记忆(keep: int = 5000) -> int:
         return 0
 
 
+def 删除用户记忆(user_id: str) -> int:
+    """D：注销时删除该用户的全部记忆（按 metadata user_id 过滤）。"""
+    try:
+        col = _get_collection()
+        data = col.get(where={"user_id": user_id}, include=["metadatas"])
+        ids = data.get("ids") or []
+        if ids:
+            col.delete(ids=ids)
+        return len(ids)
+    except Exception as exc:
+        logger.warning("删除用户记忆失败: %s", exc)
+        return 0
+
+
 def 记忆条数() -> int:
     """返回当前记忆库中的记录数。"""
     try:

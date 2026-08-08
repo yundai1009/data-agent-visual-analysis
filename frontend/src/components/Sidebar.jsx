@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { Database, Zap, BarChart3, LayoutDashboard, Shield, ChevronLeft, ChevronRight, LogOut, KeyRound, X, UserRoundPen } from 'lucide-react';
+import { Database, Zap, BarChart3, LayoutDashboard, Shield, ChevronLeft, ChevronRight, LogOut, KeyRound, X, UserRoundPen, MessageSquareHeart, Download, UserX } from 'lucide-react';
 import { useApp } from '../AppContext';
-import { changePassword, changeUsername } from '../api';
+import { changePassword, changeUsername, submitFeedback, exportUserData, deleteAccount } from '../api';
 
 const navItems = [
   { to: '/data', icon: Database, label: '数据管理' },
@@ -26,6 +26,53 @@ export default function Sidebar({ collapsed, onToggle }) {
   const [newName, setNewName] = useState('');
   const [nameMsg, setNameMsg] = useState('');
   const [nameBusy, setNameBusy] = useState(false);
+  // 反馈弹窗（C：意见反馈入口）
+  const [fbOpen, setFbOpen] = useState(false);
+  const [fbScore, setFbScore] = useState(5);
+  const [fbText, setFbText] = useState('');
+  const [fbMsg, setFbMsg] = useState('');
+  const [fbBusy, setFbBusy] = useState(false);
+  // D 合规：数据导出 + 注销
+  const [delOpen, setDelOpen] = useState(false);
+  const [delPwd, setDelPwd] = useState('');
+  const [delMsg, setDelMsg] = useState('');
+  const [delBusy, setDelBusy] = useState(false);
+  const handleExportData = async () => {
+    try {
+      const { blob, filename } = await exportUserData();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert('导出失败：' + (e.message || e));
+    }
+  };
+  const handleDeleteAccount = async () => {
+    setDelBusy(true);
+    setDelMsg('');
+    try {
+      await deleteAccount(delPwd);
+      handleLogout();
+    } catch (e) {
+      setDelMsg(e.message || '注销失败');
+    }
+    setDelBusy(false);
+  };
+
+  const handleSubmitFeedback = async () => {
+    setFbBusy(true);
+    setFbMsg('');
+    try {
+      await submitFeedback({ score: fbScore, correction: fbText });
+      setFbMsg('感谢反馈！');
+      setFbText('');
+      setTimeout(() => setFbOpen(false), 1200);
+    } catch (e) {
+      setFbMsg('提交失败：' + (e.message || e));
+    }
+    setFbBusy(false);
+  };
 
   const handleLogout = () => {
     logout();
@@ -161,6 +208,36 @@ export default function Sidebar({ collapsed, onToggle }) {
           {!collapsed && <span className="ml-2 text-xs">修改密码</span>}
         </button>
 
+        {/* D：导出我的数据 */}
+        <button
+          onClick={handleExportData}
+          className="flex items-center justify-center w-full py-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] transition-all"
+          title="导出我的全部数据"
+        >
+          <Download className="w-4 h-4 shrink-0" />
+          {!collapsed && <span className="ml-2 text-xs">导出数据</span>}
+        </button>
+
+        {/* 意见反馈（C） */}
+        <button
+          onClick={() => { setFbOpen(true); setFbMsg(''); setFbText(''); }}
+          className="flex items-center justify-center w-full py-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] transition-all"
+          title="意见反馈"
+        >
+          <MessageSquareHeart className="w-4 h-4 shrink-0" />
+          {!collapsed && <span className="ml-2 text-xs">意见反馈</span>}
+        </button>
+
+        {/* D：注销账号 */}
+        <button
+          onClick={() => { setDelOpen(true); setDelMsg(''); setDelPwd(''); }}
+          className="flex items-center justify-center w-full py-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-all"
+          title="注销账号"
+        >
+          <UserX className="w-4 h-4 shrink-0" />
+          {!collapsed && <span className="ml-2 text-xs">注销账号</span>}
+        </button>
+
         <button
           onClick={handleLogout}
           className="flex items-center justify-center w-full py-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-all"
@@ -244,6 +321,82 @@ export default function Sidebar({ collapsed, onToggle }) {
             </div>
           </div>
         </>
+      )}
+      {/* 意见反馈弹窗（C） */}
+      {fbOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setFbOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-[var(--shadow-card-lg)] w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
+                <MessageSquareHeart className="w-4 h-4 text-accent" /> 意见反馈
+              </h3>
+              <button onClick={() => setFbOpen(false)} className="p-1 rounded hover:bg-gray-100 text-gray-400">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="mb-3">
+              <p className="text-xs text-gray-500 mb-1.5">使用体验（1-5 分）</p>
+              <div className="flex gap-1.5">
+                {[1, 2, 3, 4, 5].map((v) => (
+                  <button key={v} onClick={() => setFbScore(v)}
+                    className={`w-9 h-9 rounded-lg text-sm font-semibold transition-all ${
+                      v <= fbScore ? 'bg-accent text-white' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+                    }`}>
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <textarea
+              value={fbText}
+              onChange={(e) => setFbText(e.target.value)}
+              rows={3}
+              placeholder="想吐槽或建议什么？（可选）"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent resize-none mb-2"
+            />
+            {fbMsg && <p className={`text-xs mb-2 ${fbMsg.startsWith('提交失败') ? 'text-red-500' : 'text-emerald-600'}`}>{fbMsg}</p>}
+            <button
+              onClick={handleSubmitFeedback}
+              disabled={fbBusy}
+              className="w-full py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-deep transition-all disabled:opacity-50"
+            >
+              {fbBusy ? '提交中…' : '提交反馈'}
+            </button>
+          </div>
+        </div>
+      )}
+
+
+      {/* D：注销账号弹窗 */}
+      {delOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setDelOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-[var(--shadow-card-lg)] w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
+                <UserX className="w-4 h-4 text-red-500" /> 注销账号
+              </h3>
+              <button onClick={() => setDelOpen(false)} className="p-1 rounded hover:bg-gray-100 text-gray-400">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mb-3">将永久删除你的账号与全部数据（数据集/报表/看板/分享），此操作不可恢复。请输入密码确认。</p>
+            <input
+              type="password"
+              value={delPwd}
+              onChange={(e) => setDelPwd(e.target.value)}
+              placeholder="当前密码"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400 mb-2"
+            />
+            {delMsg && <p className="text-xs text-red-500 mb-2">{delMsg}</p>}
+            <button
+              onClick={handleDeleteAccount}
+              disabled={delBusy || !delPwd}
+              className="w-full py-2 rounded-lg bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-all disabled:opacity-50"
+            >
+              {delBusy ? '注销中…' : '确认注销'}
+            </button>
+          </div>
+        </div>
       )}
     </aside>
   );

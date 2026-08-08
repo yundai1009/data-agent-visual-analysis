@@ -6,8 +6,11 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
+import io
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from api.dependencies import get_current_user
@@ -448,3 +451,51 @@ def reset_password(payload: dict) -> Dict[str, str]:
     from repositories import audit_repo
     audit_repo.记录(user["user_id"], "重置密码", username=user["username"])
     return {"message": "密码已重置"}
+
+@router.get("/export")
+def export_user_data(user: dict = Depends(get_current_user)) -> StreamingResponse:
+    """D：导出我的全部数据（个保法）— 个人资料 + 数据集元数据 + 报表全文 + 看板，JSON 下载。"""
+    import json as _json
+    from repositories import report_repo, dashboard_repo
+    from 后端_核心.存储.sqlite_repo import 列出数据集
+
+    personal = user_repo.按用户ID查询(user["user_id"])
+    if personal:
+        personal.pop("password_hash", None)
+        personal.pop("llm_api_key", None)
+
+    datasets = 列出数据集(user["user_id"], limit=500)
+    reports_meta = report_repo.列出报表(user["user_id"], limit=500)
+    reports = []
+    for r in reports_meta:
+        detail = report_repo.读取报表(user["user_id"], r["报表ID"])
+        if detail:
+            reports.append(detail["报表"])
+    dashboards = dashboard_repo.列出看板(user["user_id"])
+
+    data = {
+        "个人资料": personal,
+        "数据集": datasets,
+        "报表": reports,
+        "看板": dashboards,
+        "导出时间": datetime.now(timezone.utc).isoformat(),
+    }
+    payload = _json.dumps(data, ensure_ascii=False, default=str)
+    buf = io.BytesIO(payload.encode("utf-8"))
+    filename = f"我的数据-{user.get('username', 'user')}.json"
+    return StreamingResponse(
+        buf,
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename=export.json; filename*=UTF-8''{quote(filename)}'},
+    )
+
+
+@router.post("/delete-account")
+def delete_account(payload: dict, user: dict = Depends(get_current_user)) -> Dict[str, str]:
+    """D：注销账号（个保法）— 验证密码后删除用户及其全部数据。"""
+    password = str(payload.get("password") or "")
+    current = user_repo.按用户ID查询(user["user_id"])
+    if not current or not auth_service.verify_password(password, current["password_hash"]):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="密码错误")
+    user_repo.删除用户及数据(user["user_id"])
+    return {"message": "账号已注销"}
