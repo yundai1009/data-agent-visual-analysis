@@ -24,6 +24,8 @@ pytest==8.4.2
 pytest-timeout==2.4.0
 jieba==0.42.1
 playwright==1.61.0
+# 旧版 .xls 读取（B2 修复：白名单支持 .xls，缺少该依赖会 ImportError）
+xlrd==2.0.2
 
 # 静态加密（LLM Key 落库加密）
 cryptography==44.0.3

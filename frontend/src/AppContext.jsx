@@ -48,9 +48,11 @@ export function AppProvider({ children }) {
     try {
       localStorage.removeItem('access_token');
       localStorage.removeItem('user_cache');
+      localStorage.removeItem('dataset_cache'); // B5 修复：登出清数据集缓存，防下个账号看到残留数据
     } catch { /* ignore */ }
     setUser(null);
     setIsAuthed(false);
+    setDataset(null);
   }, []);
 
   useEffect(() => {

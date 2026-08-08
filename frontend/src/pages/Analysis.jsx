@@ -73,6 +73,8 @@ export default function Analysis() {
   const scrollRef = useRef(null);
   // 多轮追问：最近一次分析完成的报表ID（追问链），追问输入框内容
   const lastReportIdRef = useRef(null);
+  // B6 修复：请求序号守卫——取消后立即重开时，旧 finally 不能误关新请求的 generating
+  const generateSeqRef = useRef(0);
   const [followUp, setFollowUp] = useState('');
 
   const profile = dataset?.数据画像;
@@ -184,6 +186,7 @@ export default function Analysis() {
     };
     const controller = new AbortController();
     abortRef.current = controller;
+    const seq = ++generateSeqRef.current; // B6：本次请求序号
 
     try {
       await generateReportStream(payload, {
@@ -222,7 +225,10 @@ export default function Analysis() {
         setError('分析失败：' + e.message);
       }
     } finally {
-      setGenerating(false);
+      // B6：仅最新请求可收尾（旧请求的取消/完成不干扰新请求状态）
+      if (generateSeqRef.current === seq) {
+        setGenerating(false);
+      }
     }
   }
 

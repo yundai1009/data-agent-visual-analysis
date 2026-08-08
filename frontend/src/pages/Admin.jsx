@@ -23,7 +23,7 @@ export default function Admin() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = (user?.role === 'admin' || user?.roles?.includes?.('admin'));
 
   const load = async () => {
     try {

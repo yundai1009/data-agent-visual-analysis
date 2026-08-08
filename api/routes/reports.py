@@ -23,6 +23,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
+# B1 修复：PDF 中文字体模块级一次性注册（多次导出不重复注册；非 Windows 无
+# C:/Windows/Fonts/msyh.ttc 时回退内置 Helvetica，避免导出必 500）
+_PDF_FONT = "Helvetica"
+try:
+    from reportlab.pdfbase import pdfmetrics as _pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont as _TTFont
+    if os.path.exists("C:/Windows/Fonts/msyh.ttc"):
+        _pdfmetrics.registerFont(_TTFont("MSYH", "C:/Windows/Fonts/msyh.ttc"))
+        _PDF_FONT = "MSYH"
+except Exception:  # noqa: BLE001
+    logger.warning("微软雅黑字体不可用，PDF 导出回退内置 Helvetica")
+
 # SSE 直播全局并发上限：每个流式请求 spawn 一个后台线程做 LLM 分析，
 # 无限制并发会占满 FastAPI 线程池（DoS）。超出上限直接 503 拒绝。
 _STREAM_SEMAPHORE = threading.BoundedSemaphore(4)
@@ -406,24 +418,21 @@ def export_report(
             media_type="text/csv; charset=utf-8",
             headers={"Content-Disposition": f"attachment; filename=report.csv; filename*=UTF-8''{quote(f'{标题}.csv')}"},
         )
-    # PDF（reportlab + 微软雅黑中文字体）
+    # PDF（reportlab + 中文字体；字体模块级注册 _PDF_FONT，多次导出不重复注册）
     import html  # P0 加固：Paragraph 按 HTML 子集解析，数据须转义防 <img> 任意文件读取/注入
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     def _esc(value) -> str:
         """全部用户/数据内容进入 Paragraph 前转义（防 reportlab 解析 tags 与文件引用）。"""
         return html.escape(str(value), quote=False)
 
-    pdfmetrics.registerFont(TTFont("MSYH", "C:/Windows/Fonts/msyh.ttc"))
     styles = getSampleStyleSheet()
-    body = ParagraphStyle("Body", parent=styles["Normal"], fontName="MSYH", fontSize=10, leading=15)
-    title = ParagraphStyle("Title", parent=styles["Title"], fontName="MSYH", fontSize=16, leading=22)
-    head = ParagraphStyle("Head", parent=styles["Heading2"], fontName="MSYH", fontSize=11, leading=16, spaceBefore=10)
+    body = ParagraphStyle("Body", parent=styles["Normal"], fontName=_PDF_FONT, fontSize=10, leading=15)
+    title = ParagraphStyle("Title", parent=styles["Title"], fontName=_PDF_FONT, fontSize=16, leading=22)
+    head = ParagraphStyle("Head", parent=styles["Heading2"], fontName=_PDF_FONT, fontSize=11, leading=16, spaceBefore=10)
 
     doc = SimpleDocTemplate(buf, pagesize=A4)
     story = [Paragraph(f"报表：{_esc(标题)}", title), Spacer(1, 8)]
@@ -442,7 +451,7 @@ def export_report(
         table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8eef5")),
             ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
-            ("FONTNAME", (0, 0), (-1, -1), "MSYH"),
+            ("FONTNAME", (0, 0), (-1, -1), _PDF_FONT),
             ("FONTSIZE", (0, 0), (-1, -1), 8),
         ]))
         story.append(table)

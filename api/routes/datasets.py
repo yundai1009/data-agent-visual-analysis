@@ -8,6 +8,10 @@ import io
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 from api.contracts import DatasetPreviewResponse, DatasetUploadResponse
 from api.dependencies import get_current_user
 from 后端_核心.文件数据服务 import 读取上传表格
@@ -57,6 +61,14 @@ async def upload_dataset(
         # 解析失败：清理已写入的文件，避免残留
         stored_path.unlink(missing_ok=True)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except ImportError as exc:
+        # B2 修复：.xls 依赖 xlrd 缺失等导入错误 → 400 并清理残留，而非 500
+        stored_path.unlink(missing_ok=True)
+        logger.error("上传解析依赖缺失: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="文件解析依赖缺失（.xls 需要 xlrd），请检查服务端依赖",
+        ) from exc
 
     # 持久化到 SQLite。进程重启后仍可凭 dataset_id 取回数据。
     _仓储.保存(

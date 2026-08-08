@@ -36,7 +36,9 @@ export default function Sidebar({ collapsed, onToggle }) {
     setPwdMsg('');
     setPwdBusy(true);
     try {
-      await changePassword(oldPwd, newPwd);
+      const res = await changePassword(oldPwd, newPwd);
+      // B7 修复：改密吊销旧 token，保存后端返回的新 token 避免下次请求 401 登出
+      if (res?.access_token) localStorage.setItem('access_token', res.access_token);
       setPwdMsg('密码已修改');
       setOldPwd(''); setNewPwd('');
       setTimeout(() => setPwdOpen(false), 1100);
@@ -49,8 +51,17 @@ export default function Sidebar({ collapsed, onToggle }) {
     setNameMsg('');
     setNameBusy(true);
     try {
-      await changeUsername(newName);
-      setNameMsg('用户名已修改，请重新登录后生效');
+      const res = await changeUsername(newName);
+      // B7 修复：改名吊销旧 token，保存新 token 并同步 user_cache 的 username
+      if (res?.access_token) {
+        localStorage.setItem('access_token', res.access_token);
+        try {
+          const uc = JSON.parse(localStorage.getItem('user_cache') || '{}');
+          uc.username = newName;
+          localStorage.setItem('user_cache', JSON.stringify(uc));
+        } catch { /* ignore */ }
+      }
+      setNameMsg('用户名已修改');
       setTimeout(() => setNameOpen(false), 1400);
     } catch (e) {
       setNameMsg(e.message || '修改失败');
@@ -86,7 +97,7 @@ export default function Sidebar({ collapsed, onToggle }) {
 
       {/* Nav */}
       <nav className="flex-1 p-2 space-y-0.5 mt-1">
-        {[...navItems, ...(user?.role === 'admin' ? [adminNav] : [])].map((item) => (
+        {[...navItems, ...((user?.role === 'admin' || user?.roles?.includes?.('admin')) ? [adminNav] : [])].map((item) => (
           <NavLink
             key={item.to}
             to={item.to}

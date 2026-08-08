@@ -23,6 +23,8 @@ export default function Report() {
   const [copied, setCopied] = useState(false);
   // 历史重放状态
   const [replaying, setReplaying] = useState(false);
+  // B4 修复：当前正在查看的报表 ID（直接访问旧 URL 时列表下标推断会错对象）
+  const [viewingReportId, setViewingReportId] = useState('');
   // 分页：是否有更多历史 + 加载更多中
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -45,6 +47,7 @@ export default function Report() {
           const detail = await getReport(targetId);
           if (!cancelled && detail?.报表) {
             setLocalReport(detail.报表);
+            setViewingReportId(detail.报表ID); // B4：以详情响应为准
             setPrevTitle(detail.上一报表标题 || '');
             const idx = items.findIndex((i) => i.报表ID === targetId);
             if (idx >= 0) setCurrentIndex(idx);
@@ -66,6 +69,7 @@ export default function Report() {
       const detail = await getReport(reportMeta[index].报表ID);
       if (detail?.报表) {
         setLocalReport(detail.报表);
+        setViewingReportId(detail.报表ID); // B4
         setPrevTitle(detail.上一报表标题 || '');
       }
     } catch (e) {
@@ -111,7 +115,8 @@ export default function Report() {
   };
 
   // 导出：Excel / CSV / PDF 走后端端点（带 token），Trace 前端本地生成 Markdown
-  const currentReportId = reportMeta[currentIndex]?.报表ID || localReport?._id;
+  // B4 修复：操作目标 = 当前实际查看的报表，而非列表下标推断（直访旧 URL 不再错对象）
+  const currentReportId = viewingReportId;
   const handleExport = async (format) => {
     if (!currentReportId) return;
     try {

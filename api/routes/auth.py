@@ -353,7 +353,12 @@ def change_password(payload: dict, user: dict = Depends(get_current_user)) -> Di
     user_repo.增加token版本(user["user_id"])
     from repositories import audit_repo
     audit_repo.记录(user["user_id"], "修改密码", username=user.get("username", ""))
-    return {"message": "密码已修改"}
+    # B7 修复：改密即吊销旧 token，必须返回新 token 否则前端下一次请求 401 秒登出
+    new_token = auth_service.create_access_token(
+        user["user_id"], user.get("role", "analyst"), user.get("username", ""),
+        token_version=user_repo.读取token版本(user["user_id"]),
+    )
+    return {"message": "密码已修改", "access_token": new_token}
 
 
 @router.post("/change-username")
@@ -372,7 +377,14 @@ def change_username(payload: dict, user: dict = Depends(get_current_user)) -> Di
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     # P1 加固：改用户名后旧 JWT 全部吊销
     user_repo.增加token版本(user["user_id"])
-    return {"message": "用户名已修改", "username": new_username}
+    from repositories import audit_repo
+    audit_repo.记录(user["user_id"], "修改用户名", username=new_username)
+    # B7 修复：改名即吊销旧 token，必须返回新 token（含新用户名）
+    new_token = auth_service.create_access_token(
+        user["user_id"], user.get("role", "analyst"), new_username,
+        token_version=user_repo.读取token版本(user["user_id"]),
+    )
+    return {"message": "用户名已修改", "username": new_username, "access_token": new_token}
 
 @router.post("/reset-code")
 def send_reset_code(payload: SendCodeRequest) -> Dict[str, str]:
