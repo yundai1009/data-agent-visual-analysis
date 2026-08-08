@@ -178,7 +178,7 @@ export default function DataManagement() {
 
   function handleJoinAnalysis(field) {
     if (!dataset) return;
-    setAppDataset(prev => ({ ...prev, focusField: field }));
+    // B22 修复：移除无消费方的 focusField 死数据；按钮跳转分析页保持功能
     navigate('/analysis');
   }
 

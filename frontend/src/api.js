@@ -257,6 +257,13 @@ export async function generateReportStream(payload, { onEvent, signal } = {}) {
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
+  // B20 修复：SSE 总超时兜底（后端挂起时不再“分析中…”永久）
+  const SSE_TIMEOUT_MS = 180000;
+  const sseTimer = setTimeout(async () => {
+    try { await reader.cancel(); } catch { /* ignore */ }
+    if (onEvent) onEvent({ type: 'error', message: '分析超时，请稍后重试' });
+  }, SSE_TIMEOUT_MS);
+  try {
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -277,6 +284,9 @@ export async function generateReportStream(payload, { onEvent, signal } = {}) {
         }
       }
     }
+  }
+  } finally {
+    clearTimeout(sseTimer); // B20：结束/出错均清除超时
   }
 }
 

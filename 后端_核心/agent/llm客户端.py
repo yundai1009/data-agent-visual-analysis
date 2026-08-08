@@ -55,7 +55,11 @@ def 最近LLM失败() -> Dict[str, Any]:
     return dict(_last_llm_fail)
 
 
-def _record_llm_fail(reason: str) -> None:
+def _record_llm_fail(reason: str, llm_config: Optional["LLMRequestConfig"] = None) -> None:
+    """记录失败原因。优先写入请求级 llm_config（并发安全）；无 config 时写全局并清空旧值。"""
+    if llm_config is not None:
+        llm_config.llm_fail_reason = reason
+        return
     _last_llm_fail.clear()
     _last_llm_fail.update({"reason": reason})
 
@@ -182,7 +186,7 @@ def chat_completion(
 
     api_key = (user_api_key or EnvConfig.LLM_API_KEY or "").strip()
     if api_key.lower() in _UNCONFIGURED_KEY_PLACEHOLDERS:
-        _record_llm_fail("未配置 API Key（服务端 .env 为占位符），请在页面填写自己的 Key")
+        _record_llm_fail("未配置 API Key（服务端 .env 为占位符），请在页面填写自己的 Key", llm_config)
         return None
 
     base_url = ((user_base_url or EnvConfig.LLM_BASE_URL) or "").rstrip("/")
@@ -209,19 +213,19 @@ def chat_completion(
         response = requests.post(url, headers=headers, json=payload, timeout=request_timeout, allow_redirects=False)
     except requests.RequestException as exc:
         logger.warning("LLM 网络异常: %s", exc)
-        _record_llm_fail(f"LLM 网络异常（无法访问 {base_url}）：{type(exc).__name__}，请检查网络/代理")
+        _record_llm_fail(f"LLM 网络异常（无法访问 {base_url}）：{type(exc).__name__}，请检查网络/代理", llm_config)
         return None
 
     if response.status_code != 200:
         logger.warning("LLM HTTP %s（响应内容已脱敏，仅记录状态码）", response.status_code)
-        _record_llm_fail(_解释HTTP状态(response.status_code, model, base_url))
+        _record_llm_fail(_解释HTTP状态(response.status_code, model, base_url), llm_config)
         return None
 
     try:
         return response.json()
     except (json.JSONDecodeError, ValueError) as exc:
         logger.warning("LLM 响应非 JSON: %s", exc)
-        _record_llm_fail("LLM 响应不是合法 JSON")
+        _record_llm_fail("LLM 响应不是合法 JSON", llm_config)
         return None
 
 

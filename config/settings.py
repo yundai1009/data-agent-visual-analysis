@@ -150,3 +150,4 @@ class LLMRequestConfig:
     base_url: str
     model: str = ""
     api_key: str = ""
+    llm_fail_reason: str = ""  # B12：请求级 LLM 失败原因（并发安全传递）

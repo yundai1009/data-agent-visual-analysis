@@ -418,7 +418,8 @@ def reset_password(payload: dict) -> Dict[str, str]:
 
     user = user_repo.按邮箱查询(email)
     if not user:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该邮箱未注册")
+        # B13 修复：未注册邮箱返回与"验证码错误"一致的文案，防邮箱枚举
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="验证码错误")
 
     record = email_code_repo.查询验证码(email)
     if record is None:

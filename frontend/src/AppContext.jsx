@@ -14,7 +14,10 @@ export function AppProvider({ children }) {
   const [dataset, setDataset] = useState(() => loadState('dataset_cache', null));
   // 认证状态
   const [user, setUser] = useState(() => loadState('user_cache', null));
-  const [isAuthed, setIsAuthed] = useState(() => !!localStorage.getItem('access_token'));
+  const [isAuthed, setIsAuthed] = useState(() => {
+    // B18 修复：Safari 隐私模式/localStorage 禁用时 getItem 抛 SecurityError，需 try 包裹
+    try { return !!localStorage.getItem('access_token'); } catch { return false; }
+  });
 
   // 一次性清理旧版前端报表缓存（阶段 12 收尾：报表历史一律以服务端为准）
   useEffect(() => {

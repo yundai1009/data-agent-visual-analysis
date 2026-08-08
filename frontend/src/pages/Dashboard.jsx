@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Plus, Trash2, Pencil, ExternalLink, X, ImageOff, ChevronLeft, ChevronRight } from 'lucide-react';
 import { listDashboards, getDashboard, createDashboard, updateDashboard, deleteDashboard, listReports } from '../api';
@@ -48,11 +48,16 @@ export default function Dashboard() {
     }
   };
 
+  // B19 修复：看板切换序号守卫（快速切换时旧响应不覆盖当前看板）
+  const loadSeqRef = useRef(0);
   const loadDetail = async (id) => {
+    const seq = ++loadSeqRef.current;
     try {
       const res = await getDashboard(id);
+      if (loadSeqRef.current !== seq) return;
       setDetail(res);
     } catch (e) {
+      if (loadSeqRef.current !== seq) return;
       setError('看板详情加载失败：' + (e.message || e));
       setDetail(null);
     }

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Download, DownloadCloud, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, Copy, Check, Clock, Link2, X, RotateCcw, GitBranch } from 'lucide-react';
 import { listReports, getReport, deleteReport, exportReport, createShare, listShares, revokeShare, replayReport } from '../api';
@@ -19,12 +19,15 @@ export default function Report() {
   const [shareHours, setShareHours] = useState(24);
   const [sharePassword, setSharePassword] = useState('');
   const [shareLinks, setShareLinks] = useState([]);
-  const [shareMsg, setShareMsg] = useState('');
+  const [shareMsg, setShareMsg] = useState(''); // 成功提示（绿）
+  const [shareErr, setShareErr] = useState(''); // B14：失败提示（红）
   const [copied, setCopied] = useState(false);
   // 历史重放状态
   const [replaying, setReplaying] = useState(false);
   // B4 修复：当前正在查看的报表 ID（直接访问旧 URL 时列表下标推断会错对象）
   const [viewingReportId, setViewingReportId] = useState('');
+  // B19 修复：翻页序号守卫（快速连续切换时旧响应不覆盖新页面）
+  const switchSeqRef = useRef(0);
   // 分页：是否有更多历史 + 加载更多中
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -64,13 +67,16 @@ export default function Report() {
   // 翻页时从后端拉详情
   const switchTo = async (index) => {
     if (index < 0 || index >= reportMeta.length) return;
+    const seq = ++switchSeqRef.current; // B19
     setCurrentIndex(index);
     try {
       const detail = await getReport(reportMeta[index].报表ID);
+      if (switchSeqRef.current !== seq) return; // 已有更新的切换，丢弃本次结果
       if (detail?.报表) {
         setLocalReport(detail.报表);
         setViewingReportId(detail.报表ID); // B4
         setPrevTitle(detail.上一报表标题 || '');
+        setLoadError(''); // B17：成功翻页后清理残留错误
       }
     } catch (e) {
       console.error('报表详情加载失败:', e);
@@ -147,37 +153,47 @@ export default function Report() {
   const openShareModal = async () => {
     setShowShare(true);
     setShareMsg('');
+    setShareErr('');
     setCopied(false);
     if (!currentReportId) return;
     try {
       const res = await listShares(currentReportId);
       setShareLinks(res?.分享列表 || []);
     } catch (e) {
-      setShareMsg('加载分享列表失败：' + (e.message || e));
+      setShareErr('加载分享列表失败：' + (e.message || e));
     }
   };
   const reloadShares = async () => {
-    const res = await listShares(currentReportId);
-    setShareLinks(res?.分享列表 || []);
+    try {
+      const res = await listShares(currentReportId);
+      setShareLinks(res?.分享列表 || []);
+    } catch (e) {
+      // B15 修复：列表刷新失败不影响生成成功的提示（否则误报"生成失败"）
+      setShareErr('分享列表刷新失败：' + (e.message || e));
+    }
   };
   const handleCreateShare = async () => {
     if (!currentReportId) return;
     try {
       const res = await createShare(currentReportId, shareHours, sharePassword.trim());
       setShareMsg(`已生成，有效期 ${shareHours} 小时${res.需密码 ? '，需访问密码' : ''}`);
+      setShareErr('');
       setSharePassword('');
       await reloadShares();
     } catch (e) {
-      setShareMsg('生成失败：' + (e.message || e));
+      setShareMsg('');
+      setShareErr('生成失败：' + (e.message || e));
     }
   };
   const handleRevokeShare = async (shareId) => {
     if (!window.confirm('撤销后链接立即失效，确定？')) return;
     try {
       await revokeShare(currentReportId, shareId);
+      setShareMsg('已撤销');
+      setShareErr('');
       await reloadShares();
     } catch (e) {
-      setShareMsg('撤销失败：' + (e.message || e));
+      setShareErr('撤销失败：' + (e.message || e));
     }
   };
   const handleCopyShare = async (link) => {
@@ -186,7 +202,7 @@ export default function Report() {
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
     } catch {
-      setShareMsg('复制失败，请手动复制链接');
+      setShareErr('复制失败，请手动复制链接');
     }
   };
   const fmtExpire = (iso) => {
@@ -516,6 +532,7 @@ export default function Report() {
             </p>
 
             {shareMsg && <p className="text-xs text-emerald-600 mb-3">{shareMsg}</p>}
+            {shareErr && <p className="text-xs text-red-500 mb-3">{shareErr}</p>}
 
             {/* 已有链接列表 */}
             {shareLinks.length > 0 && (
@@ -549,7 +566,7 @@ export default function Report() {
                 })}
               </div>
             )}
-            {shareLinks.length === 0 && !shareMsg && (
+            {shareLinks.length === 0 && !shareMsg && !shareErr && (
               <p className="text-xs text-gray-400 text-center py-4">还没有分享链接</p>
             )}
           </div>

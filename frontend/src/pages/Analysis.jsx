@@ -309,7 +309,7 @@ export default function Analysis() {
             onClick={() => setShowAdvanced(true)}
             title="点击修改图表类型"
           >
-            {nlInput.trim() ? '图表：自动' : (chartMap[chartType] || '自动推荐')} ✎
+            {(chartMap[chartType] || '自动推荐')} ✎  {/* B21：预览与实际提交一致，不再恒显“自动” */}
           </span>
           {xAxis && (
             <span className="bg-white border border-accent/20 rounded-md px-2 py-1 font-medium cursor-pointer hover:border-accent/60 transition-colors" onClick={() => setShowAdvanced(true)} title="点击修改 X 轴">

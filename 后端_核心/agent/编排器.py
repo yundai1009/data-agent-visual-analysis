@@ -176,7 +176,7 @@ def 编排Agent(
         "推荐理由": intent_override.get("推荐理由", ""),
         "Agent_Trace": trace.to_list(),
         # LLM 失败原因：降级时透传给用户（避免静默回退规则让用户困惑）
-        "LLM失败原因": 最近LLM失败().get("reason", ""),
+        "LLM失败原因": (llm_config.llm_fail_reason if llm_config else "") or 最近LLM失败().get("reason", ""),
     }
 
 

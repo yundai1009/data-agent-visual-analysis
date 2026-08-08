@@ -49,7 +49,7 @@ async def clean_dataset(
         user_id=user["user_id"],
         dataset_id=dataset_id,
         文件名=item["文件名"] + "（已清洗）",
-        存储路径=item.get("存储路径", ""),
+        存储路径=item.get("路径", ""),  # B11 修复：仓储返回键为"路径"（原"存储路径"取不到 → 溯源元数据被清空）
         df=cleaned_df,
         画像=new_profile,
     )

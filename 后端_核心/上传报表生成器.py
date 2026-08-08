@@ -740,6 +740,9 @@ def _聚合数据(
         return df.head(200).copy()
 
     valid_y = [field for field in y轴列表 if field in df.columns]
+    # B10 修复：求和/均值等聚合要求数值列，日期/文本列过滤掉，否则 agg("sum") TypeError
+    if 聚合方式 not in ("count", "计数"):
+        valid_y = [field for field in valid_y if pd.api.types.is_numeric_dtype(df[field])]
     group_fields = [x轴]
     if 分组字段 and 分组字段 in df.columns and 分组字段 != x轴:
         group_fields.append(分组字段)

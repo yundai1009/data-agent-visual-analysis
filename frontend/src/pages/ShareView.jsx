@@ -19,6 +19,7 @@ export default function ShareView() {
   const load = (pwd) => {
     setLoading(true);
     setAuthError('');
+    setError('');  // B16：重试成功后清除残留错误页
     getSharedReport(shareId, pwd)
       .then((data) => { setReport(data); setNeedsPassword(false); })
       .catch((e) => {
