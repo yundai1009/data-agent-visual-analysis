@@ -72,8 +72,10 @@ def 保存记忆(
             logger.warning("embedding 失败，跳过记忆保存")
             return False
 
+        from datetime import datetime, timezone
         metadata = {
             "user_id": user_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),  # 批次4：供容量清理排序
             "需求": 需求[:200],
             "图表类型": str(意图.get("图表类型", "")),
             "x轴": str(意图.get("x轴", "")),
@@ -130,6 +132,29 @@ def 检索相似记忆(user_id: str, 需求: str, top_k: int = 3) -> List[Dict[s
     except Exception as exc:
         logger.warning("检索记忆失败: %s", exc)
         return []
+
+
+def 清理记忆(keep: int = 5000) -> int:
+    """批次4：记忆容量上限——超过 keep 条时删除最旧的（按 created_at 排序）。返回删除条数。"""
+    try:
+        col = _get_collection()
+        total = col.count()
+        if total <= keep:
+            return 0
+        data = col.get(include=["metadatas"])
+        ids = data.get("ids") or []
+        metas = data.get("metadatas") or []
+        pairs = []
+        for i, m in enumerate(metas):
+            pairs.append((str(m.get("created_at", "") if m else ""), ids[i]))
+        pairs.sort()  # 旧 → 新
+        drop_ids = [pid for _, pid in pairs[: total - keep]]
+        if drop_ids:
+            col.delete(ids=drop_ids)
+        return len(drop_ids)
+    except Exception as exc:
+        logger.warning("清理记忆失败: %s", exc)
+        return 0
 
 
 def 记忆条数() -> int:

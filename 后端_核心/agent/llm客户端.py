@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time  # 批次4：LLM 重试退避
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -201,6 +202,8 @@ def chat_completion(
         "messages": messages,
         "temperature": EnvConfig.LLM_TEMPERATURE,
         "stream": False,
+        # 批次4：输出长度上限（防失控/控成本，默认 2048）
+        "max_tokens": getattr(EnvConfig, "LLM_MAX_TOKENS", 2048),
     }
     if tools:
         payload["tools"] = tools
@@ -208,17 +211,32 @@ def chat_completion(
         payload["tool_choice"] = tool_choice
 
     request_timeout = timeout or EnvConfig.LLM_TIMEOUT or 30
-    try:
-        # P0 加固：禁重定向（防 SSRF 重定向绕过）
-        response = requests.post(url, headers=headers, json=payload, timeout=request_timeout, allow_redirects=False)
-    except requests.RequestException as exc:
-        logger.warning("LLM 网络异常: %s", exc)
-        _record_llm_fail(f"LLM 网络异常（无法访问 {base_url}）：{type(exc).__name__}，请检查网络/代理", llm_config)
-        return None
+    # 批次4：LLM 重试——网络异常与可重试状态码（429/5xx/408）最多重试 2 次（指数退避）
+    max_attempts = 3
+    response = None
+    for attempt in range(max_attempts):
+        try:
+            # P0 加固：禁重定向（防 SSRF 重定向绕过）
+            response = requests.post(url, headers=headers, json=payload, timeout=request_timeout, allow_redirects=False)
+        except requests.RequestException as exc:
+            logger.warning("LLM 网络异常（第 %d 次）: %s", attempt + 1, exc)
+            if attempt == max_attempts - 1:
+                _record_llm_fail(f"LLM 网络异常（无法访问 {base_url}）：{type(exc).__name__}，请检查网络/代理", llm_config)
+                return None
+            time.sleep(0.5 * (attempt + 1))
+            continue
 
-    if response.status_code != 200:
-        logger.warning("LLM HTTP %s（响应内容已脱敏，仅记录状态码）", response.status_code)
-        _record_llm_fail(_解释HTTP状态(response.status_code, model, base_url), llm_config)
+        if response.status_code == 200:
+            break
+        retryable = response.status_code in (408, 429, 500, 502, 503, 504)
+        if not retryable or attempt == max_attempts - 1:
+            logger.warning("LLM HTTP %s（响应内容已脱敏，仅记录状态码）", response.status_code)
+            _record_llm_fail(_解释HTTP状态(response.status_code, model, base_url), llm_config)
+            return None
+        logger.warning("LLM HTTP %s，重试（第 %d 次）", response.status_code, attempt + 1)
+        time.sleep(0.5 * (attempt + 1))
+
+    if response is None:
         return None
 
     try:

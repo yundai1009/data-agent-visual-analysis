@@ -58,6 +58,9 @@ class EnvConfig:
     JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
     JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
 
+    # LLM 输出长度上限（批次4：防超长输出失控/控制 token 成本）
+    LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "2048"))
+
     # CORS 白名单（P0 加固）：生产用逗号分隔的显式域名；默认仅本地开发源
     CORS_ORIGINS = [
         o.strip() for o in os.getenv(
