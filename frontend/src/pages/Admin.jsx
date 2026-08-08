@@ -48,7 +48,7 @@ export default function Admin() {
       标题: '最近 7 天报表生成趋势',
       X轴: '日期',
       Y轴: ['数量'],
-      数据: stats.趋势.map((d) => ({ 日期: d.日期.slice(5), 数量: d.数量 })),
+      数据: stats.趋势.map((d) => ({ 日期: (d?.日期 || '').slice(5), 数量: d?.数量 ?? 0 })),
     };
   }, [stats]);
 

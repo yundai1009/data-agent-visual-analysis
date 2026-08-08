@@ -64,7 +64,8 @@ def _数值摘要(df: pd.DataFrame, 数值字段: List[str]) -> Dict[str, Dict[s
 def _分类摘要(df: pd.DataFrame, fields: List[str]) -> Dict[str, Dict[str, int]]:
     summary: Dict[str, Dict[str, int]] = {}
     for column in fields:
-        value_counts = df[column].astype(str).value_counts(dropna=True).head(10)
+        # 批次3：先 dropna 再转 str——astype 会先把 NaN 变 'nan' 字符串，dropna 不再生效
+        value_counts = df[column].dropna().astype(str).value_counts().head(10)
         summary[column] = {str(index): int(value) for index, value in value_counts.items()}
     return summary
 

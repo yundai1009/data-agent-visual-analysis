@@ -430,7 +430,7 @@ export default function DataManagement() {
               {missingFields.length > 0 ? (
                 <>
                   <table className="w-full text-sm">
-                    <thead><tr className="text-xs text-gray-400 border-b border-gray-100"><th className="text-left py-2 font-medium">字段名</th><th className="text-left py-2 font-medium">缺失数量</th></tr></thead>
+                    <thead><tr className="text-xs text-gray-400 border-b border-gray-100"><th className="text-left py-2 font-medium">字段名</th><th className="text-left py-2 font-medium">缺失率</th></tr></thead>
                     <tbody>
                       {missingFields.map((mf, i) => (
                         <tr key={i}><td className="py-2.5">{mf.split('（')[0]}</td><td className="py-2.5 text-orange-600">{mf.split('（')[1]?.replace('）', '') || '—'}</td></tr>

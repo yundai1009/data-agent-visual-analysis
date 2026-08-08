@@ -29,6 +29,10 @@ _PWD_MAX_FAILS = 10
 _pwd_fails: Dict[str, tuple] = {}  # share_id -> (window_start, fail_count)
 
 
+
+_MAX_LIMIT_ENTRIES = 5000  # 批次3：限频字典容量上限，防内存无限增长
+
+
 def _密码尝试超限(share_id: str) -> bool:
     import time
     now = time.time()
@@ -40,6 +44,8 @@ def _密码尝试超限(share_id: str) -> bool:
 
 
 def _记录密码失败(share_id: str) -> None:
+    if len(_pwd_fails) >= _MAX_LIMIT_ENTRIES:
+        _pwd_fails.clear()  # 容量上限：整体重置
     import time
     now = time.time()
     start, count = _pwd_fails.get(share_id, (now, 0))

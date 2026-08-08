@@ -307,6 +307,7 @@ export async function exportReport(reportId, format) {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) {
+    if (res.status === 401) handleAuthExpired(`/reports/${reportId}/export`); // 批次3：走全局登出
     const err = new Error(`导出失败（HTTP ${res.status}）`);
     err.status = res.status;
     throw err;

@@ -473,6 +473,7 @@ export default function Report() {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url; a.download = 'report.html'; a.click();
+            URL.revokeObjectURL(url);  // 批次3：释放 blob
           }}>
             <Download className="w-3.5 h-3.5" /> HTML 报告
           </button>
@@ -483,6 +484,7 @@ export default function Report() {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url; a.download = 'report.json'; a.click();
+            URL.revokeObjectURL(url);  // 批次3：释放 blob
           }}>
             <DownloadCloud className="w-3.5 h-3.5" /> JSON 数据
           </button>

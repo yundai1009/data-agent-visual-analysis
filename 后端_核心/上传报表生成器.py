@@ -565,7 +565,8 @@ def _生成直方图数据(df: pd.DataFrame, field: Optional[str]) -> pd.DataFra
     if not field or field not in df.columns or not pd.api.types.is_numeric_dtype(df[field]):
         return df.head(200).copy()
     series = df[field].dropna()
-    if series.empty:
+    if series.empty or series.nunique() < 2:
+        # 全常量列：分布无意义，直接返回空表（避免 cut 边界重合的晦涩异常）
         return pd.DataFrame(columns=[field, "记录数"])
     bins = min(10, max(3, int(series.nunique())))
     bucket = pd.cut(series, bins=bins, duplicates="drop")

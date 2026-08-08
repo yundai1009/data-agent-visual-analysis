@@ -22,7 +22,13 @@ _LOGIN_MAX_FAILS = 5
 _LOGIN_WINDOW_SEC = 600
 
 
+
+_MAX_LIMIT_ENTRIES = 5000  # 批次3：限频字典容量上限，防内存无限增长
+
+
 def _登录限流拦截(identifier: str, client_host: str) -> bool:
+    if len(_LOGIN_ATTEMPTS) >= _MAX_LIMIT_ENTRIES:
+        _LOGIN_ATTEMPTS.clear()  # 容量上限：整体重置
     key = f"{identifier}|{client_host}"
     now = time.time()
     with _LOGIN_LOCK:
