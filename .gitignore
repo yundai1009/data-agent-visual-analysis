@@ -94,3 +94,7 @@ docs/鐢ㄦ埛浣跨敤鎸囧崡.md
 
 # 数据备份产物
 data/backups/
+
+# 面试准备材料（本地保留，不推送）
+docs/面试预测_*.docx
+scripts/gen_interview_docx.js
