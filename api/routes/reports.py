@@ -154,6 +154,12 @@ def _注入追问上下文(
     （最近一份附数据样例），让 LLM 与规则匹配能接着整段对话语境作答
     （如"那华南呢？"→ 沿用维度换过滤条件；连续追问 3 轮以上不丢前文）。
     跨用户读取上一报表 → 404；链上某份已被删除则截断到已读部分。
+
+    Token 预算（阶段 27）：
+    - 需求原文取报表「标题」（落库时为用户原话），而非「分析需求」字段——
+      后者是注入后的全量上下文，若回溯时再取它会指数膨胀（第 N 轮含前 N-1 轮全文）；
+    - 累计字符预算 1500（中文约 1 token/字），超预算的较早轮次降级为一行摘要
+      （「第 N 轮『原话』：图表类型」），最新一轮始终保留结论+样例。
     """
     if not payload.上一报表ID:
         return payload
@@ -177,23 +183,45 @@ def _注入追问上下文(
         rid = item["报表"].get("上一报表ID")
     chain.reverse()
 
+    # 字符预算（粗估 token 成本）；_结论截断 防单条超长 LLM 结论撑爆上下文
+    MAX_CHARS = 1500
+    结论截断 = 200
+
     lines = ["【上一轮分析上下文】（本次是针对上一轮的追问，可参考但不能照抄）"]
+    used = 0
     for idx, item in enumerate(chain, 1):
         prev = item["报表"]
         配置 = prev.get("图表配置", {})
-        lines.append(
-            f"- 第 {idx} 轮「{prev.get('分析需求') or item.get('标题') or '未命名'}」："
+        # 需求原文用标题（用户原话）——绝不回填注入后的「分析需求」，防指数膨胀
+        需求原文 = (prev.get("标题") or "未命名").strip()[:120]
+        图表行 = (
+            f"- 第 {idx} 轮「{需求原文}」："
             f"图表 {prev.get('图表类型', '') or '自动'}（X 轴：{配置.get('X轴') or '-'}，"
             f"Y 轴：{'、'.join(配置.get('Y轴') or []) or '-'}，分组：{配置.get('颜色') or '-'}）"
         )
         结论 = prev.get("结论")
-        if 结论:
-            lines.append(f"  结论：{结论}")
-        if idx == len(chain):  # 仅最近一份附数据样例（控制 token 量）
+        结论行 = f"  结论：{str(结论)[:结论截断]}" if 结论 else ""
+        样例行 = ""
+        if idx == len(chain):  # 仅最近一份附数据样例
             数据 = prev.get("报表数据", [])
             if 数据:
                 import json
-                lines.append(f"  数据样例（前 5 条）：{json.dumps(数据[:5], ensure_ascii=False)}")
+                样例行 = f"  数据样例（前 5 条）：{json.dumps(数据[:5], ensure_ascii=False)}"
+
+        cost = len(图表行) + len(结论行) + len(样例行)
+        # 超预算且非最新轮：只保留一行主题摘要（链头不丢，细节让位给最新语境）
+        if used + cost > MAX_CHARS and idx != len(chain):
+            lines.append(图表行)
+            used += len(图表行)
+            continue
+        lines.append(图表行)
+        used += len(图表行)
+        if 结论行:
+            lines.append(结论行)
+            used += len(结论行)
+        if 样例行:
+            lines.append(样例行)
+            used += len(样例行)
 
     payload.分析需求 = "\n".join(lines) + f"\n\n用户追问：{payload.分析需求}"
     return payload
