@@ -74,23 +74,3 @@ def require_admin(user: dict = Depends(get_current_user)) -> dict:
             detail="需要管理员权限",
         )
     return user
-
-
-def get_db_session():
-    # TODO: 接入真实数据库会话
-    yield None
-
-
-def get_redis_client():
-    # TODO: 接入真实 Redis 客户端
-    return None
-
-
-def get_chroma_client():
-    # TODO: 接入真实 Chroma 客户端
-    return None
-
-
-def get_token_bucket():
-    # TODO: 接入真实 Token 桶
-    return None
