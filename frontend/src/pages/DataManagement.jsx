@@ -176,7 +176,7 @@ export default function DataManagement() {
     setCleaning(false);
   }
 
-  function handleJoinAnalysis(field) {
+  function handleJoinAnalysis() {
     if (!dataset) return;
     // B22 修复：移除无消费方的 focusField 死数据；按钮跳转分析页保持功能
     navigate('/analysis');
