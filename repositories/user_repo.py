@@ -10,6 +10,7 @@ import logging
 import secrets
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from 后端_核心.存储.sqlite_repo import _get_conn, _write_lock
@@ -230,6 +231,13 @@ def 删除用户及数据(user_id: str) -> None:
         feedback_repo.初始化反馈表()
         audit_repo.初始化审计表()
         for table in ("datasets", "reports", "dashboards", "share_links", "feedback", "audit_log", "users"):
+            if table == "datasets":
+                # P0 修复：级联删除数据集时同步清理 data/uploads/ 物理文件副本
+                for row in conn.execute("SELECT stored_path FROM datasets WHERE user_id = ?", (user_id,)):
+                    try:
+                        Path(row["stored_path"]).unlink(missing_ok=True)
+                    except Exception as exc:
+                        logger.warning("注销清理数据集物理文件失败 %s: %s", row["stored_path"], exc)
             conn.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
     logger.info("已删除用户及全部数据: %s", user_id)
     return True

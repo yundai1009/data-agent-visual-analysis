@@ -272,15 +272,35 @@ def 列出数据集(user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
     ]
 
 
+def _删除存储文件(存储路径: Optional[str]) -> None:
+    """删除数据集对应的物理文件（best-effort，失败仅告警不阻断业务）。"""
+    if not 存储路径:
+        return
+    try:
+        Path(存储路径).unlink(missing_ok=True)
+    except Exception as exc:
+        logger.warning("清理数据集物理文件失败 %s: %s", 存储路径, exc)
+
+
 def 删除数据集(user_id: str, dataset_id: str) -> bool:
-    """删除一个数据集（仅限归属用户）。返回是否真的删除了。"""
+    """删除一个数据集（仅限归属用户）。返回是否真的删除了。
+
+    P0 修复：删除 DB 记录的同时清理 data/uploads/ 的物理文件副本，
+    避免上传-删除循环在磁盘上累积孤儿文件。
+    """
     with _write_lock, _get_conn() as conn:
+        row = conn.execute(
+            "SELECT stored_path FROM datasets WHERE dataset_id = ? AND user_id = ?",
+            (dataset_id, user_id),
+        ).fetchone()
+        stored_path = row["stored_path"] if row else None
         cur = conn.execute(
             "DELETE FROM datasets WHERE dataset_id = ? AND user_id = ?",
             (dataset_id, user_id),
         )
         deleted = cur.rowcount > 0
     if deleted:
+        _删除存储文件(stored_path)
         logger.info("删除数据集 %s（用户 %s）", dataset_id, user_id)
     return deleted
 
