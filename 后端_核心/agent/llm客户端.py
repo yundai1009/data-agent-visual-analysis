@@ -282,23 +282,36 @@ def extract_tool_call(response: Optional[Dict[str, Any]]) -> Optional[Dict[str, 
     return {"name": name, "arguments": arguments}
 
 
-def embed_text(text: str) -> Optional[List[float]]:
+def embed_text(
+    text: str,
+    llm_config: Optional["LLMRequestConfig"] = None,
+) -> Optional[List[float]]:
     """调用 OpenAI 兼容的 /embeddings 接口，返回向量。
+
+    与 ``chat_completion`` 相同的配置优先级：``llm_config`` > ``EnvConfig``。
+    此前直接读全局 EnvConfig（多 provider 并发下 embedding 走错供应商），
+    本轮对齐为请求级配置透传（见 记忆.py 调用链）。
 
     Args:
         text: 要编码的文本
+        llm_config: 请求级 LLM 配置（可选，缺省回退服务端全局配置）
 
     Returns:
         浮点数向量列表，失败返回 None
     """
-    if not is_llm_configured():
+    api_key = ((llm_config.api_key if llm_config else None) or EnvConfig.LLM_API_KEY or "").strip()
+    if not is_llm_configured(api_key):
         logger.warning("LLM 未配置，无法生成 embedding")
         return None
 
-    base_url = (EnvConfig.LLM_BASE_URL or "").rstrip("/")
+    base_url = (
+        (llm_config.base_url if llm_config else None)
+        or EnvConfig.LLM_BASE_URL
+        or ""
+    ).rstrip("/")
     url = f"{base_url}/embeddings"
     headers = {
-        "Authorization": f"Bearer {EnvConfig.LLM_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     # DeepSeek 使用 text-embedding-v3，OpenAI 使用 text-embedding-3-small

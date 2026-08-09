@@ -18,6 +18,7 @@ import chromadb
 from chromadb.config import Settings
 
 from 后端_核心.agent.llm客户端 import embed_text
+from config.settings import LLMRequestConfig
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,7 @@ def 保存记忆(
     意图: Dict[str, Any],
     画像摘要: str,
     用户反馈: Optional[str] = None,
+    llm_config: Optional[LLMRequestConfig] = None,
 ) -> bool:
     """把一次分析结果存入向量记忆（P0 加固：记忆按 user_id 隔离）。
 
@@ -62,12 +64,13 @@ def 保存记忆(
         意图: 标准化意图 dict（含图表类型、x轴、y轴等）
         画像摘要: 数据画像的文本摘要
         用户反馈: 用户评分/纠错（可选）
+        llm_config: 请求级 LLM 配置（embedding 与调用同供应商，避免跨请求串配置）
     """
     if not user_id:
         return False
     try:
         text = f"需求：{需求}\n意图：{json.dumps(意图, ensure_ascii=False)}\n画像：{画像摘要}"
-        vector = embed_text(text)
+        vector = embed_text(text, llm_config=llm_config)
         if vector is None:
             logger.warning("embedding 失败，跳过记忆保存")
             return False
@@ -98,7 +101,12 @@ def 保存记忆(
         return False
 
 
-def 检索相似记忆(user_id: str, 需求: str, top_k: int = 3) -> List[Dict[str, Any]]:
+def 检索相似记忆(
+    user_id: str,
+    需求: str,
+    top_k: int = 3,
+    llm_config: Optional[LLMRequestConfig] = None,
+) -> List[Dict[str, Any]]:
     """检索与当前需求最相似的 k 条当前用户的记忆（P0 加固：where 按 user_id 过滤）。
 
     Returns:
@@ -107,7 +115,7 @@ def 检索相似记忆(user_id: str, 需求: str, top_k: int = 3) -> List[Dict[s
     if not user_id:
         return []
     try:
-        vector = embed_text(需求)
+        vector = embed_text(需求, llm_config=llm_config)
         if vector is None:
             return []
         col = _get_collection()
