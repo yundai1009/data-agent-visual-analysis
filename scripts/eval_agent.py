@@ -23,6 +23,13 @@ from typing import Any, Dict, List, Optional
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 
+# 阶段 16 排障先例：en-US CI runner 与中文 Windows 控制台均为非 UTF-8，
+# 中文 + emoji print 会 UnicodeEncodeError；统一重配 stdout 为 UTF-8
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 # 项目根目录
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -255,8 +262,14 @@ def _字段匹配(实际: Dict[str, Any], 期望: Dict[str, Any], key: str) -> b
     return False
 
 
-def 评测(verbose: bool = False) -> Dict[str, Any]:
-    """运行全部 golden case，返回统计结果。"""
+def 评测(verbose: bool = False, enable_llm: bool = False) -> Dict[str, Any]:
+    """运行全部 golden case，返回统计结果。
+
+    Args:
+        verbose: 逐条输出对比明细
+        enable_llm: False=强制规则路径（无 key 基线）；True=走 LLM 路径
+            （需服务端配置 LLM key，36 条 × 3 轮 ReAct 会比较耗时）
+    """
     from 后端_核心.agent.编排器 import 解析自然语言需求
 
     cases = _加载_golden()
@@ -275,7 +288,7 @@ def 评测(verbose: bool = False) -> Dict[str, Any]:
 
         start = time.perf_counter()
         try:
-            result = 解析自然语言需求(需求, 画像, enable_llm=False)  # 强制走关键词匹配
+            result = 解析自然语言需求(需求, 画像, enable_llm=enable_llm)
         except Exception as e:
             if verbose:
                 print(f"  ❌ 异常: {e}")
@@ -333,13 +346,16 @@ def 评测(verbose: bool = False) -> Dict[str, Any]:
 
 if __name__ == "__main__":
     verbose = "--verbose" in sys.argv
+    use_llm = "--llm" in sys.argv
     if "--update-golden" in sys.argv:
         _保存_golden(DEFAULT_GOLDEN)
         print(f"已写入 {len(DEFAULT_GOLDEN)} 条默认用例")
     else:
-        result = 评测(verbose=verbose)
+        result = 评测(verbose=verbose, enable_llm=use_llm)
         print("\n" + "=" * 40)
-        print("📊 Agent 评测结果")
+        print("📊 Agent 评测结果" + ("（LLM 路径）" if use_llm else "（规则兜底基线）"))
         print("=" * 40)
         for key, val in result.items():
             print(f"  {key}: {val}")
+        if use_llm:
+            print("\n提示：对比基线可运行不带 --llm 的评测（规则路径）")
