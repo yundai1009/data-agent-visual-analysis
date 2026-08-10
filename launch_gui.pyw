@@ -199,8 +199,9 @@ class LauncherApp:
                 with urllib.request.urlopen(f"{self.url}/health", timeout=1) as resp:
                     if resp.status == 200:
                         self.log_q.put(("ready", f"运行中（{label}）"))
-                        self.log_q.put(("log", f"✅ 启动完成，正在打开浏览器：{self.url}\n"))
-                        webbrowser.open(self.url)
+                        self.log_q.put(("log", f"✅ 启动完成，正在打开启动页：{self.url}/launch.html\n"))
+                        # 打开品牌启动页（动画 + 就绪探测），自动跳转登录/数据页
+                        webbrowser.open(f"{self.url}/launch.html")
                         return
             except Exception:
                 pass
