@@ -191,7 +191,14 @@ export default function Sidebar({ collapsed, onToggle }) {
 
         {/* 修改用户名 */}
         <button
-          onClick={() => { setNameOpen(true); setNameMsg(''); setNewName(''); }}
+          onClick={() => {
+            // 演示模式（免登录 demo 虚拟用户）：不支持修改账号信息
+            if (user?.username === 'demo') {
+              alert('演示模式不支持修改账号信息，请使用正式模式（注册/登录真实账号）');
+              return;
+            }
+            setNameOpen(true); setNameMsg(''); setNewName('');
+          }}
           className="flex items-center justify-center w-full py-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] transition-all"
           title="修改用户名"
         >
@@ -201,7 +208,13 @@ export default function Sidebar({ collapsed, onToggle }) {
 
         {/* 修改密码 */}
         <button
-          onClick={() => { setPwdOpen(true); setPwdMsg(''); setOldPwd(''); setNewPwd(''); }}
+          onClick={() => {
+            if (user?.username === 'demo') {
+              alert('演示模式不支持修改账号信息，请使用正式模式（注册/登录真实账号）');
+              return;
+            }
+            setPwdOpen(true); setPwdMsg(''); setOldPwd(''); setNewPwd('');
+          }}
           className="flex items-center justify-center w-full py-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] transition-all"
           title="修改密码"
         >
