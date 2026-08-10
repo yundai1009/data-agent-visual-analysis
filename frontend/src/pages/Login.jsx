@@ -94,9 +94,11 @@ export default function Login() {
 
   return (
     <div className="min-h-dvh relative overflow-hidden">
-      {/* 背景：地球夜景（本地静态图，提亮 + 轻遮罩保证可读） */}
-      <div className="absolute inset-0 bg-cover bg-center"
-           style={{ backgroundImage: 'url(/login-bg.jpg)', filter: 'brightness(1.18) contrast(1.04) saturate(1.05)' }} />
+      {/* 背景：地球夜景——底层静态图（降级），上层视频（播放时完全覆盖，加载失败自然回落） */}
+      <img className="absolute inset-0 w-full h-full object-cover" src="/login-bg.jpg" alt=""
+           style={{ filter: 'brightness(1.18) contrast(1.04) saturate(1.05)' }} />
+      <video className="absolute inset-0 w-full h-full object-cover" src="/bg/serene-hero.mp4"
+             poster="/bg/serene-hero-poster.png" autoPlay muted loop playsInline preload="auto" />
       <div className="absolute inset-0"
            style={{
              background:
