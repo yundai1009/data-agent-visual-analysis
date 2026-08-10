@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import { Database, Zap, BarChart3, LayoutDashboard, Shield, ChevronLeft, ChevronRight, LogOut, KeyRound, X, UserRoundPen, MessageSquareHeart, Download, UserX } from 'lucide-react';
 import { useApp } from '../AppContext';
 import { changePassword, changeUsername, submitFeedback, exportUserData, deleteAccount } from '../api';
@@ -257,11 +258,11 @@ export default function Sidebar({ collapsed, onToggle }) {
       </div>
 
       {/* 修改用户名弹窗 */}
-      {nameOpen && (
-        <>
-          <div className="fixed inset-0 z-[60] bg-black/50" onClick={() => setNameOpen(false)} />
-          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[60] w-[320px] rounded-2xl p-6"
-               style={{ background: 'linear-gradient(165deg, rgba(18,30,50,.97), rgba(10,20,36,.97))', border: '1px solid rgba(255,255,255,.12)', boxShadow: '0 30px 80px -20px rgba(0,0,0,.7)' }}>
+      {nameOpen && createPortal(
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" onClick={() => setNameOpen(false)}>
+          <div className="w-full max-w-[320px] rounded-2xl p-6 max-h-[calc(100vh-2rem)] overflow-y-auto"
+               style={{ background: 'linear-gradient(165deg, rgba(18,30,50,.97), rgba(10,20,36,.97))', border: '1px solid rgba(255,255,255,.12)', boxShadow: '0 30px 80px -20px rgba(0,0,0,.7)' }}
+               onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-5">
               <p className="text-sm font-semibold text-white">修改用户名</p>
               <button className="text-slate-400 hover:text-white transition-colors" onClick={() => setNameOpen(false)}><X className="w-4 h-4" /></button>
@@ -287,15 +288,15 @@ export default function Sidebar({ collapsed, onToggle }) {
               </button>
             </div>
           </div>
-        </>
-      )}
+        </div>
+      , document.body)}
 
       {/* 修改密码弹窗 */}
-      {pwdOpen && (
-        <>
-          <div className="fixed inset-0 z-50 bg-black/50" onClick={() => setPwdOpen(false)} />
-          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[320px] rounded-2xl p-6"
-               style={{ background: 'linear-gradient(165deg, rgba(18,30,50,.97), rgba(10,20,36,.97))', border: '1px solid rgba(255,255,255,.12)', boxShadow: '0 30px 80px -20px rgba(0,0,0,.7)' }}>
+      {pwdOpen && createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setPwdOpen(false)}>
+          <div className="w-full max-w-[320px] rounded-2xl p-6 max-h-[calc(100vh-2rem)] overflow-y-auto"
+               style={{ background: 'linear-gradient(165deg, rgba(18,30,50,.97), rgba(10,20,36,.97))', border: '1px solid rgba(255,255,255,.12)', boxShadow: '0 30px 80px -20px rgba(0,0,0,.7)' }}
+               onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-5">
               <p className="text-sm font-semibold text-white">修改密码</p>
               <button className="text-slate-400 hover:text-white transition-colors" onClick={() => setPwdOpen(false)}><X className="w-4 h-4" /></button>
@@ -320,10 +321,10 @@ export default function Sidebar({ collapsed, onToggle }) {
               </button>
             </div>
           </div>
-        </>
-      )}
+        </div>
+      , document.body)}
       {/* 意见反馈弹窗（C） */}
-      {fbOpen && (
+      {fbOpen && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setFbOpen(false)}>
           <div className="bg-white rounded-2xl shadow-[var(--shadow-card-lg)] w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
@@ -364,11 +365,11 @@ export default function Sidebar({ collapsed, onToggle }) {
             </button>
           </div>
         </div>
-      )}
+      , document.body)}
 
 
       {/* D：注销账号弹窗 */}
-      {delOpen && (
+      {delOpen && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setDelOpen(false)}>
           <div className="bg-white rounded-2xl shadow-[var(--shadow-card-lg)] w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
@@ -397,7 +398,7 @@ export default function Sidebar({ collapsed, onToggle }) {
             </button>
           </div>
         </div>
-      )}
+      , document.body)}
     </aside>
   );
 }
