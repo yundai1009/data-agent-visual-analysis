@@ -333,6 +333,20 @@ def _run_silent(mode: str) -> None:
         _写日志(log_f, f"启动失败：{exc}")
         return
 
+    # 3.1) 消费 uvicorn 输出（写入日志文件）——否则 stdout=PIPE 缓冲区满 64KB
+    #      后 uvicorn 阻塞在写日志、无法处理请求（本次事故根因：页面打不开）
+    uvicorn_log = log_dir / "uvicorn.log"
+
+    def _drain_uvicorn(p: subprocess.Popen, out_f: Path) -> None:
+        try:
+            with out_f.open("a", encoding="utf-8") as f:
+                for line in p.stdout:
+                    f.write(line)
+        except Exception:
+            pass
+
+    threading.Thread(target=_drain_uvicorn, args=(proc, uvicorn_log), daemon=True).start()
+
     # 4) 等待就绪（最多 90 秒）
     ok = False
     for _ in range(180):
