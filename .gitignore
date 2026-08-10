@@ -99,3 +99,4 @@ data/backups/
 docs/面试预测_*.docx
 docs/~$*.docx
 scripts/gen_interview_docx.js
+data/demo.db

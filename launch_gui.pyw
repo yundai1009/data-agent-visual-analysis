@@ -19,6 +19,7 @@ import subprocess
 import sys
 import threading
 import webbrowser
+from datetime import datetime
 from pathlib import Path
 
 import tkinter as tk
@@ -29,6 +30,29 @@ DEFAULT_PORT = 8000  # 端口被占时自动向后找空闲端口（8000→8001�
 
 # 桌面快捷方式传 --autostart：打开窗口后自动启动正式模式（跳转登录页），无需再点按钮
 AUTOSTART = "--autostart" in sys.argv
+
+# 静默模式（--silent [--demo]）：无窗口启动——直接起后端 → 打开浏览器启动页。
+# 配套使用「一键启动-正式.bat / 一键启动-演示.bat」。
+SILENT = "--silent" in sys.argv
+SILENT_MODE = "demo" if "--demo" in sys.argv else "normal"
+
+
+def _写日志(file_path: Path, msg: str) -> None:
+    """静默模式日志（无窗口可看，统一落到 .reasonix/run/launcher_silent.log）。"""
+    try:
+        with file_path.open("a", encoding="utf-8") as f:
+            f.write(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}\n")
+    except Exception:
+        pass
+
+
+def _健康检查(url: str, timeout: float = 1.5) -> bool:
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return r.status == 200
+    except Exception:
+        return False
 
 
 class LauncherApp:
@@ -134,6 +158,32 @@ class LauncherApp:
                     return p
         return start
 
+    @staticmethod
+    def _启动后端(mode: str, port: int) -> subprocess.Popen:
+        """启动 uvicorn 后端进程（UI 模式与静默模式共用）。
+
+        Args:
+            mode: "normal"（正式，走 .env 认证）或 "demo"（免登录演示库）
+            port: 目标端口（已确认空闲）
+        """
+        env = dict(os.environ)
+        if mode == "demo":
+            env.update({
+                "AUTH_ENABLED": "false",                       # 后端免登录
+                "FRONTEND_DIST": str(PROJECT_ROOT / "frontend" / "dist-demo"),  # 演示前端
+                "DAA_SQLITE_PATH": str(PROJECT_ROOT / "data" / "demo.db"),      # 独立演示库
+            })
+        else:
+            env.update({"FRONTEND_DIST": str(PROJECT_ROOT / "frontend" / "dist")})
+        return subprocess.Popen(
+            [sys.executable, "-m", "uvicorn", "api.main:app",
+             "--host", "127.0.0.1", "--port", str(port), "--log-level", "info"],
+            cwd=str(PROJECT_ROOT), env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace",
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+
     def start(self, mode: str):
         if self.proc and self.proc.poll() is None:
             messagebox.showinfo("提示", "服务已在运行，请先点击【停止】")
@@ -146,17 +196,7 @@ class LauncherApp:
             self._log(f"端口 {DEFAULT_PORT} 被占用，自动改用端口 {self.port}")
         self.lbl_url.config(text=f"访问地址：{self.url}")
 
-        env = dict(os.environ)
-        if mode == "demo":
-            env.update({
-                "AUTH_ENABLED": "false",                       # 后端免登录
-                "FRONTEND_DIST": str(PROJECT_ROOT / "frontend" / "dist-demo"),  # 演示前端
-                "DAA_SQLITE_PATH": str(PROJECT_ROOT / "data" / "demo.db"),      # 独立演示库
-            })
-            label, dist = "演示模式", PROJECT_ROOT / "frontend" / "dist-demo"
-        else:
-            env.update({"FRONTEND_DIST": str(PROJECT_ROOT / "frontend" / "dist")})
-            label, dist = "正式模式", PROJECT_ROOT / "frontend" / "dist"
+        label, dist = ("演示模式", PROJECT_ROOT / "frontend" / "dist-demo") if mode == "demo" else ("正式模式", PROJECT_ROOT / "frontend" / "dist")
 
         if not dist.is_dir():
             messagebox.showerror("前端未构建",
@@ -166,14 +206,7 @@ class LauncherApp:
 
         self._log(f"\n=== 启动（{label}）===")
         try:
-            self.proc = subprocess.Popen(
-                [sys.executable, "-m", "uvicorn", "api.main:app",
-                 "--host", "127.0.0.1", "--port", str(self.port), "--log-level", "info"],
-                cwd=str(PROJECT_ROOT), env=env,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding="utf-8", errors="replace",
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
+            self.proc = self._启动后端(mode, self.port)
         except Exception as exc:
             self._log(f"启动失败：{exc}")
             messagebox.showerror("启动失败", str(exc))
@@ -262,7 +295,80 @@ class LauncherApp:
         self.root.destroy()
 
 
+def _run_silent(mode: str) -> None:
+    """静默启动（无窗口）：
+    已在运行 → 直接打开启动页；否则起后端 → 就绪后打开启动页 → 挂起等待后端退出。
+    """
+    import json
+    import time
+    import urllib.request
+
+    log_dir = PROJECT_ROOT / ".reasonix" / "run"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_f = log_dir / "launcher_silent.log"
+    _写日志(log_f, f"=== 静默启动（{mode}）===")
+
+    # 1) 已在运行 → 直接打开启动页（演示与正式共用后端，不重复启动）
+    if _健康检查(f"http://127.0.0.1:{DEFAULT_PORT}/health"):
+        _写日志(log_f, f"服务已在运行，打开启动页 http://127.0.0.1:{DEFAULT_PORT}/launch.html")
+        webbrowser.open(f"http://127.0.0.1:{DEFAULT_PORT}/launch.html")
+        return
+
+    # 2) 前端构建产物检查
+    dist = PROJECT_ROOT / "frontend" / ("dist-demo" if mode == "demo" else "dist")
+    if not dist.is_dir():
+        _写日志(log_f, f"前端未构建：{dist}，请先执行 npm run build")
+        return
+    _写日志(log_f, f"前端产物：{dist}")
+
+    # 3) 端口漂移 + 启动后端
+    port = LauncherApp._find_free_port(DEFAULT_PORT)
+    url = f"http://127.0.0.1:{port}"
+    if port != DEFAULT_PORT:
+        _写日志(log_f, f"端口 {DEFAULT_PORT} 被占用，改用 {port}")
+    try:
+        proc = LauncherApp._启动后端(mode, port)
+        _写日志(log_f, f"后端进程 pid={proc.pid} @ {url}")
+    except Exception as exc:
+        _写日志(log_f, f"启动失败：{exc}")
+        return
+
+    # 4) 等待就绪（最多 90 秒）
+    ok = False
+    for _ in range(180):
+        if proc.poll() is not None:
+            _写日志(log_f, f"后端进程提前退出 rc={proc.returncode}")
+            break
+        if _健康检查(f"{url}/health"):
+            ok = True
+            break
+        time.sleep(0.5)
+    _写日志(log_f, "后端就绪 ✅" if ok else "后端启动超时 ⚠（打开启动页查看提示）")
+
+    # 5) 记录 pid 供「停止服务.bat」使用
+    try:
+        (log_dir / "silent_pid.json").write_text(
+            json.dumps({"mode": mode, "backend_pid": proc.pid, "port": port,
+                        "started": datetime.now().isoformat()}),
+            encoding="utf-8")
+    except Exception as exc:
+        _写日志(log_f, f"pid 记录失败（停止脚本将按命令行匹配兜底）：{exc}")
+
+    # 6) 打开启动页（超时也打开——页面自身会显示"后端启动超时，请查看启动器日志"）
+    webbrowser.open(f"{url}/launch.html")
+
+    # 7) 挂起：后端退出时本进程随之退出（生命周期一致，不残留 pythonw）
+    try:
+        proc.wait()
+    except Exception:
+        pass
+    _写日志(log_f, "后端已停止，静默进程退出")
+
+
 def main():
+    if SILENT:
+        _run_silent(SILENT_MODE)
+        return
     root = tk.Tk()
     try:
         ttk.Style().theme_use("vista")
