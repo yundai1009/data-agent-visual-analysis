@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Download, DownloadCloud, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, Copy, Check, Clock, Link2, X, RotateCcw, GitBranch } from 'lucide-react';
+import { Download, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, Copy, Check, Clock, Link2, X, RotateCcw, GitBranch } from 'lucide-react';
 import { listReports, getReport, deleteReport, exportReport, createShare, listShares, revokeShare, replayReport } from '../api';
 import EChartsChart from '../components/EChartsChart';
 
@@ -18,6 +18,11 @@ export default function Report() {
   const [showShare, setShowShare] = useState(false);
   const [shareHours, setShareHours] = useState(24);
   const [sharePassword, setSharePassword] = useState('');
+  const chartContainerRef = useRef(null); // 图表容器：用于导出当前图表为 PNG
+  // 统一下载弹窗状态
+  const [showDl, setShowDl] = useState(false);
+  const [dlFmt, setDlFmt] = useState('xlsx');
+  const [dlBusy, setDlBusy] = useState(false);
   const [shareLinks, setShareLinks] = useState([]);
   const [shareMsg, setShareMsg] = useState(''); // 成功提示（绿）
   const [shareErr, setShareErr] = useState(''); // B14：失败提示（红）
@@ -123,31 +128,67 @@ export default function Report() {
   // 导出：Excel / CSV / PDF 走后端端点（带 token），Trace 前端本地生成 Markdown
   // B4 修复：操作目标 = 当前实际查看的报表，而非列表下标推断（直访旧 URL 不再错对象）
   const currentReportId = viewingReportId;
-  const handleExport = async (format) => {
-    if (!currentReportId) return;
+  // 统一保存：优先 File System Access API 弹系统"另存为"让用户选位置（Chrome/Edge）；
+  // 不支持或用户取消时，回退到浏览器默认下载目录
+  async function saveWithPicker(blob, filename) {
     try {
-      const { blob, filename } = await exportReport(currentReportId, format);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = filename; a.click();
-      URL.revokeObjectURL(url);
+      if (window.showSaveFilePicker) {
+        const ext = '.' + ((filename.split('.').pop()) || 'bin');
+        const handle = await window.showSaveFilePicker({
+          suggestedName: filename,
+          types: [{ description: '导出文件', accept: { [blob.type || 'application/octet-stream']: [ext] } }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        return;
+      }
     } catch (e) {
-      alert(`导出 ${format.toUpperCase()} 失败：${e.message || e}`);
+      if (e?.name === 'AbortError') return; // 用户在保存对话框中取消
+      // 其他异常（权限/浏览器限制）静默回退默认下载
     }
-  };
-  const handleExportTrace = () => {
-    if (trace.length === 0) return;
-    const lines = [
-      `# Agent 决策记录 — ${report.标题 || '数据分析报表'}`,
-      '',
-      ...trace.map((step, i) => `## ${i + 1}. ${step.步骤 || step.说明 || `步骤 ${i + 1}`}${step.状态 === '成功' || step.状态 === '完成' ? ' ✓' : ''}\n${step.说明 || step.理由 || ''}`),
-    ];
-    const blob = new Blob([lines.join('\n\n')], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `Agent决策记录-${(report.标题 || '报表').replace(/[\\/:*?"<>|]/g, '_')}.md`; a.click();
-    URL.revokeObjectURL(url);
+    a.href = url; a.download = filename; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  // 统一导出入口：按弹窗选择的格式生成 blob 并走 saveWithPicker
+  const handleExportFormat = async (fmt) => {
+    try {
+      let blob, filename;
+      if (fmt === 'xlsx' || fmt === 'csv' || fmt === 'pdf') {
+        if (!currentReportId) return;
+        ({ blob, filename } = await exportReport(currentReportId, fmt));
+      } else if (fmt === 'png') {
+        const canvas = chartContainerRef.current?.querySelector('canvas');
+        if (!canvas) { alert('图表尚未渲染完成，请稍后再试'); return; }
+        blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+        filename = `${(report?.标题 || '报表').replace(/[\\/:*?"<>|]/g, '_')}.png`;
+      } else if (fmt === 'trace') {
+        if (trace.length === 0) return;
+        const lines = [
+          `# Agent 决策记录 — ${report.标题 || '数据分析报表'}`,
+          '',
+          ...trace.map((step, i) => `## ${i + 1}. ${step.步骤 || step.说明 || `步骤 ${i + 1}`}${step.状态 === '成功' || step.状态 === '完成' ? ' ✓' : ''}\n${step.说明 || step.理由 || ''}`),
+        ];
+        blob = new Blob([lines.join('\n\n')], { type: 'text/markdown;charset=utf-8' });
+        filename = `Agent决策记录-${(report.标题 || '报表').replace(/[\\/:*?"<>|]/g, '_')}.md`;
+      } else if (fmt === 'html') {
+        blob = new Blob([exportData.HTML], { type: 'text/html' });
+        filename = 'report.html';
+      } else if (fmt === 'json') {
+        blob = new Blob([exportData.JSON], { type: 'application/json' });
+        filename = 'report.json';
+      }
+      if (blob) await saveWithPicker(blob, filename);
+    } catch (e) {
+      alert(`导出失败：${e.message || e}`);
+    }
   };
+
+
+
 
   // 分享：打开弹窗并加载已有链接
   const openShareModal = async () => {
@@ -330,7 +371,7 @@ export default function Report() {
       </div>
 
       {/* ECharts Chart：藏青光晕舞台 */}
-      <div className="rounded-xl p-5"
+      <div ref={chartContainerRef} className="rounded-xl p-5"
            style={{ background: 'radial-gradient(120% 100% at 50% 0%, #eef3f9 0%, #f8fafc 55%, #f1f5f9 100%)' }}>
         {chartTypeKey === 'table' ? (
           <div className="text-sm text-gray-400 text-center py-8">
@@ -444,52 +485,71 @@ export default function Report() {
         )}
       </div>
 
-      {/* Export + 继续分析 */}
+      {/* 导出 + 继续分析：所有格式统一收进下载弹窗 */}
       <div className="flex flex-wrap gap-2 justify-end mt-4 items-center">
-        <span className="flex items-center gap-1 text-xs text-gray-400 mr-1"><Download className="w-3.5 h-3.5" /> 导出</span>
-        <button className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all" onClick={() => handleExport('xlsx')}>
-          Excel
+        <button
+          className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all"
+          onClick={() => { setDlFmt('xlsx'); setShowDl(true); }}
+        >
+          <Download className="w-3.5 h-3.5" /> 导出
         </button>
-        <button className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all" onClick={() => handleExport('csv')}>
-          CSV
-        </button>
-        <button className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all" onClick={() => handleExport('pdf')}>
-          PDF
-        </button>
-        {trace.length > 0 && (
-          <button className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all" onClick={handleExportTrace}>
-            决策记录
-          </button>
-        )}
         <button
           className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-deep transition-all"
           onClick={() => navigate('/analysis')}
         >
           继续分析
         </button>
-        {exportData.HTML && (
-          <button className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all" onClick={() => {
-            const blob = new Blob([exportData.HTML], { type: 'text/html' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url; a.download = 'report.html'; a.click();
-            URL.revokeObjectURL(url);  // 批次3：释放 blob
-          }}>
-            <Download className="w-3.5 h-3.5" /> HTML 报告
-          </button>
-        )}
-        {exportData.JSON && (
-          <button className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all" onClick={() => {
-            const blob = new Blob([exportData.JSON], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url; a.download = 'report.json'; a.click();
-            URL.revokeObjectURL(url);  // 批次3：释放 blob
-          }}>
-            <DownloadCloud className="w-3.5 h-3.5" /> JSON 数据
-          </button>
-        )}
       </div>
+
+      {/* 统一下载弹窗：选择格式 → 确认下载（Chrome/Edge 可选保存位置） */}
+      {showDl && (() => {
+        const dlOptions = [
+          { key: 'xlsx', label: 'Excel 表格', desc: '数据明细（.xlsx）' },
+          { key: 'csv', label: 'CSV 数据', desc: '数据明细（.csv）' },
+          { key: 'pdf', label: 'PDF 报告', desc: '结论 + 数据表（.pdf）' },
+          { key: 'png', label: '图表图片', desc: '当前可视化图表（.png）', available: chartTypeKey !== 'table' },
+          { key: 'trace', label: 'Agent 决策记录', desc: '分析过程（.md）', available: trace.length > 0 },
+          { key: 'html', label: 'HTML 报告', desc: '静态网页（.html）', available: !!exportData?.HTML },
+          { key: 'json', label: 'JSON 数据', desc: '结构化数据（.json）', available: !!exportData?.JSON },
+        ];
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowDl(false)}>
+            <div className="bg-white rounded-2xl shadow-[var(--shadow-card-lg)] w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
+                  <Download className="w-4 h-4 text-accent" /> 导出报表
+                </h3>
+                <button onClick={() => setShowDl(false)} className="p-1 rounded hover:bg-gray-100 text-gray-400"><X className="w-4 h-4" /></button>
+              </div>
+              <div className="space-y-1.5 max-h-72 overflow-y-auto">
+                {dlOptions.filter(o => o.available !== false).map((opt) => (
+                  <button
+                    key={opt.key}
+                    onClick={() => setDlFmt(opt.key)}
+                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border text-left transition-all ${dlFmt === opt.key ? 'border-accent bg-accent-soft' : 'border-gray-200 hover:bg-gray-50'}`}
+                  >
+                    <span>
+                      <span className={`block text-sm ${dlFmt === opt.key ? 'text-accent-deep' : 'text-gray-700'}`}>{opt.label}</span>
+                      <span className="block text-[11px] text-gray-400">{opt.desc}</span>
+                    </span>
+                    <span className={`w-3.5 h-3.5 rounded-full border-2 shrink-0 ${dlFmt === opt.key ? 'border-accent bg-accent' : 'border-gray-300'}`} />
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-2 mt-4">
+                <button onClick={() => setShowDl(false)} className="flex-1 py-2 rounded-lg border border-gray-200 text-sm text-gray-500 hover:bg-gray-50 transition-all">取消</button>
+                <button
+                  onClick={async () => { setDlBusy(true); await handleExportFormat(dlFmt); setDlBusy(false); setShowDl(false); }}
+                  disabled={dlBusy}
+                  className="flex-1 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-deep transition-all disabled:opacity-50"
+                >
+                  {dlBusy ? '下载中…' : '确认下载'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 分享弹窗：生成带权限的只读链接 + 管理已有链接 */}
       {showShare && (

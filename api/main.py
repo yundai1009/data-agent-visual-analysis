@@ -29,6 +29,21 @@ logger = logging.getLogger(__name__)
 FRONTEND_DIST = os.getenv("FRONTEND_DIST", str(Path(project_root) / "frontend" / "dist"))
 
 
+def _解析监听地址() -> str:
+    """推断本次启动 uvicorn 将要绑定的 host（用于免认证模式的回环强制）。
+
+    - CLI 方式（python -m uvicorn api.main:app --host X）：取 sys.argv 中的 --host 值；
+    - 直接运行（python api/main.py → uvicorn.run(host=EnvConfig.HOST)）：取 EnvConfig.HOST
+      （API_HOST 环境变量，默认 127.0.0.1）。
+    """
+    for i, arg in enumerate(sys.argv):
+        if arg == "--host" and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+        if arg.startswith("--host="):
+            return arg.split("=", 1)[1]
+    return EnvConfig.HOST
+
+
 def _启动安全自检() -> None:
     """P0 安全硬门槛：拒绝不安全默认配置启动。
 
@@ -36,6 +51,8 @@ def _启动安全自检() -> None:
       —— 默认关认证会让全站匿名可访问（审计 P0-1）。
     - 认证开启时：JWT_SECRET_KEY 必须是显式非默认强密钥、SEED_ADMIN_PASSWORD
       必须被覆盖（默认 admin123 公开已知）——否则可伪造 token / 直接登录管理员。
+    - 认证关闭时（AUTH_ENABLED=false）：只允许绑定回环地址——免认证模式一旦绑到
+      0.0.0.0 暴露公网 = 全站无鉴权，直接拒绝启动，物理上杜绝"公网免登录站"。
     """
     auth = os.getenv("AUTH_ENABLED")
     if auth is None:
@@ -43,7 +60,8 @@ def _启动安全自检() -> None:
             "安全拒绝启动：必须显式设置 AUTH_ENABLED=true（生产/测试）或 "
             "AUTH_ENABLED=false（演示/开发）。缺省关闭认证会让全站匿名可访问。"
         )
-    if str(auth).lower() in ("true", "1", "yes"):
+    auth_true = str(auth).lower() in ("true", "1", "yes")
+    if auth_true:
         secret = os.getenv("JWT_SECRET_KEY") or ""
         if secret in ("", "change-me-in-production"):
             raise RuntimeError(
@@ -54,6 +72,13 @@ def _启动安全自检() -> None:
             raise RuntimeError(
                 "安全拒绝启动：AUTH_ENABLED=true 时必须通过 SEED_ADMIN_PASSWORD "
                 "覆盖默认管理员密码（admin123 公开已知）。"
+            )
+    else:
+        host = _解析监听地址()
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            raise RuntimeError(
+                "安全拒绝启动：AUTH_ENABLED=false（免认证）时只允许本机访问，"
+                f"监听 host 必须是 127.0.0.1/localhost/::1，当前是 {host!r}。"
             )
 
 

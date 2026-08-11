@@ -51,6 +51,20 @@ def _清除登录限流(identifier: str, client_host: str) -> None:
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+
+def _演示模式拦截账号操作() -> None:
+    """演示模式（AUTH_ENABLED=false，后端返回 demo 虚拟用户）下，账号类操作一律拒绝。
+
+    后端兜底：demo 虚拟用户不在 users 表，改密/注销会误报"旧密码不正确"、
+    改名/导出会查无此人——前端拦截被绕过时（如 user_cache 残留导致判断失效）
+    也必须返回明确错误，而不是误导性的验证失败。
+    """
+    if not EnvConfig.AUTH_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="演示模式不支持账号操作，请使用正式模式（注册/登录真实账号）",
+        )
+
 # 简单邮箱格式校验（正则，避免引入 email-validator 依赖）
 _EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 
@@ -346,6 +360,7 @@ def logout() -> Dict[str, str]:
 @router.post("/change-password")
 def change_password(payload: dict, user: dict = Depends(get_current_user)) -> Dict[str, str]:
     """修改登录密码：验证旧密码后更新为新密码。"""
+    _演示模式拦截账号操作()
     old_password = str(payload.get("old_password") or "")
     new_password = str(payload.get("new_password") or "")
     if not old_password or not new_password:
@@ -373,6 +388,7 @@ def change_password(payload: dict, user: dict = Depends(get_current_user)) -> Di
 @router.post("/change-username")
 def change_username(payload: dict, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     """修改用户名（唯一性校验：与现有用户名冲突则拒绝）。"""
+    _演示模式拦截账号操作()
     new_username = str(payload.get("username") or "").strip()
     if not new_username or len(new_username) < 2 or len(new_username) > 50:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="用户名需 2-50 个字符")
@@ -455,6 +471,7 @@ def reset_password(payload: dict) -> Dict[str, str]:
 @router.get("/export")
 def export_user_data(user: dict = Depends(get_current_user)) -> StreamingResponse:
     """D：导出我的全部数据（个保法）— 个人资料 + 数据集元数据 + 报表全文 + 看板，JSON 下载。"""
+    _演示模式拦截账号操作()
     import json as _json
     from repositories import report_repo, dashboard_repo
     from 后端_核心.存储.sqlite_repo import 列出数据集
@@ -493,6 +510,7 @@ def export_user_data(user: dict = Depends(get_current_user)) -> StreamingRespons
 @router.post("/delete-account")
 def delete_account(payload: dict, user: dict = Depends(get_current_user)) -> Dict[str, str]:
     """D：注销账号（个保法）— 验证密码后删除用户及其全部数据。"""
+    _演示模式拦截账号操作()
     password = str(payload.get("password") or "")
     current = user_repo.按用户ID查询(user["user_id"])
     if not current or not auth_service.verify_password(password, current["password_hash"]):

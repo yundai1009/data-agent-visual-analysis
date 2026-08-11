@@ -1,7 +1,7 @@
 ﻿import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Upload, Download, Database, FileText, AlertTriangle, Search, Sparkles, Loader2, BarChart3, LineChart, Pencil, Trash2, Lightbulb } from 'lucide-react';
-import { uploadFile, loadExample, cleanDataset, healthCheck, listDatasets, deleteDataset, renameDataset, getDataset } from '../api';
+import { Upload, Download, FileDown, Database, FileText, AlertTriangle, Search, Sparkles, Loader2, BarChart3, LineChart, Pencil, Trash2, Lightbulb } from 'lucide-react';
+import { uploadFile, loadExample, cleanDataset, healthCheck, listDatasets, deleteDataset, renameDataset, getDataset, exportUserData } from '../api';
 import { useApp } from '../AppContext';
 
 // 演示模式（vite --mode demo 构建）：打开页面自动加载示例数据，零基础用户无需上传即可体验
@@ -136,6 +136,19 @@ export default function DataManagement() {
     setUploading(false);
   }
 
+  // D 合规：导出我的全部数据（个人资料 + 数据集元数据 + 报表全文 + 看板，JSON 下载）
+  async function handleExportAllData() {
+    try {
+      const { blob, filename } = await exportUserData();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError('导出失败：' + (e.message || e));
+    }
+  }
+
   function handleDrop(e) {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
@@ -196,6 +209,10 @@ export default function DataManagement() {
           <p className="text-xs text-gray-400 mt-1">支持 CSV / Excel 上传，自动识别字段类型与数据质量</p>
         </div>
         <div className="flex items-center gap-3">
+          {/* D 合规：导出我的全部数据 */}
+          <button onClick={handleExportAllData} title="导出我的全部数据（JSON）" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all">
+            <FileDown className="w-3.5 h-3.5" />导出数据
+          </button>
           {/* 我的数据集（多数据集切换/删除/重命名） */}
           <div className="relative">
             <button onClick={() => setDsOpen(!dsOpen)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all">
