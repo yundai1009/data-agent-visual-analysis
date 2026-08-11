@@ -844,11 +844,15 @@ def 生成报表数据(
 
     intent_override, intent_source, agent_trace, llm_fail_reason = _解析自然语言意图(画像, 分析需求, df, llm_config=llm_config, on_event=on_event, user_id=user_id)
     if intent_override:
-        图表类型 = intent_override["图表类型"]
-        x轴 = intent_override.get("x轴") or x轴
-        y轴列表 = intent_override.get("y轴") or y轴列表
-        分组字段 = intent_override.get("分组字段") or 分组字段
-        聚合方式 = intent_override.get("聚合方式") or 聚合方式
+        # 优先级策略（阶段 B 改造）：
+        # - 图表类型：仅当用户选"自动推荐"时采用 LLM 推荐；用户显式选择则尊重用户
+        # - 字段：用户显式选择（非空）优先；用户未指定（空/自动推荐）才由 LLM 决策
+        if 图表类型 == "自动推荐":
+            图表类型 = intent_override["图表类型"]
+        x轴 = x轴 or intent_override.get("x轴")
+        y轴列表 = y轴列表 or intent_override.get("y轴")
+        分组字段 = 分组字段 or intent_override.get("分组字段")
+        聚合方式 = 聚合方式 or intent_override.get("聚合方式")
 
     是否自动推荐 = 图表类型 == "自动推荐"
     effective_chart = 图表类型

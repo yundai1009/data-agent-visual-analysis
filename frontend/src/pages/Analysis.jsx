@@ -54,7 +54,7 @@ export default function Analysis() {
   const navigate = useNavigate();
   const { dataset } = useApp();
   const [nlInput, setNlInput] = useState('');
-  const [chartType, setChartType] = useState('bar');
+  const [chartType, setChartType] = useState('auto');
   const [generating, setGenerating] = useState(false);
   const [xAxis, setXAxis] = useState('');
   const [yAxis, setYAxis] = useState('');
@@ -87,6 +87,11 @@ export default function Analysis() {
   // 选中图表类型时按语义自动重选字段（自然语言/点击图表都不用手动选字段）
   const handleChartSelect = (id) => {
     setChartType(id);
+    // 智能推荐：字段交给后端 Agent/LLM 决策，清空显式选择
+    if (id === 'auto') {
+      setXAxis(''); setYAxis(''); setGroupField('无');
+      return;
+    }
     const set = (x, y, g) => { setXAxis(x || ''); setYAxis(y || ''); setGroupField(g || '无'); };
     switch (id) {
       case 'wordcloud':
@@ -118,14 +123,15 @@ export default function Analysis() {
   };
 
   // Auto-fill based on profile（useEffect 中执行，避免 render 阶段 setState）
+  // 智能推荐模式（auto）不预填：字段交给后端 Agent/LLM 决策
   useEffect(() => {
-    if (profile && !xAxis) {
+    if (profile && chartType !== 'auto' && !xAxis) {
       setXAxis((profile.分类字段?.[0] || profile.日期字段?.[0] || fields[0] || ''));
       setYAxis(numFields[0] || '');
       setGroupField('无');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile]);
+  }, [profile, chartType]);
 
   // 生成期间计时 + 决策流自动滚动到底部
   useEffect(() => {
@@ -159,7 +165,10 @@ export default function Analysis() {
     }
     // 字段前置校验（追问模式由系统按追问语义重选字段，跳过旧字段校验）
     if (!isFollowUp) {
-      const validationError = validateChartFields(chartType, xAxis, yAxis, groupField, profile);
+      // 智能推荐模式（字段未显式选择）跳过前端校验：字段由后端 Agent/LLM 决策
+      const validationError = xAxis && yAxis
+        ? validateChartFields(chartType, xAxis, yAxis, groupField, profile)
+        : null;
       if (validationError) {
         setError(validationError);
         return;
@@ -530,12 +539,14 @@ export default function Analysis() {
         <div>
           <label className="text-xs text-gray-400 mb-1.5 block">X 轴</label>
           <select className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 focus:outline-none focus:border-accent" value={xAxis} onChange={(e) => setXAxis(e.target.value)}>
+            <option value="">🤖 自动推荐</option>
             {fields.map((f) => <option key={f} value={f}>{textFields.includes(f) ? `✎ ${f}` : f}</option>)}
           </select>
         </div>
         <div>
           <label className="text-xs text-gray-400 mb-1.5 block">Y 轴</label>
           <select className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 focus:outline-none focus:border-accent" value={yAxis} onChange={(e) => setYAxis(e.target.value)}>
+            <option value="">🤖 自动推荐</option>
             {numFields.map((f) => <option key={f}>{f}</option>)}
             {numFields.length === 0 && fields.map((f) => <option key={f}>{f}</option>)}
           </select>
@@ -543,6 +554,7 @@ export default function Analysis() {
         <div>
           <label className="text-xs text-gray-400 mb-1.5 block">分组字段</label>
           <select className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 focus:outline-none focus:border-accent" value={groupField} onChange={(e) => setGroupField(e.target.value)}>
+            <option value="">🤖 自动推荐</option>
             <option>无</option>
             {fields.map((f) => <option key={f}>{f}</option>)}
           </select>
