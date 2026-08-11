@@ -1,10 +1,13 @@
-# LLM 接入说明（阶段 1）
+# LLM 接入说明（阶段 1 起，现已演进为多轮 ReAct 编排）
 
-本项目阶段 1 已把"自然语言 → 报表意图"从纯关键词匹配升级为：
+本项目从"自然语言 → 报表意图"的关键词匹配，先后演进为：
 
-> **DeepSeek / OpenAI 兼容协议 + Function Calling + 字段白名单 + 关键词兜底**
+> **阶段 1**：单次 Function Calling（结构化意图 JSON）
+> **阶段 9 起**：多轮 ReAct 编排（画像 → 聚合分析 → 推荐图表 + 生成结论）
 
-LLM **只输出结构化意图 JSON**，**不生成可执行代码、不被 exec、不被 eval**。
+核心安全姿态始终不变：
+
+> **LLM 不生成可执行代码、不被 exec、不被 eval**——只能通过受控工具 schema 填参数，执行路径完全由后端 Python 决定。
 
 ---
 
@@ -28,9 +31,10 @@ LLM_TEMPERATURE=0
 
 | 项 | 规则 |
 |---|---|
-| LLM 输出形态 | 仅接受 chat/completions 的 `tool_calls` JSON；不解析 Python 字面量 |
+| LLM 输出形态 | 仅接受 chat/completions 的 `tool_calls` JSON；不解析 Python 字面量；多轮 ReAct 中每轮调用一个受控工具 |
 | 字段白名单 | `X轴 / 分组字段 / Y轴` 必须在数据画像 `字段列表` 内；越界即视为失败 |
 | 图表类型/聚合方式 | 必须在白名单 set 内 |
+| 字段决策优先级 | **用户显式选择（非空）优先，LLM 只填空缺**；图表类型仅在用户选"自动推荐"时由 LLM 决策（`上传报表生成器.py` 生成报表数据内合并逻辑） |
 | LLM 代码执行 | **任何情况下都不 exec LLM 输出**。Tool 是后端 Python 函数，参数由 LLM 提供、由后端校验后再调用 |
 | 凭据 | 仅从 `config.settings.EnvConfig` 读，源码中无 key |
 | 超时 | 单次 LLM 调用 ≤ `LLM_TIMEOUT` 秒 |
@@ -59,9 +63,11 @@ LLM_TEMPERATURE=0
 ├── agent/
 │   ├── __init__.py        # 对外暴露 解析自然语言需求
 │   ├── llm客户端.py        # OpenAI 兼容 chat/completions 调用 + JSON 容错解析 + tool_call 抽取
-│   ├── 工具集.py           # 4 个 Tool 的 schema + 字段白名单校验
-│   └── 编排器.py           # 对外唯一入口：解析自然语言需求
-└── 上传报表生成器.py        # 调用 agent.解析自然语言需求；失败回退 _意图驱动配置
+│   ├── 工具集.py           # 5 个 Tool schema（解析为报表意图/获取数据画像/聚合分析/推荐图表/生成结论）；
+│   │                       #   运行时 TOOL_SCHEMAS_FULL 去掉旧"解析为报表意图"后暴露 4 个 ReAct 工具
+│   └── 编排器.py           # 多轮 ReAct 编排：轮1 获取数据画像 → 轮2 聚合分析 → 轮3 推荐图表+生成结论；
+│                           #   _从消息提取意图 做字段白名单校验；词云等特殊图兜底修正
+└── 上传报表生成器.py        # 调用 agent 编排；失败回退 _意图驱动配置（关键词兜底）；合并 LLM 决策与用户显式字段
 ```
 
 ---
