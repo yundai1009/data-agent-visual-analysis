@@ -23,6 +23,25 @@
 - ``content`` 抓不到 ``{...}`` 片段 → 返回 None
 - ``json.loads`` 解析失败 → 返回 None
 - 解析出的不是 dict → 返回 None
+
+═══════════════════════════════════════════════════════════════
+【文件总览】项目层级与调用关系
+═══════════════════════════════════════════════════════════════
+- 所在目录：后端_核心/agent/
+- 被谁调用：
+  · 编排器.py    → chat_completion / extract_tool_call / is_llm_configured / 最近LLM失败
+  · 记忆.py      → embed_text（把记忆文本转成向量存库/检索）
+  · 结论润色.py  → chat_completion（LLM 润色分析结论）
+- 调用了谁：
+  · config/settings.py → EnvConfig / LLMRequestConfig（全局与请求级配置）
+  · requests 库 → 直接调用 OpenAI 兼容 HTTP 接口（不用 langchain，依赖轻、好讲解）
+- 本文件负责：
+  1. 封装 OpenAI 兼容协议的 chat/completions 调用（DeepSeek/OpenAI/硅基流动通用）
+  2. 从 LLM 响应中安全抽取 tool_call（名称 + 参数 JSON）
+  3. 容错解析 LLM 输出的 JSON（剥 markdown fence、括号配平找 JSON 块）
+  4. 失败不抛异常，统一返回 None + 记录原因，由调用方降级兜底
+- 面试要点：所有失败路径都收敛为「返回 None + 记录原因」，上层永远有兜底；
+  LLM 输出绝不直接进 exec/eval，只允许解析成结构化数据后走受控执行。
 """
 
 from __future__ import annotations
@@ -86,8 +105,16 @@ class LLMError(Exception):
 def is_llm_configured(api_key: Optional[str] = None) -> bool:
     """LLM 是否真的配置了可用 key。
 
+    作用：一键判断"能不能走 LLM 路径"，是全局降级开关的判定依据。
+
     当 ``LLM_API_KEY`` 缺失或为占位字符串时，全链路应静默回退到关键词匹配。
     可选传 ``api_key``（如 BYOK 用户自带 Key）优先判断，否则查服务端 EnvConfig。
+
+    入参：
+      - api_key：可选，用户自带的 Key；不传则用服务端 EnvConfig.LLM_API_KEY
+    返回：
+      - bool：True=有真实 Key 可调用 LLM；False=未配置/占位符，应走降级路径
+    业务定位：编排器的总开关——决定用户请求走"LLM 智能分析"还是"关键词匹配兜底"。
     """
     key = (api_key or EnvConfig.LLM_API_KEY or "").strip()
     return key.lower() not in _UNCONFIGURED_KEY_PLACEHOLDERS
@@ -142,7 +169,18 @@ def _extract_json_block(text: str) -> Optional[str]:
 
 
 def parse_llm_json(content: Optional[str]) -> Optional[Dict[str, Any]]:
-    """从 LLM 输出文本解析出 JSON dict。失败统一返回 None。"""
+    """从 LLM 输出文本解析出 JSON dict。失败统一返回 None。
+
+    作用：LLM 的输出经常带解释性文字、markdown 代码块围栏，直接 json.loads 必挂；
+    这里先做容错抽取（剥 fence + 括号配平），再严格解析。
+
+    入参：
+      - content：LLM 输出的原始文本（可能为 None/非字符串）
+    返回：
+      - 成功：解析出的 dict
+      - 失败：None（无内容/抽不到 JSON 块/解析失败/不是 dict）
+    业务定位：LLM 自由文本 → 结构化数据的唯一通道；解析失败即触发降级。
+    """
     if not content or not isinstance(content, str):
         return None
     block = _extract_json_block(content)
@@ -172,12 +210,27 @@ def chat_completion(
 ) -> Optional[Dict[str, Any]]:
     """调用 OpenAI 兼容 ``chat/completions`` 接口。
 
+    作用：整个 Agent 链路的"发动机"——所有 LLM 推理都从这里发出请求。
+
     成功返回完整响应 dict；失败统一返回 None，由调用方回退兜底。
     不会抛网络异常给上层。
 
     配置优先级：``llm_config`` > ``user_base_url/user_api_key/user_model`` > ``EnvConfig``。
     注意：api_key 只接受服务端来源（``llm_config.api_key`` 或 ``EnvConfig.LLM_API_KEY``），
     前端无法通过请求头传入。
+
+    入参：
+      - messages：OpenAI 协议的消息列表（system/user/assistant/tool）
+      - tools：Function Calling 工具 schema 列表（None 表示纯聊天）
+      - tool_choice：是否强制指定工具（"auto" 让模型自己选）
+      - timeout：请求超时秒数（不传用配置值）
+      - llm_config：请求级配置对象（含 base_url/api_key/model）
+      - user_base_url/user_api_key/user_model：旧版用户覆盖参数（优先级低）
+    返回：
+      - 成功：LLM 完整响应 dict（含 choices/usage 等）
+      - 失败：None（未配置 Key/网络异常/HTTP 非 200/响应非 JSON 等，原因已记录）
+    业务定位：多轮 ReAct 每轮推理、结论润色，全靠这一个函数对外通信。
+    重试、脱敏、降级提示都在这里统一处理，调用方不需要关心细节。
     """
     # 请求级配置优先合并；未显式提供的字段继续回退 EnvConfig 全局值
     if llm_config is not None:
@@ -186,6 +239,11 @@ def chat_completion(
         user_model = user_model or llm_config.model
 
     api_key = (user_api_key or EnvConfig.LLM_API_KEY or "").strip()
+    # 【关键行】未配置真实 Key（空值或占位符）时直接短路返回 None，不发起任何请求。
+    # 为什么：占位 Key 发出去只会得到 401，白费一次网络请求还拖慢响应；
+    # 提前拦截并记录原因，让上层立刻走关键词匹配兜底，用户几乎无感知。
+    # 删除后果：每次请求都打到 LLM 网关拿 401，系统变慢且错误日志刷屏。
+    # 替代方案：让请求失败后由异常处理兜底（慢 + 不可控）；前置校验更干净。
     if api_key.lower() in _UNCONFIGURED_KEY_PLACEHOLDERS:
         _record_llm_fail("未配置 API Key（服务端 .env 为占位符），请在页面填写自己的 Key", llm_config)
         return None
@@ -212,11 +270,23 @@ def chat_completion(
 
     request_timeout = timeout or EnvConfig.LLM_TIMEOUT or 30
     # 批次4：LLM 重试——网络异常与可重试状态码（429/5xx/408）最多重试 2 次（指数退避）
+    # 【关键行】最多尝试 3 次（首次 + 2 次重试），网络抖动/限流时自动恢复。
+    # 为什么：LLM 网关经常因限流（429）或瞬时过载（5xx）失败，重试一次成功率大增；
+    # 指数退避（0.5s/1s）避免雪崩式重试把网关打得更死。
+    # 删除后果：网络一抖整个分析就降级成关键词匹配，明明重试一次就能成功。
+    # 替代方案：固定间隔重试（简单但会加剧限流）；指数退避是标准做法。
     max_attempts = 3
     response = None
     for attempt in range(max_attempts):
         try:
             # P0 加固：禁重定向（防 SSRF 重定向绕过）
+            # 【关键行】真正向 LLM API 发起 HTTP POST 请求，携带 messages + tools。
+            # 为什么：整个 Agent 的"思考"都发生在这里——LLM 根据上下文决定调用哪个工具；
+            # allow_redirects=False 是为了防 SSRF：恶意配置的 base_url 若返回重定向，
+            # 可能把请求转发到内网地址，禁重定向从根上堵住这个漏洞。
+            # 删除后果：Agent 完全失去推理能力，全链路只能降级到关键词匹配。
+            # 替代方案：用 requests.Session + 校验重定向白名单（复杂）；
+            # 直接禁重定向最简单且满足业务（合法 LLM 网关不会重定向）。
             response = requests.post(url, headers=headers, json=payload, timeout=request_timeout, allow_redirects=False)
         except requests.RequestException as exc:
             logger.warning("LLM 网络异常（第 %d 次）: %s", attempt + 1, exc)
@@ -250,7 +320,17 @@ def chat_completion(
 def extract_tool_call(response: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """从 ``chat_completion`` 响应中提取第一个 ``tool_calls`` 项。
 
+    作用：LLM 返回的响应结构很"深"（choices → message → tool_calls → function），
+    这个函数负责逐层剥壳，取出第一个工具调用的名称和参数。
+
     返回 ``{"name": str, "arguments": dict}``；不可用则 None。
+
+    入参：
+      - response：chat_completion 的完整返回 dict（可能为 None）
+    返回：
+      - 成功：{"name": 工具名, "arguments": 参数字典}（arguments 已做 JSON 解析）
+      - 失败：None（响应为空/结构不对/没有 tool_calls）
+    业务定位：ReAct 循环的"决策读取器"——编排器拿到这个结果才知道 LLM 想调用哪个工具。
     """
     if not response or not isinstance(response, dict):
         return None

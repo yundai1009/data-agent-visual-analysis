@@ -1,3 +1,17 @@
+/* =============================================================================
+ * 文件：frontend/src/components/Sidebar.jsx —— 全局侧边栏组件
+ * 层级：被 App.jsx 在全局布局中渲染，所有页面都能看到（非页面级组件）
+ * 功能：
+ *   1. 导航菜单：根据用户角色动态显示入口（管理员额外显示「管理后台」）
+ *   2. 当前用户展示：读取 user 对象，展示用户名首字 + 在线状态小圆点
+ *   3. 意见反馈：点击弹出 Modal，调 api.js 的 submitFeedback 提交到后端
+ *   4. 退出登录：调 AppContext 的 logout() 清空状态 → navigate('/login')
+ *   5. 侧边栏折叠/展开：由父组件传入 collapsed + onToggle 控制宽度动画
+ * 依赖：
+ *   - useApp() —— 读取 user（用户名/角色）、调用 logout()
+ *   - api.js submitFeedback() —— 提交反馈到后端 /feedback
+ *   - react-router-dom NavLink + useNavigate —— 导航高亮与路由跳转
+ * ============================================================================= */
 import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
@@ -12,20 +26,23 @@ const navItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: '图表看板' },
   { to: '/account', icon: UserRoundPen, label: '账号设置' },
 ];
-
-// 管理员专属入口：仅 admin 角色显示
+// 管理员专属入口：仅 admin 角色显示（权限判断写在 JSX 渲染处）
 const adminNav = { to: '/admin', icon: Shield, label: '管理后台' };
 
+// Sidebar 侧边栏组件
+// 入参 props：collapsed（boolean）= 是否收起（仅显示图标）；onToggle（回调）= 点击折叠按钮触发
+// 业务定位：App.jsx 在所有页面左侧固定渲染，承载导航、用户信息、反馈、登出四个功能
 export default function Sidebar({ collapsed, onToggle }) {
   const navigate = useNavigate();
   const { user, logout } = useApp();
-  // 反馈弹窗（C：意见反馈入口）
+  // 意见反馈：弹窗状态（评分 + 文字 + 提示信息 + loading）
   const [fbOpen, setFbOpen] = useState(false);
   const [fbScore, setFbScore] = useState(5);
   const [fbText, setFbText] = useState('');
   const [fbMsg, setFbMsg] = useState('');
   const [fbBusy, setFbBusy] = useState(false);
 
+  // 提交反馈：调用后端 /feedback 接口，成功后 1.2 秒自动关闭弹窗（让用户看清提示）
   const handleSubmitFeedback = async () => {
     setFbBusy(true);
     setFbMsg('');
@@ -40,6 +57,7 @@ export default function Sidebar({ collapsed, onToggle }) {
     setFbBusy(false);
   };
 
+  // 退出登录：清空全局状态（AppContext.logout 清 localStorage + 内存态）→ 跳转登录页
   const handleLogout = () => {
     logout();
     navigate('/login');
@@ -73,6 +91,7 @@ export default function Sidebar({ collapsed, onToggle }) {
       </div>
 
       {/* Nav */}
+      {/* 导航项渲染：navItems + 管理员入口（条件拼接）*/}
       <nav className="flex-1 p-2 space-y-0.5 mt-1">
         {[...navItems, ...((user?.role === 'admin' || user?.roles?.includes?.('admin')) ? [adminNav] : [])].map((item) => (
           <NavLink
@@ -103,7 +122,7 @@ export default function Sidebar({ collapsed, onToggle }) {
         ))}
       </nav>
 
-      {/* User + Toggle */}
+      {/* User + Toggle 底部区域：用户信息、反馈入口、退出、折叠 */}
       <div className="p-2 border-t border-white/[0.06] space-y-1">
         <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg">
           <div
@@ -146,7 +165,8 @@ export default function Sidebar({ collapsed, onToggle }) {
         </button>
       </div>
 
-      {/* 意见反馈弹窗（C） */}
+          {/* 意见反馈弹窗：用 createPortal 渲染到 document.body 上层，
+              避免被 aside 的 overflow-hidden 裁剪 */}
       {fbOpen && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setFbOpen(false)}>
           <div className="bg-white rounded-2xl shadow-[var(--shadow-card-lg)] w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>

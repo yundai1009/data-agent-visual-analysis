@@ -18,6 +18,23 @@
 --------------
 阶段 1 只用 ``意图识别`` 这一种 Tool（让 LLM 把自然语言直接结构化为意图 dict）。
 其余 3 个 Tool 的 schema 已就位但本轮不暴露给 LLM，留给阶段 2 的 ReAct 多轮编排。
+
+═══════════════════════════════════════════════════════════════
+【文件总览】项目层级与调用关系
+═══════════════════════════════════════════════════════════════
+- 所在目录：后端_核心/agent/
+- 被谁调用：
+  · 编排器.py → TOOL_SCHEMAS_FULL（声明给 LLM 的工具清单）/ execute_tool（执行入口）
+  · 执行器注册.py → register_tool_executor（把执行函数注入 TOOL_EXECUTORS 字典）
+  · 上传报表生成器.py → validate_intent_against_profile（下钻到生成前的最后白名单）
+- 调用了谁：无业务依赖（仅 logging + typing），执行器函数由其他模块注入
+- 本文件负责：
+  1. 定义 5 个 Function Calling 工具的 JSON Schema（意图识别/获取数据画像/聚合分析/推荐图表/生成结论）
+  2. TOOL_EXECUTORS 注册表 + execute_tool 统一执行入口（异常转 None）
+  3. validate_intent_against_profile：LLM 意图 dict 进入生成链路前的字段白名单校验
+  4. 私有的 图表类型/字段/Y轴/聚合方式 四个校验小函数
+- 面试要点：这是"受控 Agent"的安全核心——LLM 只能在这 5 个工具里选，
+  参数必须通过白名单校验才能执行，从根本上杜绝 LLM 生成代码 + exec 的高危路线。
 """
 
 from __future__ import annotations
@@ -170,12 +187,40 @@ TOOL_EXECUTORS: Dict[str, Callable[[Dict[str, Any], Dict[str, Any]], Optional[Di
 
 
 def register_tool_executor(name: str, func: Callable[[Dict[str, Any], Dict[str, Any]], Optional[Dict[str, Any]]]) -> None:
-    """注册工具执行器。编排器在启动时调用，把真实 pandas 函数注入到这里。"""
+    """注册工具执行器。编排器在启动时调用，把真实 pandas 函数注入到这里。
+
+    作用：把"工具名"和"后端执行函数"绑定起来，存进全局 TOOL_EXECUTORS 字典。
+
+    入参：
+      - name：工具名（必须与 schema 里的 function.name 完全一致，LLM 靠它点名）
+      - func：执行函数，签名 executor(arguments: dict, context: dict) -> dict|None
+    返回：None（注册动作）
+    业务定位：安全架构的关键一环——LLM 选工具后 execute_tool 查这个字典，
+    名字对不上就执行不了，天然形成白名单。
+    """
     TOOL_EXECUTORS[name] = func
 
 
 def execute_tool(name: str, arguments: Dict[str, Any], context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """安全执行工具：白名单 + 字段校验在执行器内部完成；失败统一返回 None。"""
+    """安全执行工具：白名单 + 字段校验在执行器内部完成；失败统一返回 None。
+
+    作用：ReAct 循环"行动（Action）"的统一入口——按名字查注册表并调用执行器。
+
+    入参：
+      - name：LLM 决策选中的工具名
+      - arguments：LLM 填写的参数 dict（可能含幻觉字段，执行器内部有白名单）
+      - context：编排器注入的上下文（画像、df 等）
+    返回：
+      - 成功：执行器返回的结果 dict（摘要/数据摘要/推荐/结论）
+      - 失败：None（工具未注册/执行器内部抛异常——一律吞掉转 None，不炸链路）
+    业务定位：
+      - 【关键行】LLM 决策与后端执行的边界线：所有工具调用都从这行进入受控代码。
+      - 为什么：LLM 输出不可信，执行必须落在有白名单校验的后端函数里；
+        异常一律吞掉并记日志，保证任何工具出错都只影响本轮、不影响整条链路。
+      - 删除后果：工具全部无法执行，ReAct 循环瘫痪，报表无法生成。
+      - 替代方案：让 LLM 直接返回计算结果（不可校验、token 成本高）；
+        "LLM 决策 + 注册表查表执行"是 Function Calling 行业标准做法。
+    """
     executor = TOOL_EXECUTORS.get(name)
     if not callable(executor):
         return None
@@ -194,6 +239,25 @@ def validate_intent_against_profile(
     画像: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
     """把 LLM 输出的意图 dict 校验为安全的报表意图。
+
+    作用：这是进入 ``上传报表生成器.生成报表数据`` 前的最后一道白名单，
+    所有来自 LLM 的字段名/图表类型/聚合方式都必须在这里通过校验。
+
+    入参：
+      - intent：LLM 输出的意图 dict（可能含幻觉字段、越界枚举值）
+      - 画像：数据画像（提供字段列表，作为字段名的唯一合法来源）
+    返回：
+      - 成功：标准化的意图 dict（与 ``_受控语句配置`` 返回结构一致），键为小写
+        图表类型/x轴/y轴/分组字段/聚合方式/推荐理由
+      - 失败：None（任一字段非法/缺 X 轴且缺 Y 轴），上层回退到关键词匹配兜底
+
+    业务定位：
+      - 【关键行】安全边界——LLM 输出想进入报表生成链路，必须过这道"安检门"。
+      - 为什么：LLM 可能编造不存在的字段名（幻觉），直接拿去 groupby 会抛 KeyError；
+        白名单校验让"能进到生成器的字段"一定是画像里真实存在的。
+      - 删除后果：LLM 幻觉字段直接进入 pandas 聚合，报表生成频繁报错或产出空表。
+      - 替代方案：try/except 包裹生成过程（被动兜底，问题字段会被悄悄丢弃）；
+        主动白名单校验（当前方案）能在源头拦截，还能统一记录原因。
 
     进入 ``上传报表生成器.生成报表数据`` 前的最后一道白名单：
     - 字段名必须在 ``画像["字段列表"]`` 中；

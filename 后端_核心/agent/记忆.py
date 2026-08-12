@@ -5,6 +5,24 @@
 - 使用 chromadb（纯 Python 嵌入式向量数据库，零运维）
 - 使用 LLM API 的 /embeddings 接口生成向量（中文效果好，零额外依赖）
 - 每次分析完成自动保存，下次推理前检索相似历史作为 few-shot
+
+═══════════════════════════════════════════════════════════════
+【文件总览】项目层级与调用关系
+═══════════════════════════════════════════════════════════════
+- 所在目录：后端_核心/agent/
+- 被谁调用：
+  · 编排器.py → 检索相似记忆 / 保存记忆 / 生成_few_shot_prompt / 清理记忆
+- 调用了谁：
+  · llm客户端.py → embed_text（用 /embeddings 接口把文本转成向量）
+  · chromadb      → 向量库（持久化到 data/chroma_db 目录）
+  · config/settings.py → LLMRequestConfig（请求级配置透传，保证 embedding 与调用同供应商）
+- 本文件负责：
+  1. 保存记忆：分析完成后把（需求+意图+画像摘要）向量化后存入 chromadb
+  2. 检索记忆：新需求到来时按 user_id 过滤 + 向量相似度取 top-k
+  3. 容量治理：清理记忆（超上限删最旧）/ 删除用户记忆（注销时清空）
+  4. few-shot 格式化：把历史记忆拼成 prompt 文本给 LLM 参考
+- 面试要点：这是典型的 RAG（检索增强生成）+ 长期记忆设计；
+  记忆按 user_id 隔离是 P0 加固点——跨用户检索会泄漏他人分析记录。
 """
 
 from __future__ import annotations
@@ -32,7 +50,14 @@ _collection: Optional[chromadb.Collection] = None
 
 
 def _get_collection() -> chromadb.Collection:
-    """获取或创建 chromadb collection（惰性初始化）。"""
+    """获取或创建 chromadb collection（惰性初始化）。
+
+    作用：首次调用时创建持久化客户端并建立 collection，之后直接复用单例。
+
+    入参：无
+    返回：chromadb.Collection 对象（agent_memories 集合）
+    业务定位：记忆模块的"数据库连接"——所有读写都经由这个集合对象。
+    """
     global _client, _collection
     if _collection is not None:
         return _collection
@@ -69,6 +94,12 @@ def 保存记忆(
     if not user_id:
         return False
     try:
+        # 【关键行】把记忆文本（需求+意图+画像摘要）通过 /embeddings 转成向量。
+        # 为什么：向量库靠"语义相似度"检索，必须先有向量才能存进去；
+        # 中文场景用 LLM 官方 embedding 接口效果远好于本地词袋/BOW 方案。
+        # 删除后果：记忆无法落库，few-shot 增强功能整体失效（但分析主流程不受影响）。
+        # 替代方案：本地 sentence-transformers 模型（零 API 成本但多 ~100MB 依赖）；
+        # 用现有 LLM 的 /embeddings 接口零额外依赖，是性价比最高的选择。
         text = f"需求：{需求}\n意图：{json.dumps(意图, ensure_ascii=False)}\n画像：{画像摘要}"
         vector = embed_text(text, llm_config=llm_config)
         if vector is None:
@@ -109,8 +140,19 @@ def 检索相似记忆(
 ) -> List[Dict[str, Any]]:
     """检索与当前需求最相似的 k 条当前用户的记忆（P0 加固：where 按 user_id 过滤）。
 
-    Returns:
-        list of {"需求": str, "图表类型": str, "x轴": str, ...}
+    作用：ReAct 循环开始前，从向量库取出历史中"最像的 3 条分析"作为 few-shot，
+    让 LLM 参考"上次类似需求怎么做的"来决策图表类型和字段。
+
+    入参：
+      - user_id：当前用户 ID（严格隔离，不返回他人的记忆）
+      - 需求：用户当前输入的自然语言分析需求（用它做查询向量）
+      - top_k：最多返回几条（默认 3，硬上限 10）
+      - llm_config：请求级 LLM 配置（embedding 与调用同供应商，避免跨配置串）
+    返回：
+      list of {"需求": str, "图表类型": str, "x轴": str, "聚合方式": str, "得分": float}
+      无匹配/检索失败时返回空列表（不中断主流程）
+
+    业务定位：记忆增强的"检索入口"——是 few-shot prompt 的数据源。
     """
     if not user_id:
         return []

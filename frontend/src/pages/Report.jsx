@@ -1,25 +1,45 @@
+/* =============================================================================
+ * 文件：frontend/src/pages/Report.jsx —— 报表历史页（路由 /report 或 /report/:reportId）
+ * 功能：
+ *   1. 历史列表加载（后端 GET /reports/）+ 分页加载更多 + 清空历史
+ *   2. 报表详情展示：ECharts 图表 + 分析结论 + 发现 + 风险提示 + 数据表/决策记录 Tab
+ *   3. 导出：统一下载弹窗支持 xlsx/csv/pdf/png/trace/html/json，saveWithPicker 选保存位置
+ *   4. 分享：生成带权限只读链接 + 访问密码 + 撤销 + 复制
+ *   5. 历史重放：用原报表参数重新执行分析（生成新报表）
+ *   6. 多轮追问溯源：显示“追问自：XXX”链接，可跳转父报表
+ * 依赖：
+ *   - api.js：listReports / getReport / deleteReport / exportReport / createShare / listShares / revokeShare / replayReport
+ *   - components/EChartsChart —— 图表渲染组件
+ * ============================================================================= */
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Download, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, Copy, Check, Clock, Link2, X, RotateCcw, GitBranch } from 'lucide-react';
 import { listReports, getReport, deleteReport, exportReport, createShare, listShares, revokeShare, replayReport } from '../api';
 import EChartsChart from '../components/EChartsChart';
 
+// Report 报表历史页主组件
+// 路由参数：reportId（可选）= URL 里指定的报表 ID，无则展示最新一张
+// 业务定位：平台三大主页面之一，报表的查看、导出、分享、重放均在此页完成
 export default function Report() {
   const navigate = useNavigate();
   const { reportId } = useParams();
+  // 历史列表（元数据索引）：从后端 GET /reports/ 获取，包含所有报表的 ID + 标题 + 类型
   const [reportMeta, setReportMeta] = useState([]); // [{报表ID, 标题, 图表类型}]
   const [currentIndex, setCurrentIndex] = useState(0);
+  // 当前展示的完整报表对象（含 图表配置 / 结论 / 推荐说明 / Agent Trace / 导出数据）
   const [localReport, setLocalReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState('conclusion');
   const [loadError, setLoadError] = useState('');
-  const [prevTitle, setPrevTitle] = useState(''); // 追问来源报表标题（溯源显示）
+  // 追问溯源：上一份报表标题（展示“追问自：XXX”）
+  const [prevTitle, setPrevTitle] = useState('');
   // 分享弹窗状态
+  // 分享弹窗状态（有效期 + 密码 + 已有链接列表 + 提示信息）
   const [showShare, setShowShare] = useState(false);
   const [shareHours, setShareHours] = useState(24);
   const [sharePassword, setSharePassword] = useState('');
-  const chartContainerRef = useRef(null); // 图表容器：用于导出当前图表为 PNG
-  // 统一下载弹窗状态
+  const chartContainerRef = useRef(null); // 图表容器 DOM 引用：用于导出当前图表为 PNG
+  // 统一下载弹窗状态（格式选择 + loading）
   const [showDl, setShowDl] = useState(false);
   const [dlFmt, setDlFmt] = useState('xlsx');
   const [dlBusy, setDlBusy] = useState(false);
@@ -40,6 +60,8 @@ export default function Report() {
 
   // 挂载时：报表状态只来自后端 —— 历史列表 GET /reports/，详情 GET /reports/{id}
   // reportId（路由参数）优先展示指定报表，否则展示最新一张
+  // 挂载时从后端加载报表列表与详情：reportId（路由参数）优先展示指定报表，否则展示最新一张
+  // 设计：列表与详情分两次请求（列表只含元数据），避免单次返回过大
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -69,10 +91,11 @@ export default function Report() {
     return () => { cancelled = true; };
   }, [reportId]);
 
-  // 翻页时从后端拉详情
+  // 翻页（上一张/下一张）：从后端拉对应报表的详情
+  // B19 修复：switchSeqRef 序号守卫——快速连续切换时，旧响应不覆盖新页面
   const switchTo = async (index) => {
     if (index < 0 || index >= reportMeta.length) return;
-    const seq = ++switchSeqRef.current; // B19
+    const seq = ++switchSeqRef.current; // B19：本次切换序号
     setCurrentIndex(index);
     try {
       const detail = await getReport(reportMeta[index].报表ID);
@@ -92,15 +115,15 @@ export default function Report() {
   const prevReport = () => switchTo(currentIndex - 1);
   const nextReport = () => switchTo(currentIndex + 1);
 
-  // 加载更多历史报表（追加到列表尾部）
+  // 加载更多历史报表：以当前列表长度作为 offset 向后翻页，追加到列表尾部
   const handleLoadMore = async () => {
-    if (loadingMore) return;
+    if (loadingMore) return; // 防重复点击并发请求
     setLoadingMore(true);
     try {
       const res = await listReports(PAGE_SIZE, reportMeta.length);
       const extra = res?.报表列表 || [];
       setReportMeta((prev) => [...prev, ...extra]);
-      setHasMore(extra.length >= PAGE_SIZE);
+      setHasMore(extra.length >= PAGE_SIZE); // 这次没满页说明到底了
     } catch (e) {
       setLoadError('加载更多报表失败：' + (e.message || e));
     } finally {
@@ -108,11 +131,12 @@ export default function Report() {
     }
   };
 
-  // 清空历史：删除后端全部报表；删除失败项保留（不误清 UI），带确认框
+  // 清空历史：逐条删除后端报表；删除失败项保留（不误清 UI），带确认框防误操作
   const handleClearHistory = async () => {
     if (reportMeta.length === 0) return;
     if (!window.confirm(`确定删除全部 ${reportMeta.length} 份报表？此操作不可恢复。`)) return;
     const failed = [];
+    // 逐条调 DELETE：失败的不从 UI 移除，避免“UI 删了后端还在”的不一致
     for (const item of reportMeta) {
       try { await deleteReport(item.报表ID); } catch (e) { failed.push(item.报表ID); console.error('报表删除失败:', item.报表ID, e); }
     }
@@ -128,44 +152,65 @@ export default function Report() {
   // 导出：Excel / CSV / PDF 走后端端点（带 token），Trace 前端本地生成 Markdown
   // B4 修复：操作目标 = 当前实际查看的报表，而非列表下标推断（直访旧 URL 不再错对象）
   const currentReportId = viewingReportId;
-  // 统一保存：优先 File System Access API 弹系统"另存为"让用户选位置（Chrome/Edge）；
-  // 不支持或用户取消时，回退到浏览器默认下载目录
+  // 统一保存：优先用 File System Access API 弹系统"另存为"让用户选位置（Chrome/Edge）；
+  // 不支持或用户取消时，回退到浏览器默认下载目录（a[download] 触发）
+  // 入参：blob（文件内容）、filename（建议文件名）
   async function saveWithPicker(blob, filename) {
     try {
+      // 【关键行】检测浏览器是否支持 showSaveFilePicker（File System Access API）。
+      // 为什么：默认下载目录会按浏览器设置乱放文件，用户找不到；
+      //   原生"另存为"对话框让用户主动选位置，符合桌面软件的使用习惯。
+      // 删除后果：导出永远下载到默认目录，用户找不到文件，体验断崖式下降。
+      // 替代方案：只用 a[download]（兼容性最好但无法选位置）；或引入第三方库
+      //   file-saver（同样不支持选位置）；原生 API 是唯一能弹保存框的方案。
       if (window.showSaveFilePicker) {
+        // 从文件名解析扩展名，用于保存对话框的文件类型过滤
         const ext = '.' + ((filename.split('.').pop()) || 'bin');
         const handle = await window.showSaveFilePicker({
           suggestedName: filename,
           types: [{ description: '导出文件', accept: { [blob.type || 'application/octet-stream']: [ext] } }],
         });
+        // 拿到文件句柄后：创建可写流 → 写入 blob → 关闭（三步完成磁盘写入）
         const writable = await handle.createWritable();
         await writable.write(blob);
         await writable.close();
         return;
       }
     } catch (e) {
-      if (e?.name === 'AbortError') return; // 用户在保存对话框中取消
+      if (e?.name === 'AbortError') return; // 用户在保存对话框中取消（不算错误，静默退出）
       // 其他异常（权限/浏览器限制）静默回退默认下载
     }
+    // 【关键行】回退方案：Object URL + 隐藏 a 标签点击下载。
+    // 为什么：不支持 File System API 的浏览器（Firefox/Safari）必须还能下载；
+    //   URL.createObjectURL 把 blob 变成临时 URL，a.download 指定文件名触发下载。
+    // 删除后果：Firefox/Safari 用户完全无法导出任何格式。
+    // 替代方案：跳转 blob URL（window.open）——无法指定文件名且会新开标签页；
+    //   a[download] 是标准做法，1 秒后 revokeObjectURL 释放内存防泄漏。
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = filename; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  // 统一导出入口：按弹窗选择的格式生成 blob 并走 saveWithPicker
+  // 统一导出入口：按弹窗选择的格式生成 blob，再统一走 saveWithPicker 保存
+  // 入参 fmt：'xlsx'/'csv'/'pdf'/'png'/'trace'/'html'/'json'
+  // 设计：7 种格式共用一套下载/保存链路，格式差异只体现在 blob 生成这一段
   const handleExportFormat = async (fmt) => {
     try {
       let blob, filename;
       if (fmt === 'xlsx' || fmt === 'csv' || fmt === 'pdf') {
+        // 走后端导出端点：带 token 下载，返回 { blob, filename }（文件名由后端 Content-Disposition 给出）
         if (!currentReportId) return;
         ({ blob, filename } = await exportReport(currentReportId, fmt));
       } else if (fmt === 'png') {
+        // PNG 不走后端：直接截当前 ECharts canvas（浏览器本地能力，无需请求）
         const canvas = chartContainerRef.current?.querySelector('canvas');
         if (!canvas) { alert('图表尚未渲染完成，请稍后再试'); return; }
         blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+        // 文件名用报表标题，非法文件名字符替换成下划线（Windows 不允许 \/:*?"<>|）
         filename = `${(report?.标题 || '报表').replace(/[\\/:*?"<>|]/g, '_')}.png`;
       } else if (fmt === 'trace') {
+        // Agent 决策记录：前端本地拼 Markdown（步骤 + 说明），无需后端参与
         if (trace.length === 0) return;
         const lines = [
           `# Agent 决策记录 — ${report.标题 || '数据分析报表'}`,
@@ -175,13 +220,15 @@ export default function Report() {
         blob = new Blob([lines.join('\n\n')], { type: 'text/markdown;charset=utf-8' });
         filename = `Agent决策记录-${(report.标题 || '报表').replace(/[\\/:*?"<>|]/g, '_')}.md`;
       } else if (fmt === 'html') {
+        // HTML 报告：直接用后端导出数据里预生成的 HTML 字符串
         blob = new Blob([exportData.HTML], { type: 'text/html' });
         filename = 'report.html';
       } else if (fmt === 'json') {
+        // JSON 数据：后端导出的结构化 JSON 字符串
         blob = new Blob([exportData.JSON], { type: 'application/json' });
         filename = 'report.json';
       }
-      if (blob) await saveWithPicker(blob, filename);
+      if (blob) await saveWithPicker(blob, filename); // 统一走保存位置选择逻辑
     } catch (e) {
       alert(`导出失败：${e.message || e}`);
     }
@@ -190,7 +237,7 @@ export default function Report() {
 
 
 
-  // 分享：打开弹窗并加载已有链接
+  // 分享：打开弹窗并加载当前报表已有的分享链接列表
   const openShareModal = async () => {
     setShowShare(true);
     setShareMsg('');
@@ -204,6 +251,7 @@ export default function Report() {
       setShareErr('加载分享列表失败：' + (e.message || e));
     }
   };
+  // 刷新分享列表：生成/撤销成功后调用，保证列表与后端一致
   const reloadShares = async () => {
     try {
       const res = await listShares(currentReportId);
@@ -213,19 +261,21 @@ export default function Report() {
       setShareErr('分享列表刷新失败：' + (e.message || e));
     }
   };
+  // 生成分享链接：有效期 + 可选访问密码，成功后刷新列表并展示成功提示
   const handleCreateShare = async () => {
     if (!currentReportId) return;
     try {
       const res = await createShare(currentReportId, shareHours, sharePassword.trim());
       setShareMsg(`已生成，有效期 ${shareHours} 小时${res.需密码 ? '，需访问密码' : ''}`);
       setShareErr('');
-      setSharePassword('');
+      setSharePassword(''); // 生成完清空密码输入框，下次默认不带密码
       await reloadShares();
     } catch (e) {
       setShareMsg('');
       setShareErr('生成失败：' + (e.message || e));
     }
   };
+  // 撤销分享链接：确认后调后端 DELETE，链接立即失效
   const handleRevokeShare = async (shareId) => {
     if (!window.confirm('撤销后链接立即失效，确定？')) return;
     try {
@@ -237,6 +287,7 @@ export default function Report() {
       setShareErr('撤销失败：' + (e.message || e));
     }
   };
+  // 复制分享链接到剪贴板：拼上站点域名才是完整可访问链接，1.6 秒后恢复图标
   const handleCopyShare = async (link) => {
     try {
       await navigator.clipboard.writeText(window.location.origin + link);
@@ -246,18 +297,19 @@ export default function Report() {
       setShareErr('复制失败，请手动复制链接');
     }
   };
+  // 格式化过期时间为本地时间（中文格式，24 小时制）
   const fmtExpire = (iso) => {
     try { return new Date(iso).toLocaleString('zh-CN', { hour12: false }); } catch { return iso; }
   };
 
-  // 历史重放：用原报表参数重新执行分析（复现过程 → 新报表）
+  // 历史重放：用原报表参数重新执行分析（复现过程 → 生成全新报表并跳转过去）
   const handleReplay = async () => {
     if (!currentReportId || replaying) return;
     setReplaying(true);
     setLoadError('');
     try {
       const res = await replayReport(currentReportId);
-      navigate(`/report/${res.报表ID}`);
+      navigate(`/report/${res.报表ID}`); // 跳转到新生成的报表
     } catch (e) {
       setLoadError('重放失败：' + (e.message || e));
     } finally {
@@ -267,7 +319,7 @@ export default function Report() {
 
   const report = localReport;
 
-  // 骨架屏（加载中且无数据）
+  // 骨架屏：首次加载且还没数据时展示占位动画，避免白屏闪烁
   if (loading && !report) {
     return (
       <div className="p-8 max-w-5xl mx-auto space-y-4">
@@ -280,6 +332,7 @@ export default function Report() {
     );
   }
 
+  // 空状态：加载完成但没有任何报表时展示引导按钮
   if (!report) {
     return (
       <div className="p-8 max-w-5xl mx-auto text-center">
@@ -291,6 +344,7 @@ export default function Report() {
     );
   }
 
+  // 从报表对象中解出各区块数据：图表配置 / 推荐理由 / 风险提示 / 决策记录 / 结论等
   const chartConfig = report.图表配置 || {};
   const recommendations = report.推荐说明?.理由 || [];
   const riskWarnings = report.风险提示 || [];
@@ -304,7 +358,7 @@ export default function Report() {
 
   return (
     <div className="p-8 max-w-5xl mx-auto">
-      {/* Header */}
+      {/* Header：标题 + 元信息 + 翻页导航 + 分享/重放/导出入口 */}
       <div className="flex items-center justify-between mb-7">
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-gray-900">报表查看</h1>
@@ -370,7 +424,7 @@ export default function Report() {
         </div>
       </div>
 
-      {/* ECharts Chart：藏青光晕舞台 */}
+      {/* ECharts Chart：藏青光晕舞台；表格类图表不渲染 ECharts，提示去下方 Tab 查看 */}
       <div ref={chartContainerRef} className="rounded-xl p-5"
            style={{ background: 'radial-gradient(120% 100% at 50% 0%, #eef3f9 0%, #f8fafc 55%, #f1f5f9 100%)' }}>
         {chartTypeKey === 'table' ? (
@@ -501,7 +555,8 @@ export default function Report() {
         </button>
       </div>
 
-      {/* 统一下载弹窗：选择格式 → 确认下载（Chrome/Edge 可选保存位置） */}
+      {/* 统一下载弹窗：选择格式 → 确认下载（Chrome/Edge 可选保存位置）
+          每种格式带 available 标记，不满足条件（如图表未渲染/无数据）的置灰不可选 */}
       {showDl && (() => {
         const dlOptions = [
           { key: 'xlsx', label: 'Excel 表格', desc: '数据明细（.xlsx）' },

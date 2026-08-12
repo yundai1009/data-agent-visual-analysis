@@ -1,4 +1,18 @@
-﻿import { useState, useEffect, useRef } from 'react';
+﻿/* =============================================================================
+ * 文件：frontend/src/pages/Analysis.jsx —— 智能分析页（路由 /analysis，平台核心页面）
+ * 功能：
+ *   1. 自然语言描述需求 + 模板快捷输入 + 图表/字段/聚合方式高级配置
+ *   2. handleGenerate 构造 payload 调 generateReportStream（SSE 直播 Agent 决策流）
+ *   3. 分析直播区：左侧决策流逐步渲染 + 右侧图表生长动画 + 计时
+ *   4. 多轮追问：基于最近一次报表继续问（携带 上一报表ID）
+ *   5. 智能推荐模式：图表/字段不显式选择时交给后端 LLM 决策（字段传空）
+ * 依赖：
+ *   - api.js generateReportStream —— SSE 流式分析接口
+ *   - AppContext useApp().dataset —— 当前数据集（含 数据画像/字段列表）
+ *   - validators/chartFields.js —— 图表字段适配校验（handleGenerate 内调用）
+ *   - components/LLMConfig —— LLM 模型配置入口
+ * ============================================================================= */
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Zap, Sparkles, BarChart3, LineChart, PieChart, ScatterChart, Table, Layers, Loader2, Cpu, GitBranch, X, Brain, Wrench, Eye, AlertTriangle, MessageSquare, ArrowRight } from 'lucide-react';
 import LLMConfig from '../components/LLMConfig';
@@ -6,6 +20,7 @@ import { generateReportStream } from '../api';
 import { useApp } from '../AppContext';
 import validateChartFields from '../validators/chartFields';
 
+// 图表类型英文键 → 中文名映射：payload 里传给后端的“图表类型”必须是中文（chartMap[chartType]）
 const chartMap = {
   auto: '自动推荐', bar: '柱状图', line: '折线图', pie: '饼图', scatter: '散点图',
   heatmap: '热力图', table: '表格', stacked: '堆积柱状图',
@@ -14,6 +29,7 @@ const chartMap = {
   waterfall: '瀑布图', sunburst: '旭日图', candlestick: 'K线图',
 };
 
+// 图表类型选择面板的数据源：id（英文键）+ 图标 + 展示名，网格渲染
 const chartTypes = [
   { id: 'auto', icon: Sparkles, label: '智能推荐' },
   { id: 'bar', icon: BarChart3, label: '柱状图' },
@@ -36,6 +52,7 @@ const chartTypes = [
   { id: 'stacked', icon: Layers, label: '堆积图' },
 ];
 
+// 快捷模板：点击后把固定句式填入输入框，降低新手描述需求的门槛
 const templates = [
   { label: '占比分布', icon: PieChart, text: '按【地区】统计【销售额】占比' },
   { label: '趋势变化', icon: LineChart, text: '按【月份】统计【销售额】趋势变化' },
@@ -43,6 +60,7 @@ const templates = [
   { label: '交叉分析', icon: GitBranch, text: '按【地区】和【岗位类型】做【销售额】交叉分析' },
 ];
 
+// 可选模型下拉：空 id = 系统默认（后端按账号配置决定）
 const models = [
   { id: '', label: '系统默认' },
   { id: 'gpt-4o-mini', label: 'GPT-4o Mini' },
@@ -50,16 +68,22 @@ const models = [
   { id: 'deepseek-chat', label: 'DeepSeek Chat' },
 ];
 
+// Analysis 智能分析页主组件
+// 无 props：全部数据来自 useApp() 的 dataset（当前选中数据集）；路由跳转用 useNavigate
+// 业务定位：平台三大主页面之一，是“自然语言 → 报表”的主入口
 export default function Analysis() {
   const navigate = useNavigate();
   const { dataset } = useApp();
+  // 表单状态：自然语言输入 / 图表类型 / 生成中标记
   const [nlInput, setNlInput] = useState('');
   const [chartType, setChartType] = useState('auto');
   const [generating, setGenerating] = useState(false);
+  // 高级配置：X/Y 轴、分组字段、聚合方式（空值 = 交给后端自动决定）
   const [xAxis, setXAxis] = useState('');
   const [yAxis, setYAxis] = useState('');
   const [groupField, setGroupField] = useState('');
   const [aggMethod, setAggMethod] = useState('求和');
+  // Agent 模式：single 单 Agent / multi 多智能体（Supervisor + 3 Worker）
   const [agentMode, setAgentMode] = useState('single');
   const [selectedModel, setSelectedModel] = useState('');
   const [error, setError] = useState('');
@@ -77,6 +101,7 @@ export default function Analysis() {
   const generateSeqRef = useRef(0);
   const [followUp, setFollowUp] = useState('');
 
+  // 从数据集画像里拆出字段分类：数值/分类/日期/文本，供选图和下拉框使用
   const profile = dataset?.数据画像;
   const fields = profile?.字段列表 || [];
   const numFields = profile?.数值字段 || [];
@@ -85,19 +110,32 @@ export default function Analysis() {
   const textFields = profile?.文本字段 || [];
 
   // 选中图表类型时按语义自动重选字段（自然语言/点击图表都不用手动选字段）
+  // 入参 id：图表类型英文键（'auto'/'bar'/'line'/...）
+  // 业务定位：把“选图”和“选字段”两个动作合并，用户只需点一次图表类型
   const handleChartSelect = (id) => {
     setChartType(id);
     // 智能推荐：字段交给后端 Agent/LLM 决策，清空显式选择
+    // 【关键行】选“智能推荐”时把 X/Y/分组全部清空，让后端 LLM 自由决定字段。
+    // 为什么：auto 模式的本意就是“我不指定，AI 看着办”；若残留上一张图的字段，
+    //   后端会被陈旧字段误导，生成的图与用户意图对不上。
+    // 删除后果：切换回智能推荐后仍带着上一张图的字段，AI 被“半指定”状态束缚，
+    //   推荐结果总与自然语言描述相悖。
+    // 替代方案：把旧字段也传给后端让它参考（可能保留用户偏好），但语义不清——
+    //   后端分不清是“用户指定”还是“历史残留”；清空让契约更明确。
     if (id === 'auto') {
       setXAxis(''); setYAxis(''); setGroupField('无');
       return;
     }
+    // set 局部函数：统一把三字段写入 state，空值兜底（x 空 → ''，分组空 → '无'）
     const set = (x, y, g) => { setXAxis(x || ''); setYAxis(y || ''); setGroupField(g || '无'); };
     switch (id) {
+      // 词云：拿文本字段（词频统计）或分类字段兜底，无 Y 轴
       case 'wordcloud':
         set(textFields[0] || catFields[0] || '', '', '无'); break;
+      // 散点：需要两个数值字段（X 与 Y 都是数值），缺第二个时用第一个顶替
       case 'scatter':
         set(numFields[0] || '', numFields[1] || numFields[0] || '', '无'); break;
+      // 箱线图/蜡烛图：X 用分类或日期，Y 用数值；X 与 Y 撞了换第二个分类字段
       case 'boxplot':
       case 'candlestick': {
         let x = (id === 'candlestick' ? dateFields[0] : catFields[0]) || catFields[0] || dateFields[0] || '';
@@ -105,25 +143,30 @@ export default function Analysis() {
         if (x === y) x = dateFields[0] || catFields[1] || '';
         set(x, y, '无'); break;
       }
+      // 热力图/堆积/桑基/旭日：X 分类 + Y 数值 + 第二个分类做分组（交叉维度）
       case 'heatmap':
       case 'stacked':
       case 'sankey':
       case 'sunburst':
         set(catFields[0] || dateFields[0] || '', numFields[0] || '', catFields[1] || '无'); break;
+      // 雷达：X 分类（维度）+ Y 数值（各维度取值）
       case 'radar':
         set(catFields[0] || dateFields[0] || '', numFields[0] || '', '无'); break;
+      // 直方图：X 和 Y 都用同一个数值字段（分布统计）
       case 'histogram':
         set(numFields[0] || '', numFields[0] || '', '无'); break;
+      // 折线/面积：X 优先日期（时间趋势），退而求其次分类
       case 'line':
       case 'area':
         set(dateFields[0] || catFields[0] || '', numFields[0] || '', '无'); break;
+      // 默认（柱状等）：X 分类 + Y 数值
       default:
         set(catFields[0] || dateFields[0] || '', numFields[0] || '', '无');
     }
   };
 
-  // Auto-fill based on profile（useEffect 中执行，避免 render 阶段 setState）
   // 智能推荐模式（auto）不预填：字段交给后端 Agent/LLM 决策
+  // 首次加载数据集时自动预填一次 X/Y/分组（仅在 xAxis 为空时），避免用户空着字段
   useEffect(() => {
     if (profile && chartType !== 'auto' && !xAxis) {
       setXAxis((profile.分类字段?.[0] || profile.日期字段?.[0] || fields[0] || ''));
@@ -133,7 +176,7 @@ export default function Analysis() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile, chartType]);
 
-  // 生成期间计时 + 决策流自动滚动到底部
+  // 生成期间计时（每秒 +1）+ 决策流自动滚动到底部（liveSteps.length 变化时触发）
   useEffect(() => {
     if (!generating) return;
     const t = setInterval(() => setElapsed(s => s + 1), 1000);
@@ -148,6 +191,7 @@ export default function Analysis() {
   // 收到 done 事件后不再自动跳转：停留本页让用户选择「继续追问」或「查看报表」（批次3 多轮追问）
   // （自动跳转会在 1 秒内打断追问流程，已移除）
 
+  // 取消按钮：abort 当前 SSE 请求 + 重置直播状态
   const handleCancel = () => {
     abortRef.current?.abort();
     setGenerating(false);
@@ -156,16 +200,19 @@ export default function Analysis() {
     setLiveDone(null);
   };
 
-  // 生成报表：isFollowUp=true 表示「继续追问」——清空上一轮字段交给系统重选，并携带 上一报表ID
+  // 生成报表主函数
+  // 入参：isFollowUp = true 时进入「追问模式」——清空上一轮字段，携带 lastReportId 传给后端
+  // 业务定位：整个分析流程的入口，串联 payload 构造 → SSE 发起 → 事件驱动 UI
   async function handleGenerate(isFollowUp = false) {
     if (!dataset) {
       setError('请先在数据管理页面上传数据');
       navigate('/data');
       return;
     }
-    // 字段前置校验（追问模式由系统按追问语义重选字段，跳过旧字段校验）
+    // 智能推荐模式（字段未显式选择）跳过前端校验：字段由后端 Agent/LLM 决策
+    // 追问模式（isFollowUp）也跳过旧字段校验：系统会按追问语义重新选字段
     if (!isFollowUp) {
-      // 智能推荐模式（字段未显式选择）跳过前端校验：字段由后端 Agent/LLM 决策
+      // 智能推荐模式（xAxis/yAxis 为空）跳过前端校验——字段由后端 LLM 决策
       const validationError = xAxis && yAxis
         ? validateChartFields(chartType, xAxis, yAxis, groupField, profile)
         : null;
@@ -181,26 +228,45 @@ export default function Analysis() {
     setElapsed(0);
     setGenerating(true);
 
+    // 构造分析请求 payload（字段全中文键名，与后端契约一致）
+    // 【关键行】智能推荐模式下 x轴/y轴/分组字段传 null/[]，把字段决策权交给后端 LLM。
+    // 为什么：用户没显式选字段时（xAxis/yAxis 为空），前端不具备理解自然语言的能力，
+    //   硬传“第一个分类字段”只会帮倒忙；后端 Agent 会结合 分析需求 文本自主选字段。
+    // 删除后果：若把空字符串/undefined 直接传过去，后端契约里可能解析成“用户指定了空字段”，
+    //   导致生成空图或报参数错误；null 是明确的“未指定”语义。
+    // 替代方案：前端用规则引擎猜字段（速度更快但准确率低，词义理解不到位）；
+    //   把决策交给 LLM 是智能推荐模式的核心理念，准确率远高于规则。
     const payload = {
       数据集ID: dataset.数据集ID,
+      // 追问时优先用追问输入（followUp），为空退回主输入框内容
       分析需求: isFollowUp ? (followUp.trim() || nlInput) : nlInput,
+      // 追问固定走“自动推荐”：新问题不一定适配上一张图的类型，让后端重新决策
       图表类型: isFollowUp ? '自动推荐' : (chartMap[chartType] || '自动推荐'),
+      // '无' 是 UI 里“不分组”的占位值，转成 null 才是后端契约的“不分组”
       x轴: isFollowUp ? null : (xAxis === '无' ? null : xAxis),
+      // y轴 是数组：支持多指标；空数组 = 未指定（交给后端），[yAxis] = 指定一个
       y轴: isFollowUp ? [] : (yAxis ? [yAxis] : []),
       分组字段: isFollowUp ? null : (groupField === '无' ? null : groupField),
       聚合方式: isFollowUp ? '求和' : aggMethod,
       agent_mode: agentMode,
-      model: selectedModel || undefined,
-      上一报表ID: isFollowUp ? (lastReportIdRef.current || undefined) : undefined,
+      model: selectedModel || undefined, // undefined 不出现在 JSON 里，后端走默认模型
+      上一报表ID: isFollowUp ? (lastReportIdRef.current || undefined) : undefined, // 追问链：后端基于上一报表上下文续答
     };
     const controller = new AbortController();
-    abortRef.current = controller;
-    const seq = ++generateSeqRef.current; // B6：本次请求序号
+    abortRef.current = controller; // 供「取消」按钮随时中断请求
+    const seq = ++generateSeqRef.current; // B6：本次请求序号（防旧请求的 finally 误关新请求）
 
     try {
+      // 发起 SSE 流式分析：每收到一个事件就回调 onEvent，驱动直播 UI 实时更新
       await generateReportStream(payload, {
         signal: controller.signal,
         onEvent: (ev) => {
+          // 【关键行】step 事件：把新一步追加进 liveSteps，旧步骤全部置为 done。
+          // 为什么：决策流是“从上到下逐步生长”的，当前正在执行的一步要高亮
+          //   （active 状态 + 呼吸灯动画），已完成步骤保持灰色对勾。
+          // 删除后果：决策流不再实时增长，用户看不到 Agent 工作过程，体验回到黑盒。
+          // 替代方案：直接覆盖整个数组（setLiveSteps([newStep])）——历史步骤全丢；
+          //   用函数式更新 prev => [...] 追加是最稳的不可变更新写法。
           if (ev.type === 'step') {
             // 上一步置为完成，新一步置为进行中
             setLiveSteps(prev => [
@@ -208,11 +274,19 @@ export default function Analysis() {
               { record: ev.data, status: 'active' },
             ]);
           } else if (ev.type === 'done') {
+            // 【关键行】done 事件：全部步骤标记完成 + 记录报表 ID，并返回 'stop' 终止流。
+            // 为什么：done 是最后一条事件，后面没有数据了，主动 stop 让 fetch 提前收尾，
+            //   顺便把 lastReportId 存进 ref —— 追问模式要拿它当 上一报表ID。
+            // 删除后果：不 stop 也能正常结束（流自然关闭），但会多等一个网络周期；
+            //   不存 lastReportId 则追问功能彻底失效（报“还没有可追问的分析结果”）。
+            // 替代方案：把报表 ID 放进全局状态（Context）——多一层状态源；ref 是
+            //   纯内部记忆，不触发渲染，最适合存这类“只给下次请求用”的值。
             setLiveSteps(prev => prev.map(s => ({ ...s, status: 'done' })));
             setLiveDone({ 报表ID: ev.报表ID, 标题: ev.标题 });
             lastReportIdRef.current = ev.报表ID;  // 更新追问链
             return 'stop';
           } else if (ev.type === 'error') {
+            // 服务端主动推送的分析失败：展示错误并停止消费流
             setLiveError(ev.message || '分析失败，请重试');
             return 'stop';
           }
@@ -222,6 +296,7 @@ export default function Analysis() {
     } catch (e) {
       // 请求层错误：HTTP 状态 / 网络 / 用户取消
       if (e.name === 'AbortError') return; // 取消不报错
+      // 按错误类型给出针对性提示（401 会先触发全局登出，这里只是补充文案）
       if (e.status === 401) {
         setError('认证已过期或无效，请重新登录');
       } else if (e.status === 413) {
@@ -241,10 +316,11 @@ export default function Analysis() {
     }
   }
 
-  // 继续追问：基于最近一次分析结果发起新一轮分析
+  // 继续追问：基于最近一次分析结果发起新一轮分析（录入追问 → 走 handleGenerate(true)）
+  // 追问的语义：后端拿到 上一报表ID + 新问题，会结合上一份报表的上下文续答
   const handleFollowUp = async () => {
     const q = followUp.trim();
-    if (!q) return;
+    if (!q) return; // 空追问直接忽略
     if (!lastReportIdRef.current) {
       setError('还没有可追问的分析结果，请先完成一次分析');
       return;
@@ -309,7 +385,8 @@ export default function Analysis() {
         </div>
       </div>
 
-      {/* 意图预览条：输入自然语言后展示系统自动选择的图表/字段，确认后再生成 */}
+      {/* 意图预览条：输入自然语言后展示系统自动选择的图表/字段，确认后再生成
+          （B21 修复：预览与实际提交一致，不再恒显“自动”） */}
       {nlInput.trim().length > 0 && !generating && (
         <div className="flex items-center gap-2 flex-wrap mt-3 px-4 py-2.5 rounded-xl bg-accent-soft text-xs text-accent">
           <b className="font-semibold">已自动选择</b>
@@ -345,7 +422,7 @@ export default function Analysis() {
       {/* 分析直播：Agent 实时决策流 + 图表生长舞台 */}
       {generating && (
         <div className="mt-4 grid grid-cols-1 lg:grid-cols-5 gap-4">
-          {/* 左：决策流 */}
+          {/* 左：决策流 —— 每行是一条 Agent 步骤（LLM推理/工具调用/观察） */}
           <div className="lg:col-span-3 bg-white rounded-xl shadow-[var(--shadow-card)] overflow-hidden">
             <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100">
               <span
@@ -364,6 +441,7 @@ export default function Analysis() {
               </button>
             </div>
 
+            {/* 决策流滚动容器：liveSteps 每条渲染一个 TraceRow，新步骤追加到尾部 */}
             <div ref={scrollRef} className="px-2 py-2 space-y-0.5 max-h-[340px] overflow-y-auto">
               {liveSteps.map((s, i) => <TraceRow key={i} step={s} />)}
               {liveSteps.length === 0 && (
@@ -400,7 +478,7 @@ export default function Analysis() {
             </div>
           </div>
 
-          {/* 右：图表生长舞台 */}
+          {/* 右：图表生长舞台 —— 生成期间先展示占位柱状动画，让用户看到图表“长出来” */}
           <div className="lg:col-span-2 bg-white rounded-xl shadow-[var(--shadow-card)] p-4 flex flex-col">
             <div className="flex items-center justify-between">
               <p className="text-[11px] font-semibold tracking-wide text-gray-400">生成中的报表</p>
@@ -443,7 +521,7 @@ export default function Analysis() {
         </div>
       )}
 
-      {/* 多轮追问条：分析完成后停留本页，可继续追问或查看报表 */}
+      {/* 多轮追问条：分析完成后停留本页，可继续追问或查看报表（批次3 多轮追问） */}
       {liveDone && !generating && (
         <div className="mt-3 bg-white rounded-xl shadow-[var(--shadow-card)] px-4 py-3">
           <div className="flex items-center gap-2 mb-2">
@@ -476,7 +554,7 @@ export default function Analysis() {
         </div>
       )}
 
-      {/* 高级选项开关 */}
+      {/* 高级选项开关：展开后显示 模型选择 / Agent 模式 / 图表类型 / 字段配置 */}
       <div className="flex items-center justify-between mt-4">
         <button
           className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors"
@@ -488,7 +566,7 @@ export default function Analysis() {
         {!showAdvanced && <span className="text-[11px] text-gray-500">图表、字段、Agent 模式等高级配置</span>}
       </div>
 
-      {/* 模型选择 + Agent 模式 */}
+      {/* 模型选择 + Agent 模式：LLM 模型下拉 + 单 Agent/多智能体 切换 */}
       {showAdvanced && (
       <>
       <div className="flex items-center gap-4 mt-3">
@@ -509,7 +587,7 @@ export default function Analysis() {
         {agentMode === 'multi' && <span className="text-[11px] text-accent">Supervisor + 3 个 Worker Agent</span>}
       </div>
 
-      {/* Chart type */}
+      {/* 图表类型：网格渲染 18 种图表，点击 handleChartSelect 自动换字段 */}
       <div className="mt-6">
         <p className="text-xs font-semibold text-gray-500 mb-3">图表类型</p>
         <div className="grid grid-cols-4 gap-2">
@@ -534,13 +612,14 @@ export default function Analysis() {
         </div>
       </div>
 
-      {/* Config fields */}
+      {/* 字段配置：X 轴 / Y 轴 / 分组 / 聚合 四个下拉；空选项「🤖 自动推荐」= 交给后端 LLM */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
         <div>
           <label className="text-xs text-gray-400 mb-1.5 block">X 轴</label>
           <select className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 focus:outline-none focus:border-accent" value={xAxis} onChange={(e) => setXAxis(e.target.value)}>
             <option value="">🤖 自动推荐</option>
             {fields.map((f) => <option key={f} value={f}>{textFields.includes(f) ? `✎ ${f}` : f}</option>)}
+            {/* ✎ 前缀标识文本字段（词云等场景专用） */}
           </select>
         </div>
         <div>
@@ -548,6 +627,7 @@ export default function Analysis() {
           <select className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 focus:outline-none focus:border-accent" value={yAxis} onChange={(e) => setYAxis(e.target.value)}>
             <option value="">🤖 自动推荐</option>
             {numFields.map((f) => <option key={f}>{f}</option>)}
+            {/* 没有数值字段时退而求其次显示全部字段（空数据集也能选） */}
             {numFields.length === 0 && fields.map((f) => <option key={f}>{f}</option>)}
           </select>
         </div>
@@ -555,7 +635,7 @@ export default function Analysis() {
           <label className="text-xs text-gray-400 mb-1.5 block">分组字段</label>
           <select className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 focus:outline-none focus:border-accent" value={groupField} onChange={(e) => setGroupField(e.target.value)}>
             <option value="">🤖 自动推荐</option>
-            <option>无</option>
+            <option>无</option> {/* 「无」= 明确不分组，转成 null 传给后端 */}
             {fields.map((f) => <option key={f}>{f}</option>)}
           </select>
         </div>
@@ -573,8 +653,12 @@ export default function Analysis() {
 }
 
 // ---- 分析直播：单条 Agent 决策步骤卡片 ----
+// 步骤图标映射：不同步骤类型对应不同图标（LLM推理=大脑 / 工具调用=扳手 / 观察=眼睛 / 失败=警告）
 const STEP_ICON = { 'LLM推理': Brain, '工具调用': Wrench, '观察': Eye, '失败': AlertTriangle };
 
+// TraceRow 步骤卡片组件：渲染决策流中的一行
+// 入参：step = { record: 后端步骤对象（含 步骤/说明/状态/耗时/token）, status: 'active'|'done' }
+// 返回：一行带图标 + 标题 + 描述 + 耗时 + 状态标签的卡片；active 时高亮背景 + 左边蓝条
 function TraceRow({ step }) {
   const r = step.record || {};
   const kind = step.status === 'active' ? 'active' : (r['状态'] === '失败' ? 'failed' : 'done');
