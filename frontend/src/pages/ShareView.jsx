@@ -1,3 +1,13 @@
+// 分享只读页（面试讲解）
+//
+// 做了什么：/s/:shareId —— 报表公开分享的"只读落地页"：无需登录
+//   即可查看图表/结论/数据，分享者设了密码则先验证密码。
+// 为什么这样设计：
+//   - 与主站完全解耦：不依赖登录态，只调 getSharedReport(shareId)，
+//     后端按分享链接的归属校验（过期时间/密码/是否撤销）；
+//   - 只读：页面无任何编辑/导出入口，从入口上保证"分享出去的
+//     报表不能被篡改"。
+// 删除它会怎样：分享链接全部失效（后端接口仍在，无前端展示）。
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Share2, AlertTriangle, ShieldCheck, Lock } from 'lucide-react';

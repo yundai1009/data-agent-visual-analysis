@@ -1,4 +1,16 @@
-﻿import { useState, useEffect } from 'react';
+﻿// 数据管理页（面试讲解）
+//
+// 做了什么：数据资产的"仓库页"——上传/下载数据集、加载示例数据、
+//   清洗、重命名、删除、预览；上传后立即展示字段画像与 LLM 字段
+//   推荐（指明哪个字段适合做 X 轴/Y 轴/分组）。
+// 为什么这样设计：
+//   - 导入与导出走同一仓库（后端统一 exportUserData 打包下载）；
+//   - DEMO_MODE（VITE_DEMO=1 构建）自动加载示例数据，给零基础
+//     用户零门槛体验（正式模式该常量恒为 false）；
+//   - 卡片用 typeColors/typeLabels 给日期/分类/数值字段着色，
+//     字段类型一眼可辨，降低理解成本。
+// 删除它会怎样：用户无法管理自己的数据，分析无从谈起。
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Upload, Download, FileDown, Database, FileText, AlertTriangle, Search, Sparkles, Loader2, BarChart3, LineChart, Pencil, Trash2, Lightbulb } from 'lucide-react';
 import { uploadFile, loadExample, cleanDataset, healthCheck, listDatasets, deleteDataset, renameDataset, getDataset, exportUserData } from '../api';

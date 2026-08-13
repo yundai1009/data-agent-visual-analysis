@@ -1,3 +1,12 @@
+// 看板页（面试讲解）
+//
+// 做了什么：把多张已生成的报表组合成"看板"——新建/编辑看板
+//   （名称 + 勾选报表）、网格/轮播展示、跳转原报表。
+// 为什么这样设计：
+//   - 看板 = 报表的"精选集"（名称 + 报表ID列表），数据都在后端
+//     dashboards 接口，前端只做组合与展示，不复制报表内容；
+//   - 展示用 EChartsChart 复用报表图表组件，同一套渲染逻辑。
+// 删除它会怎样：用户失去"把分析结果汇总成一页"的能力。
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Plus, Trash2, Pencil, ExternalLink, X, ImageOff, ChevronLeft, ChevronRight } from 'lucide-react';

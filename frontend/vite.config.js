@@ -1,3 +1,11 @@
+// Vite 构建配置（面试讲解）
+//
+// 做了什么：前端开发/构建工具链配置——React 插件 + Tailwind v4 插件、
+//   打包分 chunk（react 全家桶独立 vendor chunk 长缓存；echarts 保持
+//   懒加载独立 chunk）、开发服务器把 /health /auth /datasets /reports
+//   等 API 前缀代理到后端 127.0.0.1:8000（前端不跨域直连）。
+// 为什么这样配置：调整 manualChunks 与 chunkSizeWarningLimit 是为
+//   了控制首屏体积与缓存命中率（详见下方各注释）。
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'

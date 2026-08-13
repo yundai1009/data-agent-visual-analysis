@@ -1,3 +1,15 @@
+// 应用根组件（面试讲解）
+//
+// 做了什么：整个前端的"地基"——用 AppProvider（全局认证/数据集
+//   状态）包裹 BrowserRouter 路由表，懒加载各页面，并挂 ErrorBoundary
+//   兜底任何页面崩溃。
+// 为什么这样设计：
+//   - 页面全部 lazy() 懒加载：首屏只下载当前页面代码（阶段 27
+//     bundle 优化），配合 vite 的 manualChunks 实现长缓存；
+//   - AppProvider 在最外层，登录态、数据集缓存等全局状态任何页面
+//     都能通过 useApp() 读取；
+//   - ProtectedRoute 做路由级守卫：未登录访问受保护页自动跳登录。
+// 删除它会怎样：应用没有任何页面可渲染，等于空白。
 import { useState, useEffect, Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
