@@ -83,6 +83,13 @@ export default function Analysis() {
   const [yAxis, setYAxis] = useState('');
   const [groupField, setGroupField] = useState('');
   const [aggMethod, setAggMethod] = useState('求和');
+// 阶段 29：筛选条件 + TopN（业务高频分析——"只看华东区" / "销量 Top 10"）
+const 筛选操作列表 = ['等于', '不等于', '包含', '大于', '大于等于', '小于', '小于等于', '为空', '不为空'];
+const [filters, setFilters] = useState([]); // [{ 字段, 操作, 值 }]，AND 语义
+const [topN, setTopN] = useState('');       // 数字字符串，空 = 不限制
+const 更新筛选 = (i, key, val) => setFilters(prev => prev.map((f, idx) => idx === i ? { ...f, [key]: val } : f));
+const 添加筛选 = () => setFilters(prev => [...prev, { 字段: '', 操作: '等于', 值: '' }]);
+const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i));
   // Agent 模式：single 单 Agent / multi 多智能体（Supervisor + 3 Worker）
   const [agentMode, setAgentMode] = useState('single');
   const [selectedModel, setSelectedModel] = useState('');
@@ -248,6 +255,11 @@ export default function Analysis() {
       y轴: isFollowUp ? [] : (yAxis ? [yAxis] : []),
       分组字段: isFollowUp ? null : (groupField === '无' ? null : groupField),
       聚合方式: isFollowUp ? '求和' : aggMethod,
+      // 阶段 29：筛选（追问时清空——新问题不一定延续原筛选，交给后端重新决策）
+      筛选条件: isFollowUp ? [] : filters
+        .filter(f => f.字段 && f.操作 && (['为空', '不为空'].includes(f.操作) || f.值 !== ''))
+        .map(f => ({ 字段: f.字段, 操作: f.操作, 值: f.值 })),
+      topN: isFollowUp ? undefined : (topN ? parseInt(topN, 10) : undefined),
       agent_mode: agentMode,
       model: selectedModel || undefined, // undefined 不出现在 JSON 里，后端走默认模型
       上一报表ID: isFollowUp ? (lastReportIdRef.current || undefined) : undefined, // 追问链：后端基于上一报表上下文续答
@@ -644,6 +656,52 @@ export default function Analysis() {
           <select className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 focus:outline-none focus:border-accent" value={aggMethod} onChange={(e) => setAggMethod(e.target.value)}>
             {['求和', '平均值', '计数', '最大值', '最小值'].map((m) => <option key={m}>{m}</option>)}
           </select>
+        </div>
+      </div>
+
+      {/* 阶段 29：筛选条件 + TopN——"只看华东区" / "销量 Top 10" 的高级配置入口 */}
+      <div className="mt-5 border-t border-gray-100 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs font-semibold text-gray-500">筛选条件 <span className="text-[10px] text-gray-400 font-normal">（多条同时满足，也可在需求里说"只看华东区"）</span></p>
+          {filters.length > 0 && (
+            <button className="text-[11px] text-accent hover:underline" onClick={() => setFilters([])}>清空</button>
+          )}
+        </div>
+        <div className="space-y-2">
+          {filters.map((f, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <select className="flex-1 border border-gray-200 rounded-lg px-2.5 py-2 text-xs bg-gray-50 focus:outline-none focus:border-accent" value={f.字段} onChange={(e) => 更新筛选(i, '字段', e.target.value)}>
+                <option value="">选择字段</option>
+                {fields.map((fd) => <option key={fd} value={fd}>{fd}</option>)}
+              </select>
+              <select className="w-28 border border-gray-200 rounded-lg px-2.5 py-2 text-xs bg-gray-50 focus:outline-none focus:border-accent" value={f.操作} onChange={(e) => 更新筛选(i, '操作', e.target.value)}>
+                {筛选操作列表.map((op) => <option key={op} value={op}>{op}</option>)}
+              </select>
+              <input
+                className="flex-1 border border-gray-200 rounded-lg px-2.5 py-2 text-xs bg-gray-50 focus:outline-none focus:border-accent"
+                value={f.值 || ''}
+                onChange={(e) => 更新筛选(i, '值', e.target.value)}
+                placeholder={['为空', '不为空'].includes(f.操作) ? '无需填值' : '筛选值（数字/文本）'}
+                disabled={['为空', '不为空'].includes(f.操作)}
+              />
+              <button className="text-gray-400 hover:text-red-500 transition-colors" onClick={() => 删除筛选(i)} title="删除该条件">✕</button>
+            </div>
+          ))}
+          {filters.length < 10 && (
+            <button className="text-[11px] text-accent hover:underline" onClick={添加筛选}>+ 添加条件</button>
+          )}
+        </div>
+        <div className="mt-3 flex items-center gap-2">
+          <label className="text-xs text-gray-400 shrink-0">Top N</label>
+          <input
+            type="number" min="1" max="200"
+            className="w-24 border border-gray-200 rounded-lg px-2.5 py-2 text-xs bg-gray-50 focus:outline-none focus:border-accent"
+            value={topN}
+            onChange={(e) => setTopN(e.target.value)}
+            placeholder="如 10"
+            title="只保留聚合结果中数值最大的前 N 行（如：销量 Top 10）"
+          />
+          <span className="text-[11px] text-gray-400">只保留数值最大的前 N 行（如"销量 Top 10"）</span>
         </div>
       </div>
       </>

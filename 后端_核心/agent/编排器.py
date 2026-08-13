@@ -74,6 +74,11 @@ _SYSTEM_PROMPT = """你是数据分析 Agent。根据用户的分析需求和数
 4. 生成结论 — 生成分析结论
 
 请按顺序调用工具，每次调用一个。完成所有分析后输出最终结论。
+
+筛选与排名（重要）：
+- 如果需求包含条件过滤（如"只看华东区"、"排除华南"、"销量大于500"），
+  请在「聚合分析」的"筛选条件"参数中明确给出（字段/操作/值），AND 语义；
+- 如果需求包含排名（如"销量Top 10的商品"、"前5名"），请给出"TopN"参数。
 """
 
 
@@ -443,6 +448,8 @@ def _从消息提取意图(messages: List[Dict[str, Any]], 画像: Dict[str, Any
     group_field = None
     agg_method = None
     reason = ""
+    filter_list: List[Dict[str, Any]] = []  # 阶段 29：筛选条件（聚合分析参数）
+    top_n = None
 
     for msg in reversed(messages):
         if not isinstance(msg, dict):
@@ -474,6 +481,15 @@ def _从消息提取意图(messages: List[Dict[str, Any]], 画像: Dict[str, Any
                     y_axis_list = args.get("Y轴") or args.get("y轴") or y_axis_list
                     group_field = args.get("分组字段") or group_field
                     agg_method = args.get("聚合方式") or agg_method
+                    filter_args = args.get("筛选条件") or []
+                    if isinstance(filter_args, list):
+                        filter_args = [f for f in filter_args if isinstance(f, dict) and f.get("字段")]
+                        if filter_args:
+                            filter_list = filter_list or []
+                            for f in filter_args:
+                                if f not in filter_list:
+                                    filter_list.append(f)
+                    top_n = args.get("TopN") or args.get("topN") or top_n
 
     if not chart_type:
         return None
@@ -486,6 +502,16 @@ def _从消息提取意图(messages: List[Dict[str, Any]], 画像: Dict[str, Any
     y_axis_list = [f for f in y_axis_list if f in 可用字段]
     if group_field and group_field not in 可用字段:
         group_field = None
+    # 阶段 29：筛选条件字段必须来自画像字段列表（白名单校验）
+    valid_filters = [
+        {"字段": f["字段"], "操作": f.get("操作", "等于"), "值": f.get("值")}
+        for f in filter_list if f.get("字段") in 可用字段
+    ]
+    if top_n is not None:
+        try:
+            top_n = max(1, min(int(top_n), 200))
+        except (TypeError, ValueError):
+            top_n = None
 
     return {
         "图表类型": chart_type,
@@ -494,4 +520,6 @@ def _从消息提取意图(messages: List[Dict[str, Any]], 画像: Dict[str, Any
         "分组字段": group_field,
         "聚合方式": agg_method or "求和",
         "推荐理由": reason[:200],
+        "筛选条件": valid_filters,
+        "TopN": top_n,
     }

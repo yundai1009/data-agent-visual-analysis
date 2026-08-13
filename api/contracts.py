@@ -72,6 +72,18 @@ class DatasetPreviewResponse(BaseModel):
     数据画像: Dict[str, Any]
 
 
+class 筛选条件模型(BaseModel):
+    """单条筛选条件（阶段 29：条件筛选）。
+
+    操作枚举与后端_核心/数据筛选.py 的 筛选操作 保持一致；
+    值统一为字符串，过滤时按列类型自动转型（数值列转 float 等）。
+    """
+
+    字段: str = Field(..., max_length=64)
+    操作: str = Field(..., max_length=16)  # 等于/不等于/包含/大于/大于等于/小于/小于等于/为空/不为空
+    值: Optional[str] = Field(None, max_length=200)
+
+
 class ReportGenerateRequest(BaseModel):
     """生成报表请求（P0 加固：全部字段设长度上限，防超大请求体 DoS）。"""
 
@@ -83,6 +95,9 @@ class ReportGenerateRequest(BaseModel):
     分组字段: Optional[str] = Field(None, max_length=64)
     聚合方式: str = Field("求和", max_length=16)
     agent_mode: str = Field("single", max_length=16)  # "single" | "multi"
+    # 阶段 29：条件筛选 + TopN（业务高频分析）
+    筛选条件: list[筛选条件模型] = Field(default_factory=list, max_length=10)  # AND 语义
+    topN: Optional[int] = Field(None, ge=1, le=200)  # 聚合结果取数值最大的前 N 行
     model: Optional[str] = Field(None, max_length=64)  # 临时覆盖 LLM 模型名，None=使用 .env 默认
     上一报表ID: Optional[str] = Field(None, max_length=64)  # 追问上下文：延续上一份报表继续分析
     原始分析需求: Optional[str] = Field(None, max_length=2000)  # 内部：追问注入上下文前的原话（用于报表标题）

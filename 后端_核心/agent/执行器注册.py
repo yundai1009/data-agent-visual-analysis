@@ -120,6 +120,7 @@ def _聚合分析_executor(arguments: Dict[str, Any], context: Dict[str, Any]) -
     y轴列表 = arguments.get("Y轴") or arguments.get("y轴") or []
     分组字段 = arguments.get("分组字段")
     聚合方式 = arguments.get("聚合方式") or "求和"
+    筛选条件 = arguments.get("筛选条件") or []
 
     if isinstance(y轴列表, str):
         y轴列表 = [y轴列表]
@@ -131,6 +132,15 @@ def _聚合分析_executor(arguments: Dict[str, Any], context: Dict[str, Any]) -
     y轴列表 = [f for f in y轴列表 if f in 可用字段]
     if 分组字段 and 分组字段 not in 可用字段:
         分组字段 = None
+
+    # 阶段 29：工具层也应用筛选——LLM 观察到的聚合摘要必须反映筛选后的数据，
+    # 否则"只看华东区"的 LLM 会基于全量摘要做错误推断。
+    筛选条件 = [f for f in 筛选条件 if isinstance(f, dict) and f.get("字段") in 可用字段]
+    if 筛选条件:
+        from 后端_核心.数据筛选 import 应用筛选
+        df, _ = 应用筛选(df, 筛选条件)
+        if df.empty:
+            return {"数据摘要": "筛选后没有数据（请检查筛选条件）", "行数": 0, "字段": []}
 
     if not x轴 or x轴 not in df.columns:
         return {"数据摘要": f"数据集前 5 行：\n{df.head().to_string()}", "行数": len(df)}

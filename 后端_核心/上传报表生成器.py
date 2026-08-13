@@ -8,6 +8,7 @@ import logging
 import pandas as pd
 
 from 后端_核心.数据画像 import 生成数据画像
+from 后端_核心.数据筛选 import 应用筛选, 提取TopN, 匹配筛选条件, TOPN_排除图表
 from 后端_核心.agent.编排器 import 编排Agent
 from 后端_核心.agent.结论润色 import 润色结论
 from config.settings import LLMRequestConfig
@@ -376,36 +377,53 @@ def _解析自然语言意图(
                     "分组字段": agent_result["分组字段"],
                     "聚合方式": agent_result["聚合方式"],
                     "推荐理由": agent_result.get("推荐理由", ""),
+                    "筛选条件": agent_result.get("筛选条件") or [],
+                    "TopN": agent_result.get("TopN"),
                 }
+                # 阶段 29 兜底：编排器内部降级结果（无 key 时）不含筛选/TopN——
+                # 用规则层识别补齐，保证"只看华东区"/"Top 10"在 LLM 路径同样生效
+                if df is not None and not override["筛选条件"]:
+                    override["筛选条件"] = 匹配筛选条件(分析需求, df, 画像)
+                if df is not None and not override["TopN"]:
+                    override["TopN"] = 提取TopN(分析需求)
                 fail_reason = agent_result.get("LLM失败原因", "")
                 return override, agent_result["意图来源"], agent_result["Agent_Trace"], fail_reason
             logger.warning("LLM 意图解析返回 None, 降级到关键词匹配")
         except Exception as exc:
             logger.warning("LLM 意图解析异常, 降级到关键词匹配: %s", exc)
     # 规则降级路径：关键词匹配 + 模板语法解析（不依赖 LLM，永远可用）
-    rule_override = _意图驱动配置(画像, 分析需求)
+    rule_override = _意图驱动配置(画像, 分析需求, df)
     return rule_override, ("规则" if rule_override else "无"), [], ""
 
 
-def _意图驱动配置(画像: Dict[str, Any], 分析需求: str) -> Dict[str, Any]:
+def _意图驱动配置(画像: Dict[str, Any], 分析需求: str, df: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
+    """规则层意图配置（图表类型 + 筛选 + TopN 三合一）。
+
+    df 可选：传入时额外识别"只看X/排除X/字段=值"筛选与"Top N"排名
+    （无 df 的调用方（如编排器降级路径）只拿图表配置，不拿筛选）。
+    """
     controlled = _受控语句配置(画像, 分析需求)
-    if controlled:
-        return {key: value for key, value in controlled.items() if value not in (None, [None])}
+    chart_part = (
+        {key: value for key, value in controlled.items() if value not in (None, [None])}
+        if controlled
+        else {}
+    )
 
     需求文本 = 分析需求.strip()
-    if not any(keyword in 需求文本 for keyword in 占比关键词):
-        return {}
+    # 占比意图（与受控语句互斥，保留原逻辑）
+    if not chart_part and any(keyword in 需求文本 for keyword in 占比关键词):
+        目标字段 = _匹配意图字段(画像, 字段意图关键词, 需求文本)
+        if 目标字段:
+            chart_part = {"图表类型": "饼图", "x轴": 目标字段, "y轴": ["记录数"], "聚合方式": "计数"}
 
-    目标字段 = _匹配意图字段(画像, 字段意图关键词, 需求文本)
-    if not 目标字段:
-        return {}
-
-    return {
-        "图表类型": "饼图",
-        "x轴": 目标字段,
-        "y轴": ["记录数"],
-        "聚合方式": "计数",
-    }
+    if df is not None:
+        筛选 = 匹配筛选条件(需求文本, df, 画像)
+        topn = 提取TopN(需求文本)
+        if 筛选:
+            chart_part["筛选条件"] = 筛选
+        if topn:
+            chart_part["TopN"] = topn
+    return chart_part
 
 
 def _推荐图表类型(画像: Dict[str, Any], x轴: Optional[str], y轴列表: List[str], 分析需求: str = "") -> str:
@@ -891,6 +909,8 @@ def 生成报表数据(
     y轴: Optional[List[str] | str] = None,
     分组字段: Optional[str] = None,
     聚合方式: str = "求和",
+    筛选条件: Optional[List[Dict[str, Any]]] = None,
+    topN: Optional[int] = None,
     llm_config: Optional[LLMRequestConfig] = None,
     on_event: Optional[Any] = None,
     user_id: str = "",
@@ -900,9 +920,21 @@ def 生成报表数据(
     llm_config: 请求级 LLM 配置（并发安全）；为 None 时回退 EnvConfig 全局值。
     on_event: 可选回调，trace 每记录一步即实时推送（SSE 直播）。
     user_id: 归属用户（贯穿到 Agent 记忆的隔离检索/保存）。
+    筛选条件: 显式筛选（AND 语义），在画像/聚合/结论之前应用——
+        保证图表、结论、画像三者一致地反映"筛选后的世界"。
+    topN: 聚合结果保留数值最大的前 N 行（"销量 Top 10"）。
     """
     if df.empty:
         raise ValueError("没有可用于生成报表的数据")
+
+    # 阶段 29：条件筛选先行——筛选后数据才是画像/聚合/结论的"事实来源"
+    显式筛选 = [c for c in (筛选条件 or []) if isinstance(c, dict)]
+    if 显式筛选:
+        df, 筛选说明 = 应用筛选(df, 显式筛选)
+        if df.empty:
+            raise ValueError("筛选后没有数据，请调整筛选条件（当前条件过滤掉了全部行）")
+    else:
+        筛选说明 = []
 
     画像 = 生成数据画像(df)
     df = _转换日期列(df, 画像.get("日期字段", []))
@@ -920,11 +952,22 @@ def 生成报表数据(
         # - 图表类型：仅当用户选"自动推荐"时采用 LLM 推荐；用户显式选择则尊重用户
         # - 字段：用户显式选择（非空）优先；用户未指定（空/自动推荐）才由 LLM 决策
         if 图表类型 == "自动推荐":
-            图表类型 = intent_override["图表类型"]
+            图表类型 = intent_override.get("图表类型", "自动推荐")
         x轴 = x轴 or intent_override.get("x轴")
         y轴列表 = y轴列表 or intent_override.get("y轴")
         分组字段 = 分组字段 or intent_override.get("分组字段")
         聚合方式 = 聚合方式 or intent_override.get("聚合方式")
+        # 阶段 29：筛选/TopN 合并（显式 UI 筛选优先，意图筛选追加，AND 语义去重）
+        for f in (intent_override.get("筛选条件") or []):
+            if isinstance(f, dict) and f not in 显式筛选:
+                显式筛选.append(f)
+        if 显式筛选:
+            df, 筛选说明 = 应用筛选(df, 显式筛选)
+            if df.empty:
+                raise ValueError("筛选后没有数据，请调整筛选条件（当前条件过滤掉了全部行）")
+            画像 = 生成数据画像(df)  # 画像跟随筛选后的数据（结论/推荐说明保持一致）
+        if not topN and intent_override.get("TopN"):
+            topN = intent_override.get("TopN")
 
     是否自动推荐 = 图表类型 == "自动推荐"
     effective_chart = 图表类型
@@ -959,6 +1002,16 @@ def 生成报表数据(
     else:
         report_df = _聚合数据(df, x轴, y轴列表, 分组字段, 聚合方式)
 
+    # 阶段 29：TopN 截断——"销量 Top 10"：按聚合结果的数值列降序保留前 N。
+    # 仅对"按 X 聚合的排名表"类图表生效（表格/直方图等结构不适用）。
+    if topN and effective_chart not in TOPN_排除图表 and len(report_df) > 1:
+        排名值列 = [
+            c for c in report_df.columns[1:]
+            if pd.api.types.is_numeric_dtype(report_df[c])
+        ]
+        if 排名值列:
+            report_df = report_df.sort_values(排名值列[0], ascending=False).head(int(topN))
+
     plotly_type = 图表类型映射.get(effective_chart, "table")
     report_rows = _可_json行(report_df)
     chart_config: Dict[str, Any] = {
@@ -968,6 +1021,9 @@ def 生成报表数据(
         "Y轴": y轴列表,
         "颜色": 分组字段,
         "数据": report_rows,
+        "筛选条件": 显式筛选,          # 供 replay 重放 / 前端回显（原始结构）
+        "筛选说明": 筛选说明,          # 人读描述（界面展示/导出报告）
+        "TopN": topN,
     }
 
     if plotly_type in ("pie", "donut") and x轴 and y轴列表:

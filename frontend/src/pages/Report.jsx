@@ -13,7 +13,7 @@
  * ============================================================================= */
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Download, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, Copy, Check, Clock, Link2, X, RotateCcw, GitBranch } from 'lucide-react';
+import { Download, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, Copy, Check, Clock, Link2, X, RotateCcw, GitBranch, Filter } from 'lucide-react';
 import { listReports, getReport, deleteReport, exportReport, createShare, listShares, revokeShare, replayReport } from '../api';
 import EChartsChart from '../components/EChartsChart';
 
@@ -406,6 +406,17 @@ export default function Report() {
             <Sparkles className="w-3 h-3" /> {intentSource === 'LLM' ? 'AI 生成' : intentSource === '规则' ? '规则匹配' : '自动'}
           </span>
           <span className="px-2.5 py-1 rounded text-xs bg-gray-50 text-gray-500 border border-gray-200">{chartTypeLabel}</span>
+          {/* 阶段 29：筛选条件 / TopN 徽标——让用户明确看到"这份报表是筛选后的视角" */}
+          {Array.isArray(chartConfig?.筛选说明) && chartConfig.筛选说明.length > 0 && (
+            <span className="flex items-center gap-1 px-2.5 py-1 rounded text-xs bg-violet-50 text-violet-600 border border-violet-200"
+                  title="本报表基于以下筛选条件生成（只统计筛选后的数据）">
+              <Filter className="w-3 h-3" /> {chartConfig.筛选说明.join(' 且 ')}
+            </span>
+          )}
+          {chartConfig?.TopN && (
+            <span className="px-2.5 py-1 rounded text-xs bg-violet-50 text-violet-600 border border-violet-200"
+                  title="只保留聚合结果中数值最大的前 N 行">Top {chartConfig.TopN}</span>
+          )}
           <button
             onClick={openShareModal}
             className="flex items-center gap-1 px-2.5 py-1 rounded text-xs bg-emerald-50 text-emerald-600 border border-emerald-200 hover:bg-emerald-100 transition-all"
@@ -417,9 +428,9 @@ export default function Report() {
             onClick={handleReplay}
             disabled={replaying}
             className="flex items-center gap-1 px-2.5 py-1 rounded text-xs bg-gray-50 text-gray-500 border border-gray-200 hover:bg-gray-100 transition-all disabled:opacity-50"
-            title="用本报表的分析参数重新执行（生成新报表）"
+            title="数据有更新？用同一分析参数读取最新数据重新生成（产生一份新报表）"
           >
-            <RotateCcw className={`w-3 h-3 ${replaying ? 'animate-spin' : ''}`} /> {replaying ? '重放中…' : '重放'}
+            <RotateCcw className={`w-3 h-3 ${replaying ? 'animate-spin' : ''}`} /> {replaying ? '重跑中…' : '用最新数据重跑'}
           </button>
         </div>
       </div>

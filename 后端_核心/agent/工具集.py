@@ -125,6 +125,21 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [意图识别_tool_schema]
                 "分组字段": {"type": ["string", "null"], "description": "分组字段名；无则 null"},
                 "聚合方式": {"type": "string", "enum": ["求和", "平均值", "计数", "最大值", "最小值"],
                              "description": "聚合方式；占比/分布场景一律用计数"},
+                "筛选条件": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "字段": {"type": "string", "description": "筛选字段名，必须来自画像.字段列表"},
+                            "操作": {"type": "string",
+                                     "enum": ["等于", "不等于", "包含", "大于", "大于等于", "小于", "小于等于", "为空", "不为空"]},
+                            "值": {"type": "string", "description": "筛选值（文本或数字，过滤时按字段类型自动转换）"},
+                        },
+                        "required": ["字段", "操作"],
+                    },
+                    "description": "筛选条件列表（AND 语义，全部满足才保留）。用户说'只看华东区'→[{字段:'地区',操作:'等于',值:'华东区'}]；无筛选则省略",
+                },
+                "TopN": {"type": "integer", "description": "只保留聚合结果中数值最大的前 N 行（用户说'销量Top 10'时使用）"},
                 "前N行": {"type": "integer", "description": "返回前 N 行；默认 5，最大 50", "default": 5},
             },
             "required": ["X轴", "Y轴", "聚合方式"],

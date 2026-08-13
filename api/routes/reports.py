@@ -31,7 +31,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 
-from api.contracts import ReportGenerateRequest, ReportGenerateResponse
+from api.contracts import ReportGenerateRequest, ReportGenerateResponse, 筛选条件模型
 from api.dependencies import get_current_user
 from api.routes.datasets import _仓储
 from 后端_核心.上传报表生成器 import 生成报表数据
@@ -618,6 +618,13 @@ def 重放报表(
         y轴=list(配置.get("Y轴") or []),
         分组字段=配置.get("颜色") or None,
         聚合方式="求和",
+        # 阶段 29：重放保留原报表的筛选条件与 TopN（用最新数据重跑同一分析视角）
+        筛选条件=[
+            筛选条件模型(**f)
+            for f in (配置.get("筛选条件") or [])
+            if isinstance(f, dict) and f.get("字段")
+        ],
+        topN=配置.get("TopN"),
         # 保留原生成模式（多智能体报表重放不再降级为单 Agent）
         agent_mode=prev.get("agent_mode", "single"),
     )
@@ -649,7 +656,7 @@ def _单Agent报表(
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
     user_id: str = "",
 ) -> Dict[str, Any]:
-    """标准单 Agent 生成报表。"""
+    """标准单 Agent 生成报表（阶段 29：透传筛选条件 + TopN）。"""
     return 生成报表数据(
         df=df,
         分析需求=payload.分析需求,
@@ -658,6 +665,8 @@ def _单Agent报表(
         y轴=payload.y轴,
         分组字段=payload.分组字段,
         聚合方式=payload.聚合方式,
+        筛选条件=[c.model_dump() for c in payload.筛选条件],
+        topN=payload.topN,
         llm_config=llm_config,
         on_event=on_event,
         user_id=user_id,
@@ -686,6 +695,8 @@ def _多智能体报表(
             y轴=payload.y轴,
             分组字段=payload.分组字段,
             聚合方式=payload.聚合方式,
+            筛选条件=[c.model_dump() for c in payload.筛选条件],
+            topN=payload.topN,
             llm_config=llm_config,
             on_event=on_event,
             user_id=user_id,
@@ -700,6 +711,8 @@ def _多智能体报表(
         y轴=result.get("y轴", []),
         分组字段=result.get("分组字段"),
         聚合方式=result.get("聚合方式", "求和"),
+        筛选条件=[c.model_dump() for c in payload.筛选条件],
+        topN=payload.topN,
         llm_config=llm_config,
         on_event=on_event,
         user_id=user_id,
