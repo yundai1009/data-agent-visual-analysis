@@ -45,7 +45,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from api.contracts import HealthResponse
 from api.error_handlers import register_error_handlers
 from api.middleware import RequestBodyLimitMiddleware, RequestIDMiddleware
-from api.routes import datasets, reports, clean, examples, auth, admin, dashboards, shares, feedback
+from api.routes import datasets, reports, clean, examples, auth, admin, dashboards, shares, feedback, templates
 from config.settings import EnvConfig
 
 logger = logging.getLogger(__name__)
@@ -225,6 +225,7 @@ app.include_router(admin.router)
 app.include_router(dashboards.router)
 app.include_router(shares.router)
 app.include_router(feedback.router)
+app.include_router(templates.router)
 
 
 # 【函数】SPA 回退路由：托管前端构建产物 + 兜底所有未命中路径。

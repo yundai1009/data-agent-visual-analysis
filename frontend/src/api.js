@@ -354,6 +354,29 @@ export async function generateReportStream(payload, { onEvent, signal } = {}) {
   }
 }
 
+// ---- 报表模板（阶段 30：分析配置收藏 + 一键复用）----
+
+export async function listTemplates() {
+  return request('/templates');
+}
+
+export async function saveTemplate(name, payload) {
+  return request('/templates', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ 名称: name, payload }),
+  });
+}
+
+export async function deleteTemplate(templateId) {
+  return request(`/templates/${templateId}`, { method: 'DELETE' });
+}
+
+// 立即用模板配置生成报表（返回 ReportGenerateResponse，前端跳转到新报表）
+export async function runTemplate(templateId) {
+  return request(`/templates/${templateId}/run`, { method: 'POST' });
+}
+
 // ---- 报表历史（阶段 6：后端持久化）----
 
 export async function listReports(limit = 50, offset = 0) {

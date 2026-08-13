@@ -14,9 +14,9 @@
  * ============================================================================= */
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Zap, Sparkles, BarChart3, LineChart, PieChart, ScatterChart, Table, Layers, Loader2, Cpu, GitBranch, X, Brain, Wrench, Eye, AlertTriangle, MessageSquare, ArrowRight } from 'lucide-react';
+import { Zap, Sparkles, BarChart3, LineChart, PieChart, ScatterChart, Table, Layers, Loader2, Cpu, GitBranch, X, Brain, Wrench, Eye, AlertTriangle, MessageSquare, ArrowRight, Bookmark } from 'lucide-react';
 import LLMConfig from '../components/LLMConfig';
-import { generateReportStream } from '../api';
+import { generateReportStream, listTemplates, saveTemplate, deleteTemplate, runTemplate } from '../api';
 import { useApp } from '../AppContext';
 import validateChartFields from '../validators/chartFields';
 
@@ -95,6 +95,14 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
   const [selectedModel, setSelectedModel] = useState('');
   const [error, setError] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // 阶段 30：报表模板（分析配置收藏 + 一键复用/执行）
+  const [savedTemplates, setSavedTemplates] = useState([]);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [runningTemplateId, setRunningTemplateId] = useState('');
+  const [templateMsg, setTemplateMsg] = useState('');
+  const lastPayloadRef = useRef(null); // 最近一次实际发出的生成请求（保存模板用）
   // 分析直播状态（SSE 实时决策流）
   const [liveSteps, setLiveSteps] = useState([]);      // [{ record, status: 'done'|'active' }]
   const [liveError, setLiveError] = useState('');
@@ -264,6 +272,7 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
       model: selectedModel || undefined, // undefined 不出现在 JSON 里，后端走默认模型
       上一报表ID: isFollowUp ? (lastReportIdRef.current || undefined) : undefined, // 追问链：后端基于上一报表上下文续答
     };
+    lastPayloadRef.current = payload; // 阶段 30：记录本次实际配置，供"保存为模板"使用
     const controller = new AbortController();
     abortRef.current = controller; // 供「取消」按钮随时中断请求
     const seq = ++generateSeqRef.current; // B6：本次请求序号（防旧请求的 finally 误关新请求）
@@ -327,6 +336,79 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
       }
     }
   }
+
+  // ── 阶段 30：报表模板 ──
+  // 模板 = 分析配置收藏："保存当前配置" 供下次一键复用/定时执行
+  const loadTemplates = async () => {
+    try {
+      const res = await listTemplates();
+      setSavedTemplates(res?.模板列表 || []);
+    } catch (e) {
+      setTemplateMsg('模板列表加载失败：' + (e.message || e));
+    }
+  };
+  // 保存模板：用最近一次实际发出的生成配置（lastPayloadRef），避免用户改了表单但没点生成
+  const handleSaveTemplate = async () => {
+    const name = templateName.trim();
+    if (!name) { setTemplateMsg('请先填写模板名称'); return; }
+    if (!lastPayloadRef.current) { setTemplateMsg('请先完成一次分析（或直接点生成），再保存为模板'); return; }
+    setSavingTemplate(true);
+    setTemplateMsg('');
+    try {
+      const payload = { ...lastPayloadRef.current };
+      delete payload.上一报表ID; // 模板不携带追问链
+      await saveTemplate(name, payload);
+      setTemplateMsg(`模板「${name}」已保存`);
+      setTemplateName('');
+      await loadTemplates();
+    } catch (e) {
+      setTemplateMsg('保存失败：' + (e.message || e));
+    } finally {
+      setSavingTemplate(false);
+    }
+  };
+  // 立即执行模板：后端用模板配置 + 最新数据生成报表，跳转查看
+  const handleRunTemplate = async (tpl) => {
+    setRunningTemplateId(tpl.模板ID);
+    setTemplateMsg('');
+    try {
+      const res = await runTemplate(tpl.模板ID);
+      navigate(`/report/${res.报表ID}`);
+    } catch (e) {
+      setTemplateMsg(`模板「${tpl.名称}」执行失败：` + (e.message || e));
+    } finally {
+      setRunningTemplateId('');
+    }
+  };
+  // 把模板配置反填进表单：编辑后用（图表中文名 → chartMap 反查英文 id）
+  const handleLoadTemplate = (tpl) => {
+    setShowTemplates(false);
+    setError('');
+    const p = tpl.payload || {};
+    if (p.数据集ID && dataset && p.数据集ID !== dataset.数据集ID) {
+      setError(`模板绑定的是另一份数据集（${p.数据集ID.slice(0, 8)}…），请先在数据管理选择对应数据集`);
+    }
+    setNlInput(p.分析需求 || '');
+    if (p.图表类型) {
+      const id = Object.keys(chartMap).find(k => chartMap[k] === p.图表类型);
+      if (id) setChartType(id);
+    }
+    setXAxis(p.x轴 || '');
+    setYAxis(Array.isArray(p.y轴) && p.y轴.length ? p.y轴[0] : '');
+    setGroupField(p.分组字段 || '');
+    setAggMethod(p.聚合方式 || '求和');
+    setFilters((p.筛选条件 || []).map(f => ({ 字段: f.字段, 操作: f.操作, 值: f.值 ?? '' })));
+    setTopN(p.topN ? String(p.topN) : '');
+    setAgentMode(p.agent_mode || 'single');
+  };
+  const handleDeleteTemplate = async (tpl) => {
+    try {
+      await deleteTemplate(tpl.模板ID);
+      setSavedTemplates(prev => prev.filter(t => t.模板ID !== tpl.模板ID));
+    } catch (e) {
+      setTemplateMsg('删除失败：' + (e.message || e));
+    }
+  };
 
   // 继续追问：基于最近一次分析结果发起新一轮分析（录入追问 → 走 handleGenerate(true)）
   // 追问的语义：后端拿到 上一报表ID + 新问题，会结合上一份报表的上下文续答
@@ -581,6 +663,60 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
       {/* 模型选择 + Agent 模式：LLM 模型下拉 + 单 Agent/多智能体 切换 */}
       {showAdvanced && (
       <>
+      {/* 阶段 30：模板——分析配置收藏，一键复用/执行 */}
+      <div className="mt-4 border border-gray-200 rounded-xl p-3 bg-gray-50/60">
+        <div className="flex items-center justify-between">
+          <button
+            className="flex items-center gap-1 text-xs font-semibold text-gray-600 hover:text-accent transition-colors"
+            onClick={() => { setShowTemplates(!showTemplates); if (!showTemplates && savedTemplates.length === 0) loadTemplates(); }}
+          >
+            <Bookmark className="w-3.5 h-3.5" /> 模板{showTemplates ? '（收起）' : ''}
+          </button>
+          <span className="text-[11px] text-gray-400">收藏分析配置，下次一键复用 / 定时执行</span>
+        </div>
+        {templateMsg && <p className="text-[11px] mt-2 text-amber-600">{templateMsg}</p>}
+        {showTemplates && (
+          <div className="mt-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <input
+                className="flex-1 border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white focus:outline-none focus:border-accent"
+                placeholder="模板名称，如：每周销售周报"
+                value={templateName}
+                onChange={(e) => setTemplateName(e.target.value)}
+                maxLength={50}
+              />
+              <button
+                onClick={handleSaveTemplate}
+                disabled={savingTemplate}
+                className="px-3 py-1.5 rounded-lg text-xs bg-accent text-white hover:opacity-90 transition-all disabled:opacity-50"
+              >
+                {savingTemplate ? '保存中…' : '保存当前配置'}
+              </button>
+            </div>
+            {savedTemplates.length === 0 ? (
+              <p className="text-[11px] text-gray-400 py-1">还没有模板——先完成一次分析，再点"保存当前配置"</p>
+            ) : (
+              <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                {savedTemplates.map((tpl) => (
+                  <div key={tpl.模板ID} className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-2.5 py-1.5">
+                    <span className="flex-1 text-xs text-gray-700 truncate" title={tpl.名称}>{tpl.名称}</span>
+                    <button className="text-[11px] text-accent hover:underline" onClick={() => handleLoadTemplate(tpl)} title="把配置加载到表单">加载</button>
+                    <button
+                      className="text-[11px] text-emerald-600 hover:underline disabled:opacity-50"
+                      disabled={runningTemplateId === tpl.模板ID}
+                      onClick={() => handleRunTemplate(tpl)}
+                      title="立即用模板生成报表（读取最新数据）"
+                    >
+                      {runningTemplateId === tpl.模板ID ? '执行中…' : '执行'}
+                    </button>
+                    <button className="text-[11px] text-red-400 hover:text-red-600 hover:underline" onClick={() => handleDeleteTemplate(tpl)}>删除</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
       <div className="flex items-center gap-4 mt-3">
         <div className="flex items-center gap-2">
           <Cpu className="w-4 h-4 text-gray-400" />

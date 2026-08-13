@@ -94,6 +94,17 @@ class 完整报告导出请求(BaseModel):
     chart_png: Optional[str] = Field(None, max_length=8_000_000)  # data:image/png;base64,...
 
 
+class 模板请求(BaseModel):
+    """阶段 30：保存报表模板——把一份分析配置收藏起来，可一键复用/定时执行。
+
+    payload 为 ReportGenerateRequest 的完整结构（数据集ID/分析需求/字段/筛选/TopN/模式），
+    直接以 JSON 存储；执行时经 Pydantic 重新校验字段合法性。
+    """
+
+    名称: str = Field(..., max_length=50)
+    payload: Dict[str, Any] = Field(...)
+
+
 class ReportGenerateRequest(BaseModel):
     """生成报表请求（P0 加固：全部字段设长度上限，防超大请求体 DoS）。"""
 
