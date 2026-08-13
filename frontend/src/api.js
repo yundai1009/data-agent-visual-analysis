@@ -384,6 +384,31 @@ export async function exportReport(reportId, format) {
   };
 }
 
+// 阶段 30：完整 PDF 报告导出（图表 PNG + 结论 + 数据表 + Trace）
+// 前端把 ECharts 渲染的图表 base64 dataURL 传上来，后端 reportlab 排版成单文件 PDF
+export async function exportFullReport(reportId, chartPng = '') {
+  const token = localStorage.getItem('access_token') || '';
+  const res = await fetch(`/reports/${reportId}/export-report`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ chart_png: chartPng }),
+  });
+  if (!res.ok) {
+    if (res.status === 401) handleAuthExpired(`/reports/${reportId}/export-report`);
+    const err = new Error(`导出失败（HTTP ${res.status}）`);
+    err.status = res.status;
+    throw err;
+  }
+  const blob = await res.blob();
+  return {
+    blob,
+    filename: parseContentDispositionFilename(res.headers.get('Content-Disposition'), 'report.pdf'),
+  };
+}
+
 export async function deleteReport(reportId) {
   return request(`/reports/${reportId}`, { method: 'DELETE' });
 }

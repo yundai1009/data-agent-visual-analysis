@@ -84,6 +84,16 @@ class 筛选条件模型(BaseModel):
     值: Optional[str] = Field(None, max_length=200)
 
 
+class 完整报告导出请求(BaseModel):
+    """阶段 30：完整 PDF 报告导出——前端把 ECharts 图表 PNG（base64 dataURL）传上来，
+    后端 reportlab 排版成"图表+结论+数据表+Trace"的单文件报告。
+
+    P0 加固：max_length 限制防超大请求体 DoS（约 6MB base64，足够 2x 高清图）。
+    """
+
+    chart_png: Optional[str] = Field(None, max_length=8_000_000)  # data:image/png;base64,...
+
+
 class ReportGenerateRequest(BaseModel):
     """生成报表请求（P0 加固：全部字段设长度上限，防超大请求体 DoS）。"""
 

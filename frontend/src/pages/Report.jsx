@@ -14,7 +14,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Download, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, Copy, Check, Clock, Link2, X, RotateCcw, GitBranch, Filter } from 'lucide-react';
-import { listReports, getReport, deleteReport, exportReport, createShare, listShares, revokeShare, replayReport } from '../api';
+import { listReports, getReport, deleteReport, exportReport, exportFullReport, createShare, listShares, revokeShare, replayReport } from '../api';
 import EChartsChart from '../components/EChartsChart';
 
 // Report 报表历史页主组件
@@ -198,10 +198,17 @@ export default function Report() {
   const handleExportFormat = async (fmt) => {
     try {
       let blob, filename;
-      if (fmt === 'xlsx' || fmt === 'csv' || fmt === 'pdf') {
+      if (fmt === 'xlsx' || fmt === 'csv') {
         // 走后端导出端点：带 token 下载，返回 { blob, filename }（文件名由后端 Content-Disposition 给出）
         if (!currentReportId) return;
         ({ blob, filename } = await exportReport(currentReportId, fmt));
+      } else if (fmt === 'pdf') {
+        // 阶段 30：完整 PDF 报告——先截当前 ECharts 图表为 PNG（浏览器本地能力），
+        // 再连同图表图片交给后端 reportlab 排版成"图文并茂"的单文件报告
+        if (!currentReportId) return;
+        const canvas = chartContainerRef.current?.querySelector('canvas');
+        const chartPng = canvas ? canvas.toDataURL('image/png') : '';
+        ({ blob, filename } = await exportFullReport(currentReportId, chartPng));
       } else if (fmt === 'png') {
         // PNG 不走后端：直接截当前 ECharts canvas（浏览器本地能力，无需请求）
         const canvas = chartContainerRef.current?.querySelector('canvas');

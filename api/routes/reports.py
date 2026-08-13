@@ -31,7 +31,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 
-from api.contracts import ReportGenerateRequest, ReportGenerateResponse, 筛选条件模型
+from api.contracts import ReportGenerateRequest, ReportGenerateResponse, 筛选条件模型, 完整报告导出请求
 from api.dependencies import get_current_user
 from api.routes.datasets import _仓储
 from 后端_核心.上传报表生成器 import 生成报表数据
@@ -466,28 +466,75 @@ def export_report(
             headers={"Content-Disposition": f"attachment; filename=report.csv; filename*=UTF-8''{quote(f'{标题}.csv')}"},
         )
     # PDF（reportlab + 中文字体；字体模块级注册 _PDF_FONT，多次导出不重复注册）
-    import html  # P0 加固：Paragraph 按 HTML 子集解析，数据须转义防 <img> 任意文件读取/注入
+    buf = _构建PDF报告(report, 标题)
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=report.pdf; filename*=UTF-8''{quote(f'{标题}.pdf')}"},
+    )
+
+
+def _构建PDF报告(report: Dict[str, Any], 标题: str, chart_png: Optional[str] = None) -> io.BytesIO:
+    """完整 PDF 报告排版（阶段 30）：标题/元信息/筛选徽标 → 图表 PNG → 结论 → 数据表 → 推荐依据 → 风险提示 → Trace。
+
+    chart_png：前端 ECharts 渲染的图表 dataURL（data:image/png;base64,...），None 时跳过图表区。
+    设计要点：
+      - 全部用户/数据内容经 _esc（html.escape）后进 Paragraph，防 reportlab 按 HTML 子集
+        解析 tags 造成注入（沿用 P0 加固姿态）；
+      - 图表图片解码失败只降级为"无图版"，不阻断整份报告导出；
+      - Trace 只取前 30 步、描述截断 120 字符，防超长决策链撑爆 PDF。
+    """
+    import base64
+    import html
+    import io as _io
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.lib.utils import ImageReader
+    from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     def _esc(value) -> str:
         """全部用户/数据内容进入 Paragraph 前转义（防 reportlab 解析 tags 与文件引用）。"""
         return html.escape(str(value), quote=False)
 
+    buf = _io.BytesIO()
     styles = getSampleStyleSheet()
     body = ParagraphStyle("Body", parent=styles["Normal"], fontName=_PDF_FONT, fontSize=10, leading=15)
     title = ParagraphStyle("Title", parent=styles["Title"], fontName=_PDF_FONT, fontSize=16, leading=22)
     head = ParagraphStyle("Head", parent=styles["Heading2"], fontName=_PDF_FONT, fontSize=11, leading=16, spaceBefore=10)
+    small = ParagraphStyle("Small", parent=styles["Normal"], fontName=_PDF_FONT, fontSize=8, leading=12, textColor=colors.HexColor("#64748b"))
 
     doc = SimpleDocTemplate(buf, pagesize=A4)
     story = [Paragraph(f"报表：{_esc(标题)}", title), Spacer(1, 8)]
-    story.append(Paragraph(f"图表类型：{_esc(report.get('图表类型', ''))} · 意图来源：{_esc(report.get('意图来源', ''))}", body))
-    story.append(Spacer(1, 6))
+    meta_parts = [f"图表类型：{_esc(report.get('图表类型', ''))}", f"意图来源：{_esc(report.get('意图来源', ''))}"]
+    # 阶段 29 筛选徽标透传：让读者明确看到"这份报告是筛选后的视角"
+    图表配置 = report.get("图表配置", {}) or {}
+    筛选说明 = 图表配置.get("筛选说明") or []
+    if 筛选说明:
+        meta_parts.append("筛选：" + " 且 ".join(_esc(s) for s in 筛选说明))
+    topN = 图表配置.get("TopN")
+    if topN:
+        meta_parts.append(f"Top {int(topN)}")
+    story.append(Paragraph(" · ".join(meta_parts), body))
+    story.append(Spacer(1, 10))
+
+    # 图表 PNG：前端 ECharts 渲染的真实图片（2x 高清），reportlab Image 直插
+    if chart_png:
+        try:
+            if "," in chart_png:
+                chart_png = chart_png.split(",", 1)[1]
+            img_bytes = base64.b64decode(chart_png)
+            img = Image(ImageReader(_io.BytesIO(img_bytes)), width=A4[0] - 80, height=260)
+            img.hAlign = "CENTER"
+            story.append(img)
+            story.append(Spacer(1, 10))
+        except Exception:
+            story.append(Paragraph("（图表图片加载失败，已省略）", small))
+
     if report.get("结论"):
         story.append(Paragraph("分析结论", head))
         story.append(Paragraph(_esc(report["结论"]), body))
+    rows = report.get("报表数据", [])
     if rows:
         story.append(Paragraph("数据明细", head))
         cols = list(rows[0].keys())
@@ -512,8 +559,42 @@ def export_report(
         story.append(Paragraph("注意事项", head))
         for w in 风险:
             story.append(Paragraph(f"· {_esc(w)}", body))
+    # 阶段 30：Agent 决策记录摘要（前 30 步，描述截断，含成功/失败标记）
+    trace = report.get("Agent Trace") or report.get("Agent_Trace") or []
+    if trace:
+        story.append(Paragraph("Agent 决策记录", head))
+        for i, step in enumerate(trace[:30], 1):
+            name = step.get("步骤") or step.get("工具名") or f"步骤 {i}"
+            desc = step.get("说明") or step.get("理由") or step.get("工具输出摘要") or ""
+            状态标记 = {"成功": " ✓", "完成": " ✓", "失败": " ✗"}.get(step.get("状态", ""), "")
+            story.append(Paragraph(f"{i}. {_esc(name)}{状态标记} — {_esc(desc)[:120]}", body))
     doc.build(story)
     buf.seek(0)
+    return buf
+
+
+@router.post("/{report_id}/export-report")
+def 导出完整报告(
+    report_id: str,
+    body: 完整报告导出请求,
+    user: dict = Depends(get_current_user),
+) -> StreamingResponse:
+    """阶段 30：完整 PDF 报告导出（图表 PNG + 筛选 + 结论 + 数据表 + Trace）。
+
+    与 GET /{report_id}/export?format=pdf 的区别：前端把 ECharts 渲染的图表图片
+    （base64 dataURL）一并传上来，产出"图文并茂"的单文件报告。
+    """
+    from urllib.parse import quote
+
+    from repositories import audit_repo
+    audit_repo.记录(user["user_id"], "导出报表", target_type="report", target_id=report_id, detail="format=pdf-full")
+    from repositories import report_repo
+
+    item = report_repo.读取报表(user["user_id"], report_id)
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报表不存在")
+    标题 = (item["标题"] or "报表").replace('"', '').replace('\\', '_')
+    buf = _构建PDF报告(item["报表"], 标题, chart_png=body.chart_png)
     return StreamingResponse(
         buf,
         media_type="application/pdf",
