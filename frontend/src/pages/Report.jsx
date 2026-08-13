@@ -406,7 +406,7 @@ export default function Report() {
           )}
           {loadError && <p className="mt-1.5 text-xs text-red-500">{loadError}</p>}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {/* 历史报表导航 */}
           {reportMeta.length > 1 && (
             <div className="flex items-center gap-1 mr-2">

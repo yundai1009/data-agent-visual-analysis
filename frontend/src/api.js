@@ -100,6 +100,19 @@ async function request(url, options = {}) {
     } catch {
       return {}; // 响应体不是 JSON（如空 204）时返回空对象，调用方统一处理
     }
+  } catch (e) {
+    // 阶段 32：网络/超时错误统一口语化（调用方无需各自判断 Failed to fetch）
+    if (e?.name === 'AbortError') {
+      const err = new Error('请求超时了，请重试（分析类请求可能需要更长时间）');
+      err.status = 0;
+      throw err;
+    }
+    if (e instanceof TypeError && e.message?.includes('Failed to fetch')) {
+      const err = new Error('连不上服务器，请检查后端服务是否已启动');
+      err.status = 0;
+      throw err;
+    }
+    throw e;
   } finally {
     clearTimeout(timer);
   }
@@ -107,8 +120,20 @@ async function request(url, options = {}) {
 
 // 统一错误解析：后端返回 {code, message, request_id}，前端只需展示 message 即可
 // 入参 res：fetch 的 Response 对象；返回：带 status/requestId 的 Error（便于调用方分类处理）
+// 阶段 32：非 JSON 响应按 HTTP 状态给口语化兜底文案（后端 detail 拿不到时也不生硬）
+const STATUS_HINTS = {
+  400: '请求参数不对，请检查后重试',
+  401: '登录状态已失效，请重新登录',
+  403: '没有权限执行这个操作',
+  404: '内容不存在或已被删除',
+  413: '文件太大了，请压缩后再试',
+  422: '提交的内容不合法，请检查',
+  429: '操作太频繁，请稍等一会儿再试',
+  500: '服务器开小差了，请稍后重试',
+  503: '服务暂时繁忙，请稍后重试',
+};
 async function parseError(res) {
-  let message = `请求失败（HTTP ${res.status}）`;
+  let message = STATUS_HINTS[res.status] || `请求失败（HTTP ${res.status}）`;
   let requestId = '';
   try {
     const body = await res.json();

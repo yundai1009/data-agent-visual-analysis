@@ -1,5 +1,35 @@
 @import "tailwindcss";
 
+/* 阶段 32：深色模式——class 策略（html.dark 时启用 dark: 变体） */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ============================================================
+   阶段 32 · 深色模式全局覆盖
+   原理：项目大量使用 Tailwind 内置色（bg-white/gray-50/text-gray-*），
+   逐页加 dark: 成本极高；用受限的类覆盖把"常用表面/文本"整体反转，
+   一处在 html.dark 下作用于全站（含输入框/卡片/侧边栏）。
+   副作用控制：只覆盖 表面色/文本色/边框 三类，不动强调色与语义色。
+   ============================================================ */
+.dark body { background: #0b1220; color: #cbd5e1; }
+.dark .bg-white { background-color: #17202f !important; }
+.dark .bg-gray-50 { background-color: #111a28 !important; }
+.dark .bg-gray-100 { background-color: #182238 !important; }
+.dark .bg-gray-200 { background-color: #223049 !important; }
+.dark .bg-accent-soft { background-color: #16283d !important; }
+.dark .text-gray-900, .dark .text-gray-800, .dark .text-gray-700 { color: #e2e8f0 !important; }
+.dark .text-gray-600, .dark .text-gray-500 { color: #a3b2c8 !important; }
+.dark .text-gray-400 { color: #7c8ca3 !important; }
+.dark .border-gray-200, .dark .border-gray-100 { border-color: #2a3a52 !important; }
+.dark input, .dark select, .dark textarea {
+  background-color: #0f1826 !important;
+  color: #e2e8f0 !important;
+  border-color: #2a3a52 !important;
+}
+.dark .hover\:bg-gray-50:hover { background-color: #1c2840 !important; }
+.dark .hover\:bg-gray-100:hover { background-color: #1e2c46 !important; }
+/* App 主布局背景是内联 radial-gradient，深色下强制覆盖 */
+.dark .min-h-\[100dvh\] { background: #0b1220 !important; }
+
 /* ============================================================
    设计令牌（阶段 13 · 重设计）
    专业数据工具风：藏青单主色 + 统一冷灰，去 AI 紫蓝指纹

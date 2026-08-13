@@ -15,7 +15,7 @@
 import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
-import { Database, Zap, BarChart3, LayoutDashboard, Shield, ChevronLeft, ChevronRight, LogOut, X, UserRoundPen, MessageSquareHeart } from 'lucide-react';
+import { Database, Zap, BarChart3, LayoutDashboard, Shield, ChevronLeft, ChevronRight, LogOut, X, UserRoundPen, MessageSquareHeart, Moon, Sun } from 'lucide-react';
 import { useApp } from '../AppContext';
 import { submitFeedback } from '../api';
 
@@ -35,6 +35,14 @@ const adminNav = { to: '/admin', icon: Shield, label: '管理后台' };
 export default function Sidebar({ collapsed, onToggle }) {
   const navigate = useNavigate();
   const { user, logout } = useApp();
+  // 阶段 32：深色模式开关（localStorage 记忆 + html.dark class）
+  const [dark, setDark] = useState(() => {
+    try { return localStorage.getItem('daa_dark') === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', dark);
+    try { localStorage.setItem('daa_dark', dark ? '1' : '0'); } catch { /* ignore */ }
+  }, [dark]);
   // 意见反馈：弹窗状态（评分 + 文字 + 提示信息 + loading）
   const [fbOpen, setFbOpen] = useState(false);
   const [fbScore, setFbScore] = useState(5);
@@ -145,6 +153,15 @@ export default function Sidebar({ collapsed, onToggle }) {
         >
           <MessageSquareHeart className="w-4 h-4 shrink-0" />
           {!collapsed && <span className="ml-2 text-xs">意见反馈</span>}
+        </button>
+
+        <button
+          onClick={() => setDark(!dark)}
+          className="flex items-center justify-center w-full py-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] transition-all"
+          title={dark ? '切换到浅色模式' : '切换到深色模式'}
+        >
+          {dark ? <Sun className="w-4 h-4 shrink-0" /> : <Moon className="w-4 h-4 shrink-0" />}
+          {!collapsed && <span className="ml-2 text-xs">{dark ? '浅色模式' : '深色模式'}</span>}
         </button>
 
         <button

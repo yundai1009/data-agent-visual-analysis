@@ -13,6 +13,7 @@
 import { useState, useEffect, Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
+import Onboarding from './components/Onboarding';
 import ErrorBoundary from './components/ErrorBoundary';
 import { fetchMe } from './api';
 import { AppProvider, useApp } from './AppContext';
@@ -77,6 +78,13 @@ function ProtectedRoute({ children }) {
 
 export default function App() {
   const [collapsed, setCollapsed] = useState(false);
+  // 阶段 32：新手引导——首次登录展示（localStorage 记忆，老用户无感）
+  const { isAuthed } = useApp();
+  const [showOnboard, setShowOnboard] = useState(false);
+  useEffect(() => {
+    if (!isAuthed) return;
+    try { if (!localStorage.getItem('onboard_done')) setShowOnboard(true); } catch { /* ignore */ }
+  }, [isAuthed]);
 
   return (
     <AppProvider>
@@ -115,6 +123,7 @@ export default function App() {
                     </Suspense>
                   </ErrorBoundary>
                 </main>
+                {showOnboard && <Onboarding onDone={() => setShowOnboard(false)} />}
               </div>
             }
           />
