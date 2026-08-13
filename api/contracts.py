@@ -105,6 +105,17 @@ class 模板请求(BaseModel):
     payload: Dict[str, Any] = Field(...)
 
 
+class 定时任务请求(BaseModel):
+    """阶段 30：创建定时任务（模板 + cron 表达式）。
+
+    cron 为 5 字段标准 cron（分 时 日 月 周），如 "0 9 * * 1" = 每周一 09:00；
+    到点自动用模板配置 + 数据集最新数据生成报表。
+    """
+
+    模板ID: str = Field(..., max_length=64)
+    cron: str = Field(..., max_length=64)
+
+
 class ReportGenerateRequest(BaseModel):
     """生成报表请求（P0 加固：全部字段设长度上限，防超大请求体 DoS）。"""
 

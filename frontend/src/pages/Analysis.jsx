@@ -16,7 +16,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Zap, Sparkles, BarChart3, LineChart, PieChart, ScatterChart, Table, Layers, Loader2, Cpu, GitBranch, X, Brain, Wrench, Eye, AlertTriangle, MessageSquare, ArrowRight, Bookmark } from 'lucide-react';
 import LLMConfig from '../components/LLMConfig';
-import { generateReportStream, listTemplates, saveTemplate, deleteTemplate, runTemplate } from '../api';
+import { generateReportStream, listTemplates, saveTemplate, deleteTemplate, runTemplate, listSchedules, createSchedule, deleteSchedule } from '../api';
 import { useApp } from '../AppContext';
 import validateChartFields from '../validators/chartFields';
 
@@ -102,6 +102,11 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [runningTemplateId, setRunningTemplateId] = useState('');
   const [templateMsg, setTemplateMsg] = useState('');
+  // 阶段 30：定时任务（模板 + cron 自动生成）
+  const [schedules, setSchedules] = useState([]);
+  const [scheduleCron, setScheduleCron] = useState('');
+  const [scheduleTplId, setScheduleTplId] = useState('');
+  const [scheduleMsg, setScheduleMsg] = useState('');
   const lastPayloadRef = useRef(null); // 最近一次实际发出的生成请求（保存模板用）
   // 分析直播状态（SSE 实时决策流）
   const [liveSteps, setLiveSteps] = useState([]);      // [{ record, status: 'done'|'active' }]
@@ -409,6 +414,37 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
       setTemplateMsg('删除失败：' + (e.message || e));
     }
   };
+  // ── 定时任务：模板 + cron 到点自动生成 ──
+  const loadSchedules = async () => {
+    try {
+      const res = await listSchedules();
+      setSchedules(res?.任务列表 || []);
+    } catch (e) {
+      setScheduleMsg('定时任务加载失败：' + (e.message || e));
+    }
+  };
+  const handleCreateSchedule = async () => {
+    const cron = scheduleCron.trim();
+    if (!cron) { setScheduleMsg('请填写 cron 表达式（分 时 日 月 周）'); return; }
+    if (!scheduleTplId) { setScheduleMsg('请选择要定时执行的模板'); return; }
+    setScheduleMsg('');
+    try {
+      await createSchedule(scheduleTplId, cron);
+      setScheduleMsg('定时任务已创建（到点自动生成报表，可在报表历史查看）');
+      setScheduleCron('');
+      await loadSchedules();
+    } catch (e) {
+      setScheduleMsg('创建失败：' + (e.message || e));
+    }
+  };
+  const handleDeleteSchedule = async (job) => {
+    try {
+      await deleteSchedule(job.任务ID);
+      setSchedules(prev => prev.filter(j => j.任务ID !== job.任务ID));
+    } catch (e) {
+      setScheduleMsg('删除失败：' + (e.message || e));
+    }
+  };
 
   // 继续追问：基于最近一次分析结果发起新一轮分析（录入追问 → 走 handleGenerate(true)）
   // 追问的语义：后端拿到 上一报表ID + 新问题，会结合上一份报表的上下文续答
@@ -668,7 +704,7 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
         <div className="flex items-center justify-between">
           <button
             className="flex items-center gap-1 text-xs font-semibold text-gray-600 hover:text-accent transition-colors"
-            onClick={() => { setShowTemplates(!showTemplates); if (!showTemplates && savedTemplates.length === 0) loadTemplates(); }}
+            onClick={() => { setShowTemplates(!showTemplates); if (!showTemplates) { if (savedTemplates.length === 0) loadTemplates(); if (schedules.length === 0) loadSchedules(); } }}
           >
             <Bookmark className="w-3.5 h-3.5" /> 模板{showTemplates ? '（收起）' : ''}
           </button>
@@ -714,6 +750,54 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
                 ))}
               </div>
             )}
+          </div>
+        )}
+      </div>
+
+      {/* 阶段 30：定时任务——模板 + cron 到点自动生成报表 */}
+      <div className="mt-3 border-t border-gray-100 pt-3">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs font-semibold text-gray-500">定时执行 <span className="text-[10px] text-gray-400 font-normal">（模板 + cron，到点自动生成到报表历史）</span></p>
+          {schedules.length > 0 && (
+            <button className="text-[11px] text-accent hover:underline" onClick={() => setSchedules([])}>收起</button>
+          )}
+        </div>
+        {scheduleMsg && <p className="text-[11px] mb-2 text-amber-600">{scheduleMsg}</p>}
+        <div className="flex items-center gap-2">
+          <select
+            className="flex-1 border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white focus:outline-none focus:border-accent"
+            value={scheduleTplId}
+            onChange={(e) => setScheduleTplId(e.target.value)}
+          >
+            <option value="">选择模板</option>
+            {savedTemplates.map((tpl) => <option key={tpl.模板ID} value={tpl.模板ID}>{tpl.名称}</option>)}
+          </select>
+          <input
+            className="w-40 border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white focus:outline-none focus:border-accent"
+            placeholder="cron 如：0 9 * * 1"
+            value={scheduleCron}
+            onChange={(e) => setScheduleCron(e.target.value)}
+            title="5 字段 cron：分 时 日 月 周（0=周日）。示例：0 9 * * 1 = 每周一 09:00；*/30 * * * * = 每 30 分钟"
+          />
+          <button
+            onClick={handleCreateSchedule}
+            className="px-3 py-1.5 rounded-lg text-xs bg-accent text-white hover:opacity-90 transition-all shrink-0"
+          >
+            创建
+          </button>
+        </div>
+        {schedules.length > 0 && (
+          <div className="space-y-1.5 mt-2 max-h-40 overflow-y-auto">
+            {schedules.map((job) => (
+              <div key={job.任务ID} className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-2.5 py-1.5">
+                <span className="flex-1 text-xs text-gray-700 truncate" title={job.cron}>
+                  cron <code className="text-accent">{job.cron}</code>
+                  {job.下次执行 && <span className="text-gray-400 ml-2">下次：{new Date(job.下次执行).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
+                  {job.上次状态 && <span className={`ml-2 ${job.上次状态 === '成功' ? 'text-emerald-500' : 'text-red-400'}`}>{job.上次状态 === '成功' ? '上次执行成功' : job.上次状态}</span>}
+                </span>
+                <button className="text-[11px] text-red-400 hover:text-red-600 hover:underline" onClick={() => handleDeleteSchedule(job)}>删除</button>
+              </div>
+            ))}
           </div>
         )}
       </div>

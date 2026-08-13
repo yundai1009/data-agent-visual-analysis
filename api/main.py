@@ -45,7 +45,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from api.contracts import HealthResponse
 from api.error_handlers import register_error_handlers
 from api.middleware import RequestBodyLimitMiddleware, RequestIDMiddleware
-from api.routes import datasets, reports, clean, examples, auth, admin, dashboards, shares, feedback, templates
+from api.routes import datasets, reports, clean, examples, auth, admin, dashboards, shares, feedback, templates, schedules
 from config.settings import EnvConfig
 
 logger = logging.getLogger(__name__)
@@ -160,6 +160,12 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         # 种子管理员创建失败不阻断启动（可能只是库未初始化），记日志便于排查
         logger.error("创建种子管理员失败：%s", exc)
+    # 阶段 30：启动定时调度器（daemon 线程，每 30s tick 一次，到点自动执行模板）
+    try:
+        from services.scheduler import 启动调度器
+        启动调度器()
+    except Exception as exc:
+        logger.error("调度器启动失败（定时任务不可用，不影响手动生成）：%s", exc)
     yield
     # TODO: 关闭时清理连接
 
@@ -226,6 +232,7 @@ app.include_router(dashboards.router)
 app.include_router(shares.router)
 app.include_router(feedback.router)
 app.include_router(templates.router)
+app.include_router(schedules.router)
 
 
 # 【函数】SPA 回退路由：托管前端构建产物 + 兜底所有未命中路径。

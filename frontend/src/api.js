@@ -377,6 +377,24 @@ export async function runTemplate(templateId) {
   return request(`/templates/${templateId}/run`, { method: 'POST' });
 }
 
+// ---- 定时任务（阶段 30：模板 + cron 自动生成）----
+
+export async function listSchedules() {
+  return request('/schedules');
+}
+
+export async function createSchedule(templateId, cron) {
+  return request('/schedules', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ 模板ID: templateId, cron }),
+  });
+}
+
+export async function deleteSchedule(jobId) {
+  return request(`/schedules/${jobId}`, { method: 'DELETE' });
+}
+
 // ---- 报表历史（阶段 6：后端持久化）----
 
 export async function listReports(limit = 50, offset = 0) {
