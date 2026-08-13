@@ -379,6 +379,7 @@ def _解析自然语言意图(
                     "推荐理由": agent_result.get("推荐理由", ""),
                     "筛选条件": agent_result.get("筛选条件") or [],
                     "TopN": agent_result.get("TopN"),
+                    "对比": agent_result.get("对比"),
                 }
                 # 阶段 29 兜底：编排器内部降级结果（无 key 时）不含筛选/TopN——
                 # 用规则层识别补齐，保证"只看华东区"/"Top 10"在 LLM 路径同样生效
@@ -386,6 +387,9 @@ def _解析自然语言意图(
                     override["筛选条件"] = 匹配筛选条件(分析需求, df, 画像)
                 if df is not None and not override["TopN"]:
                     override["TopN"] = 提取TopN(分析需求)
+                # 阶段 30 兜底：规则层识别"环比/同比"（LLM 未给出时补齐）
+                if not override["对比"] and ("环比" in 分析需求 or "同比" in 分析需求):
+                    override["对比"] = "环比" if "环比" in 分析需求 else "同比"
                 fail_reason = agent_result.get("LLM失败原因", "")
                 return override, agent_result["意图来源"], agent_result["Agent_Trace"], fail_reason
             logger.warning("LLM 意图解析返回 None, 降级到关键词匹配")
@@ -423,6 +427,11 @@ def _意图驱动配置(画像: Dict[str, Any], 分析需求: str, df: Optional[
             chart_part["筛选条件"] = 筛选
         if topn:
             chart_part["TopN"] = topn
+        # 阶段 30：同比环比关键词（"按月环比"→环比，"同比"→同比）
+        if "环比" in 需求文本:
+            chart_part["对比"] = "环比"
+        elif "同比" in 需求文本:
+            chart_part["对比"] = "同比"
     return chart_part
 
 
@@ -901,6 +910,33 @@ def _生成结论(
     )
 
 
+def _生成对比数据(report_df: pd.DataFrame, 对比: str, x轴: Optional[str]) -> pd.DataFrame:
+    """阶段 30：在按时间聚合的结果上追加环比/同比列。
+
+    语义（按行索引对齐，假设时间粒度均匀）：
+      - 环比：与上一周期比 → 差值列「环比」+ 百分比列「环比率」；
+      - 同比：与 12 个周期前比（按月粒度）→ 差值列「同比」+「同比增长率」。
+    首行/数据不足 12 期时对应值为空（图表自然断点，不误报）。
+    """
+    if 对比 not in ("环比", "同比") or len(report_df) < 2:
+        return report_df
+    out = report_df.copy()
+    数值列 = [c for c in out.columns if c != x轴 and pd.api.types.is_numeric_dtype(out[c])]
+    if not 数值列:
+        return report_df
+    if 对比 == "环比":
+        for col in 数值列:
+            prev = out[col].shift(1)
+            out[f"{col}环比"] = (out[col] - prev).round(4)
+            out[f"{col}环比率"] = ((out[col] - prev) / prev * 100).round(2)
+    else:  # 同比：隔 12 期（按月粒度）
+        for col in 数值列:
+            prev = out[col].shift(12)
+            out[f"{col}同比"] = (out[col] - prev).round(4)
+            out[f"{col}同比增长率"] = ((out[col] - prev) / prev * 100).round(2)
+    return out
+
+
 def 生成报表数据(
     df: pd.DataFrame,
     分析需求: str = "",
@@ -911,6 +947,7 @@ def 生成报表数据(
     聚合方式: str = "求和",
     筛选条件: Optional[List[Dict[str, Any]]] = None,
     topN: Optional[int] = None,
+    对比: Optional[str] = None,
     llm_config: Optional[LLMRequestConfig] = None,
     on_event: Optional[Any] = None,
     user_id: str = "",
@@ -968,6 +1005,8 @@ def 生成报表数据(
             画像 = 生成数据画像(df)  # 画像跟随筛选后的数据（结论/推荐说明保持一致）
         if not topN and intent_override.get("TopN"):
             topN = intent_override.get("TopN")
+        if not 对比 and intent_override.get("对比"):
+            对比 = intent_override.get("对比")
 
     是否自动推荐 = 图表类型 == "自动推荐"
     effective_chart = 图表类型
@@ -1002,7 +1041,7 @@ def 生成报表数据(
     else:
         report_df = _聚合数据(df, x轴, y轴列表, 分组字段, 聚合方式)
 
-    # 阶段 29：TopN 截断——"销量 Top 10"：按聚合结果的数值列降序保留前 N。
+    # 阶段 30：TopN 截断——"销量 Top 10"：按聚合结果的数值列降序保留前 N。
     # 仅对"按 X 聚合的排名表"类图表生效（表格/直方图等结构不适用）。
     if topN and effective_chart not in TOPN_排除图表 and len(report_df) > 1:
         排名值列 = [
@@ -1011,6 +1050,11 @@ def 生成报表数据(
         ]
         if 排名值列:
             report_df = report_df.sort_values(排名值列[0], ascending=False).head(int(topN))
+
+    # 阶段 30：同比环比——x 轴为日期字段的时间序列图（折线/柱状/面积）上追加对比列
+    对比图表 = ("折线图", "柱状图", "面积图", "堆积柱状图")
+    if 对比 in ("环比", "同比") and effective_chart in 对比图表 and x轴 in 画像.get("日期字段", []):
+        report_df = _生成对比数据(report_df, 对比, x轴)
 
     plotly_type = 图表类型映射.get(effective_chart, "table")
     report_rows = _可_json行(report_df)
@@ -1024,6 +1068,7 @@ def 生成报表数据(
         "筛选条件": 显式筛选,          # 供 replay 重放 / 前端回显（原始结构）
         "筛选说明": 筛选说明,          # 人读描述（界面展示/导出报告）
         "TopN": topN,
+        "对比": 对比,
     }
 
     if plotly_type in ("pie", "donut") and x轴 and y轴列表:

@@ -140,6 +140,8 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [意图识别_tool_schema]
                     "description": "筛选条件列表（AND 语义，全部满足才保留）。用户说'只看华东区'→[{字段:'地区',操作:'等于',值:'华东区'}]；无筛选则省略",
                 },
                 "TopN": {"type": "integer", "description": "只保留聚合结果中数值最大的前 N 行（用户说'销量Top 10'时使用）"},
+                "对比": {"type": "string", "enum": ["环比", "同比"],
+                         "description": "时间序列对比：环比=与上一周期比，同比=与去年同期（12 期前）比；仅当 X 轴是日期字段且用户要求时给出"},
                 "前N行": {"type": "integer", "description": "返回前 N 行；默认 5，最大 50", "default": 5},
             },
             "required": ["X轴", "Y轴", "聚合方式"],

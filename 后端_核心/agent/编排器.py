@@ -78,7 +78,9 @@ _SYSTEM_PROMPT = """你是数据分析 Agent。根据用户的分析需求和数
 筛选与排名（重要）：
 - 如果需求包含条件过滤（如"只看华东区"、"排除华南"、"销量大于500"），
   请在「聚合分析」的"筛选条件"参数中明确给出（字段/操作/值），AND 语义；
-- 如果需求包含排名（如"销量Top 10的商品"、"前5名"），请给出"TopN"参数。
+- 如果需求包含排名（如"销量Top 10的商品"、"前5名"），请给出"TopN"参数；
+- 如果需求包含时间对比（如"按月环比"、"同比去年"）且 X 轴是日期字段，
+  请在「聚合分析」的"对比"参数中给出（环比/同比）。
 """
 
 
@@ -450,6 +452,7 @@ def _从消息提取意图(messages: List[Dict[str, Any]], 画像: Dict[str, Any
     reason = ""
     filter_list: List[Dict[str, Any]] = []  # 阶段 29：筛选条件（聚合分析参数）
     top_n = None
+    compare = None  # 阶段 30：环比/同比
 
     for msg in reversed(messages):
         if not isinstance(msg, dict):
@@ -490,6 +493,7 @@ def _从消息提取意图(messages: List[Dict[str, Any]], 画像: Dict[str, Any
                                 if f not in filter_list:
                                     filter_list.append(f)
                     top_n = args.get("TopN") or args.get("topN") or top_n
+                    compare = args.get("对比") or compare
 
     if not chart_type:
         return None
@@ -522,4 +526,5 @@ def _从消息提取意图(messages: List[Dict[str, Any]], 画像: Dict[str, Any
         "推荐理由": reason[:200],
         "筛选条件": valid_filters,
         "TopN": top_n,
+        "对比": compare if compare in ("环比", "同比") else None,
     }

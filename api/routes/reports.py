@@ -706,6 +706,7 @@ def 重放报表(
             if isinstance(f, dict) and f.get("字段")
         ],
         topN=配置.get("TopN"),
+        对比=配置.get("对比"),
         # 保留原生成模式（多智能体报表重放不再降级为单 Agent）
         agent_mode=prev.get("agent_mode", "single"),
     )
@@ -748,6 +749,7 @@ def _单Agent报表(
         聚合方式=payload.聚合方式,
         筛选条件=[c.model_dump() for c in payload.筛选条件],
         topN=payload.topN,
+        对比=payload.对比,
         llm_config=llm_config,
         on_event=on_event,
         user_id=user_id,
@@ -778,6 +780,7 @@ def _多智能体报表(
             聚合方式=payload.聚合方式,
             筛选条件=[c.model_dump() for c in payload.筛选条件],
             topN=payload.topN,
+        对比=payload.对比,
             llm_config=llm_config,
             on_event=on_event,
             user_id=user_id,
@@ -794,6 +797,7 @@ def _多智能体报表(
         聚合方式=result.get("聚合方式", "求和"),
         筛选条件=[c.model_dump() for c in payload.筛选条件],
         topN=payload.topN,
+        对比=payload.对比,
         llm_config=llm_config,
         on_event=on_event,
         user_id=user_id,

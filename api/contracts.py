@@ -130,6 +130,8 @@ class ReportGenerateRequest(BaseModel):
     # 阶段 29：条件筛选 + TopN（业务高频分析）
     筛选条件: list[筛选条件模型] = Field(default_factory=list, max_length=10)  # AND 语义
     topN: Optional[int] = Field(None, ge=1, le=200)  # 聚合结果取数值最大的前 N 行
+    # 阶段 30：同比环比（日期字段的时间序列对比，"按月环比"/"同比"）
+    对比: Optional[str] = Field(None, max_length=8)  # "环比" | "同比" | None
     model: Optional[str] = Field(None, max_length=64)  # 临时覆盖 LLM 模型名，None=使用 .env 默认
     上一报表ID: Optional[str] = Field(None, max_length=64)  # 追问上下文：延续上一份报表继续分析
     原始分析需求: Optional[str] = Field(None, max_length=2000)  # 内部：追问注入上下文前的原话（用于报表标题）

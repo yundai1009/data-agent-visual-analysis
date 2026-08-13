@@ -87,6 +87,8 @@ export default function Analysis() {
 const 筛选操作列表 = ['等于', '不等于', '包含', '大于', '大于等于', '小于', '小于等于', '为空', '不为空'];
 const [filters, setFilters] = useState([]); // [{ 字段, 操作, 值 }]，AND 语义
 const [topN, setTopN] = useState('');       // 数字字符串，空 = 不限制
+// 阶段 30：同比环比（日期字段时间序列对比）
+const [compare, setCompare] = useState(''); // '' | '环比' | '同比'
 const 更新筛选 = (i, key, val) => setFilters(prev => prev.map((f, idx) => idx === i ? { ...f, [key]: val } : f));
 const 添加筛选 = () => setFilters(prev => [...prev, { 字段: '', 操作: '等于', 值: '' }]);
 const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i));
@@ -273,6 +275,7 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
         .filter(f => f.字段 && f.操作 && (['为空', '不为空'].includes(f.操作) || f.值 !== ''))
         .map(f => ({ 字段: f.字段, 操作: f.操作, 值: f.值 })),
       topN: isFollowUp ? undefined : (topN ? parseInt(topN, 10) : undefined),
+      对比: isFollowUp ? undefined : (compare || undefined),
       agent_mode: agentMode,
       model: selectedModel || undefined, // undefined 不出现在 JSON 里，后端走默认模型
       上一报表ID: isFollowUp ? (lastReportIdRef.current || undefined) : undefined, // 追问链：后端基于上一报表上下文续答
@@ -875,6 +878,14 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
           <label className="text-xs text-gray-400 mb-1.5 block">聚合方式</label>
           <select className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 focus:outline-none focus:border-accent" value={aggMethod} onChange={(e) => setAggMethod(e.target.value)}>
             {['求和', '平均值', '计数', '最大值', '最小值'].map((m) => <option key={m}>{m}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs text-gray-400 mb-1.5 block">对比 <span className="text-[10px]">（需日期 X 轴）</span></label>
+          <select className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 focus:outline-none focus:border-accent" value={compare} onChange={(e) => setCompare(e.target.value)}>
+            <option value="">无</option>
+            <option value="环比">环比（与上期比）</option>
+            <option value="同比">同比（与去年同期比）</option>
           </select>
         </div>
       </div>
