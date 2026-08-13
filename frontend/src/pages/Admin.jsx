@@ -1,3 +1,16 @@
+// 管理员后台页（面试讲解）
+//
+// 做了什么：admin 角色专属的运营视图——平台统计卡片（注册用户/
+//   数据集/报表/看板数）、最近 7 天报表生成趋势图（ECharts）、
+//   用户列表管理。
+// 为什么这样设计：
+//   - 前端先按 user.role 做一次"软拦截"（非 admin 显示无权限页），
+//     真正的拦截在后端依赖 get_current_user（角色校验），前端不
+//     是安全边界，只是提体验；
+//   - 统计与用户列表用 Promise.all 并行拉取，一次加载两路数据；
+//   - 趋势数据复用报表图表的数据结构（标题/X轴/Y轴/数据），
+//     直接喂给 EChartsChart 组件，不另造一套渲染逻辑。
+// 删除它会怎样：管理员失去运营监控入口（接口仍在，仅前端无入口）。
 import { useEffect, useMemo, useState } from 'react';
 import { Shield, Users, Database, FileBarChart2, LayoutDashboard, RefreshCw, ShieldAlert } from 'lucide-react';
 import { fetchStatistics, fetchAdminUsers } from '../api';

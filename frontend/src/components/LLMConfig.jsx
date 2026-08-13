@@ -1,3 +1,17 @@
+// LLM 配置弹窗（面试讲解）
+//
+// 做了什么：账号设置里的"模型配置"——选供应商/模型、填 API Key
+//   （BYOK 自带 Key）、管理自定义供应商（新增/测试连通性/删除）。
+// 为什么这样设计：
+//   - 分预设（服务端白名单 providers）与自定义（用户自建 base_url +
+//     Key，后端做 SSRF 校验）两个 tab，自定义供应商先"测试"拉取
+//     模型列表再保存，避免手填模型名出错；
+//   - 选择结果存 localStorage（llm_config），分析请求时前端从
+//     localStorage 读取、经请求头 x-llm-provider / x-llm-model /
+//     x-llm-api-key 传给后端——Key 不落 localStorage 明文以外的
+//     任何前端持久化（不写库），后端也只在本请求内存中使用；
+//   - 账号级 Key 可一键保存到后端（加密落库），实现"登录即用"。
+// 删除它会怎样：用户无法切换模型/供应商，自定义供应商功能失效。
 import { useState, useEffect, useCallback } from 'react';
 import { Plus, Trash2, Loader2, Check } from 'lucide-react';
 import { getAccountLLMKey, saveAccountLLMKey, clearAccountLLMKey, fetchLLMProviders, saveCustomProvider, deleteCustomProvider, testCustomProvider } from '../api';

@@ -1,3 +1,16 @@
+// 登录页（面试讲解）
+//
+// 做了什么：三种模式的账号入口——登录 / 注册 / 忘记密码（邮箱验证码
+//   重置），含前端校验（邮箱正则、6 位验证码）、60 秒发码倒计时、
+//   成功登录后写入全局认证态并跳转数据页。
+// 为什么这样设计：
+//   - 模式用 useState('login' | 'register' | 'reset') 切换，复用同一
+//     套表单与样式，注册/重置才展示邮箱与验证码输入；
+//   - 验证码倒计时用 useEffect + setTimeout 每秒递减（存 ref 以便
+//     清理），防止组件卸载后定时器继续跑；
+//   - 校验放在前端只为即时反馈，真正的安全校验（密码策略、验证码
+//     校验、限流）都在后端 auth 接口，前端不信任自己。
+// 删除它会怎样：用户无法登录，平台不可用。
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BarChart3 } from 'lucide-react';

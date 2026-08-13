@@ -1,3 +1,17 @@
+# ============================================================
+# 文件头 · 数据集上传/管理接口（面试讲解）
+# ------------------------------------------------------------
+# 管什么：数据集的增删改查——上传（校验格式与大小、落盘、解析成
+#   DataFrame、生成画像、写 SQLite）、预览（head 20 行）、列表、
+#   删除、重命名。
+# 为什么这样设计：
+#   - 上传的原始文件仍落盘（data/uploads/）留副本，同时数据本体
+#     进 SQLite 持久化，进程重启不丢（阶段 2 从内存字典升级而来）；
+#   - 安全细节：50MB 上限、扩展名白名单、文件名只取末尾组件
+#     （防路径穿越）、解析失败即清理已落盘文件（防残留）；
+#   - 所有接口都带 get_current_user 依赖——数据集严格按用户隔离，
+#     别人看不到、删不掉你的数据。
+# ============================================================
 from __future__ import annotations
 
 from pathlib import Path
@@ -29,6 +43,11 @@ _UPLOAD_DIR = Path("data/uploads")
 _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
+# ---- 上传数据集：校验 → 落盘 → 解析 → 画像 → 入库 ------------------
+# 为什么流程是这个顺序：先挡掉非法输入（空文件/超 50MB/非白名单格式），
+# 再写磁盘，最后才解析入库——解析失败时 unlink 清理，不留半成品。
+# 注意 file.filename 在 UploadFile 里是客户端可控字段，取 base name
+# 防止 "../" 之类路径穿越。
 @router.post("/upload", response_model=DatasetUploadResponse)
 async def upload_dataset(
     file: UploadFile = File(...),
