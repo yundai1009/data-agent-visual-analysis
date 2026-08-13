@@ -252,14 +252,30 @@ def 数据集是否存在(user_id: str, dataset_id: str) -> bool:
     return row is not None
 
 
-def 列出数据集(user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
-    """列出某用户最近的数据集（按创建时间倒序）。"""
+def 列出数据集(user_id: str, limit: int = 200, q: str = "", sort: str = "created_at_desc") -> List[Dict[str, Any]]:
+    """列出某用户的数据集，支持文件名搜索与排序（阶段 31 · 数据集管理增强）。
+
+    sort 取值：created_at_desc（默认，最新在前）/ rows_desc（行数最多在前）/ file_name_asc（按名称）。
+    q 非空时按文件名模糊匹配（LIKE %q%）。
+    """
+    _排序映射 = {
+        "created_at_desc": "created_at DESC",
+        "rows_desc": "rows_count DESC",
+        "file_name_asc": "file_name ASC",
+    }
+    order_by = _排序映射.get(sort, "created_at DESC")
+    sql = (
+        "SELECT dataset_id, file_name, rows_count, cols_count, created_at "
+        "FROM datasets WHERE user_id = ?"
+    )
+    params: List[Any] = [user_id]
+    if q:
+        sql += " AND file_name LIKE ?"
+        params.append(f"%{q}%")
+    sql += f" ORDER BY {order_by} LIMIT ?"
+    params.append(limit)
     with _get_conn() as conn:
-        rows = conn.execute(
-            "SELECT dataset_id, file_name, rows_count, cols_count, created_at "
-            "FROM datasets WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
-            (user_id, limit),
-        ).fetchall()
+        rows = conn.execute(sql, params).fetchall()
     return [
         {
             "数据集ID": row["dataset_id"],
@@ -270,6 +286,17 @@ def 列出数据集(user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         }
         for row in rows
     ]
+
+
+def 统计数据集(user_id: str) -> Dict[str, int]:
+    """阶段 31：数据集概览统计（空间占用面板）——总数 + 总行数。"""
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS cnt, COALESCE(SUM(rows_count), 0) AS total_rows "
+            "FROM datasets WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    return {"总数": int(row["cnt"]), "总行数": int(row["total_rows"])}
 
 
 def _删除存储文件(存储路径: Optional[str]) -> None:
@@ -334,8 +361,11 @@ class 数据集仓储:
     def 存在(self, user_id: str, dataset_id: str) -> bool:
         return 数据集是否存在(user_id, dataset_id)
 
-    def 列表(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
-        return 列出数据集(user_id, limit=limit)
+    def 列表(self, user_id: str, limit: int = 200, q: str = "", sort: str = "created_at_desc") -> List[Dict[str, Any]]:
+        return 列出数据集(user_id, limit=limit, q=q, sort=sort)
+
+    def 统计(self, user_id: str) -> Dict[str, int]:
+        return 统计数据集(user_id)
 
     def 删除(self, user_id: str, dataset_id: str) -> bool:
         return 删除数据集(user_id, dataset_id)

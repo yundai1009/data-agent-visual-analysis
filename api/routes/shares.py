@@ -10,10 +10,11 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from api.dependencies import get_current_user_optional
 from repositories import report_repo, share_repo
 
 logger = logging.getLogger(__name__)
@@ -53,9 +54,14 @@ def _记录密码失败(share_id: str) -> None:
 
 
 @router.get("/{share_id}")
-def 公开查看报表(share_id: str, request: Request) -> Dict[str, Any]:
+def 公开查看报表(
+    share_id: str,
+    request: Request,
+    user: Optional[dict] = Depends(get_current_user_optional),
+) -> Dict[str, Any]:
     """按分享令牌读取报表只读视图；过期/撤销/报表已删 → 404；设置了密码需凭密码（401）。
 
+    阶段 31：分享设置了协作者白名单时，需登录且 username 在白名单内（否则 401）。
     P0 加固：密码以 HMAC 哈希存储、恒定时间比对、失败限频（10 分钟 10 次 → 429）。
     """
     share = share_repo.读取有效分享(share_id)
@@ -74,6 +80,15 @@ def 公开查看报表(share_id: str, request: Request) -> Dict[str, Any]:
         if not _hmac.compare_digest(calc, share["密码哈希"]):
             _记录密码失败(share_id)
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="需要访问密码")
+
+    # 阶段 31：协作者白名单——非空时仅白名单内登录用户可看（公开访客/名单外 401）
+    协作者 = share.get("协作者") or []
+    if 协作者:
+        if not user or user.get("username") not in 协作者:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="该分享仅对指定协作者开放，请登录协作者账号后访问",
+            )
 
     # 报表可能已被创建者删除：分享随之失效（不暴露内部信息）
     item = report_repo.读取报表(share["user_id"], share["report_id"])

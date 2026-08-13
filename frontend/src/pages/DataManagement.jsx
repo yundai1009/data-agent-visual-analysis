@@ -43,6 +43,10 @@ export default function DataManagement() {
   const [error, setError] = useState('');
   const [dsList, setDsList] = useState([]);          // 我的数据集列表
   const [dsOpen, setDsOpen] = useState(false);       // 数据集管理面板
+  // 阶段 31：数据集管理增强——文件名搜索 + 排序 + 概览统计
+  const [dsQ, setDsQ] = useState('');
+  const [dsSort, setDsSort] = useState('created_at_desc');
+  const [dsStats, setDsStats] = useState({ 总数: 0, 总行数: 0 });
   const [renaming, setRenaming] = useState(null);    // 正在重命名的数据集（ID）
   const [newName, setNewName] = useState('');
   const [search, setSearch] = useState('');
@@ -75,12 +79,16 @@ export default function DataManagement() {
     return () => { cancelled = true; };
   }, []);
 
-  // 加载我的数据集列表
+  // 加载我的数据集列表（阶段 31：带搜索/排序，返回概览统计）
   useEffect(() => {
     let cancelled = false;
-    listDatasets(100).then(res => { if (!cancelled) setDsList(res?.数据集列表 || []); }).catch(() => {});
+    listDatasets(200, dsQ, dsSort).then(res => {
+      if (cancelled) return;
+      setDsList(res?.数据集列表 || []);
+      setDsStats(res?.统计 || { 总数: 0, 总行数: 0 });
+    }).catch(() => {});
     return () => { cancelled = true; };
-  }, [dataset?.数据集ID]);
+  }, [dataset?.数据集ID, dsQ, dsSort]);
 
   // 切换数据集
   const handleSwitchDataset = async (id) => {
@@ -233,8 +241,27 @@ export default function DataManagement() {
             {dsOpen && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setDsOpen(false)} />
-                <div className="absolute right-0 top-full mt-2 z-20 w-72 bg-white border border-gray-200 rounded-xl shadow-xl p-3">
-                  <p className="text-xs font-semibold text-gray-700 mb-2">我的数据集</p>
+                <div className="absolute right-0 top-full mt-2 z-20 w-80 bg-white border border-gray-200 rounded-xl shadow-xl p-3">
+                  <p className="text-xs font-semibold text-gray-700 mb-1">我的数据集</p>
+                  {/* 阶段 31：概览统计 + 文件名搜索 + 排序 */}
+                  <p className="text-[11px] text-gray-400 mb-2">共 {dsStats.总数} 个数据集 · 总行数 {dsStats.总行数.toLocaleString()} 行</p>
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <input
+                      className="flex-1 border border-gray-200 rounded-lg px-2.5 py-1.5 text-[11px] bg-gray-50 focus:outline-none focus:border-accent"
+                      placeholder="搜索文件名…"
+                      value={dsQ}
+                      onChange={(e) => setDsQ(e.target.value)}
+                    />
+                    <select
+                      className="border border-gray-200 rounded-lg px-2 py-1.5 text-[11px] bg-white focus:outline-none focus:border-accent"
+                      value={dsSort}
+                      onChange={(e) => setDsSort(e.target.value)}
+                    >
+                      <option value="created_at_desc">最新上传</option>
+                      <option value="rows_desc">行数最多</option>
+                      <option value="file_name_asc">名称排序</option>
+                    </select>
+                  </div>
                   {dsList.length === 0 ? (
                     <p className="text-xs text-gray-400 py-3 text-center">暂无数据集，上传一个吧</p>
                   ) : (

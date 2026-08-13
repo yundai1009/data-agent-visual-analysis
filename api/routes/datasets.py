@@ -128,11 +128,15 @@ async def get_dataset(dataset_id: str, user: dict = Depends(get_current_user)) -
 
 @router.get("/", response_model=Dict[str, Any])
 async def list_datasets(
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(200, ge=1, le=500),
+    q: str = Query("", max_length=100, description="文件名搜索"),
+    sort: str = Query("created_at_desc", pattern="^(created_at_desc|rows_desc|file_name_asc)$"),
     user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """列出最近的数据集（阶段 2 新增；前端不依赖此接口）。"""
-    return {"数据集列表": _仓储.列表(user["user_id"], limit=limit)}
+    """列出数据集（阶段 31 增强：文件名搜索 + 排序 + 概览统计）。"""
+    items = _仓储.列表(user["user_id"], limit=limit, q=q, sort=sort)
+    统计 = _仓储.统计(user["user_id"])
+    return {"数据集列表": items, "统计": 统计}
 
 
 @router.delete("/{dataset_id}")

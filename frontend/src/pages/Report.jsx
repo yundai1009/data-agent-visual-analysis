@@ -13,8 +13,8 @@
  * ============================================================================= */
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Download, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, Copy, Check, Clock, Link2, X, RotateCcw, GitBranch, Filter } from 'lucide-react';
-import { listReports, getReport, deleteReport, exportReport, exportFullReport, createShare, listShares, revokeShare, replayReport } from '../api';
+import { Download, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, Copy, Check, Clock, Link2, X, RotateCcw, GitBranch, Filter, Star, Search } from 'lucide-react';
+import { listReports, getReport, deleteReport, exportReport, exportFullReport, createShare, listShares, revokeShare, replayReport, toggleFavorite } from '../api';
 import EChartsChart from '../components/EChartsChart';
 
 // Report 报表历史页主组件
@@ -36,8 +36,13 @@ export default function Report() {
   // 分享弹窗状态
   // 分享弹窗状态（有效期 + 密码 + 已有链接列表 + 提示信息）
   const [showShare, setShowShare] = useState(false);
+  // 阶段 31：收藏 + 历史检索（搜索/只看收藏）
+  const [isFav, setIsFav] = useState(false);
+  const [favOnly, setFavOnly] = useState(false);
+  const [searchQ, setSearchQ] = useState('');
   const [shareHours, setShareHours] = useState(24);
   const [sharePassword, setSharePassword] = useState('');
+  const [shareCollaborators, setShareCollaborators] = useState(''); // 阶段31：协作者 username（逗号分隔）
   const chartContainerRef = useRef(null); // 图表容器 DOM 引用：用于导出当前图表为 PNG
   // 统一下载弹窗状态（格式选择 + loading）
   const [showDl, setShowDl] = useState(false);
@@ -67,19 +72,20 @@ export default function Report() {
     setLoading(true);
     (async () => {
       try {
-        const res = await listReports(PAGE_SIZE, 0);
+        const res = await listReports(PAGE_SIZE, 0, { favorites: favOnly ? 1 : 0, q: searchQ });
         const items = res?.报表列表 || [];
         if (cancelled) return;
         setReportMeta(items);
         setHasMore(items.length >= PAGE_SIZE);
         const targetId = reportId || items[0]?.报表ID;
         if (targetId) {
+          const idx = items.findIndex((i) => i.报表ID === targetId);
+          if (idx >= 0) setIsFav(items[idx].is_favorited ?? false); // 阶段 31：星标状态
           const detail = await getReport(targetId);
           if (!cancelled && detail?.报表) {
             setLocalReport(detail.报表);
             setViewingReportId(detail.报表ID); // B4：以详情响应为准
             setPrevTitle(detail.上一报表标题 || '');
-            const idx = items.findIndex((i) => i.报表ID === targetId);
             if (idx >= 0) setCurrentIndex(idx);
           }
         }
@@ -89,7 +95,7 @@ export default function Report() {
       } finally { if (!cancelled) setLoading(false); }
     })();
     return () => { cancelled = true; };
-  }, [reportId]);
+  }, [reportId, favOnly, searchQ]);
 
   // 翻页（上一张/下一张）：从后端拉对应报表的详情
   // B19 修复：switchSeqRef 序号守卫——快速连续切换时，旧响应不覆盖新页面
@@ -97,6 +103,7 @@ export default function Report() {
     if (index < 0 || index >= reportMeta.length) return;
     const seq = ++switchSeqRef.current; // B19：本次切换序号
     setCurrentIndex(index);
+    setIsFav(reportMeta[index]?.is_favorited ?? false); // 阶段 31：翻页同步星标状态
     try {
       const detail = await getReport(reportMeta[index].报表ID);
       if (switchSeqRef.current !== seq) return; // 已有更新的切换，丢弃本次结果
@@ -268,14 +275,15 @@ export default function Report() {
       setShareErr('分享列表刷新失败：' + (e.message || e));
     }
   };
-  // 生成分享链接：有效期 + 可选访问密码，成功后刷新列表并展示成功提示
+  // 生成分享链接：有效期 + 可选访问密码 + 阶段31 协作者白名单
   const handleCreateShare = async () => {
     if (!currentReportId) return;
     try {
-      const res = await createShare(currentReportId, shareHours, sharePassword.trim());
-      setShareMsg(`已生成，有效期 ${shareHours} 小时${res.需密码 ? '，需访问密码' : ''}`);
+      const res = await createShare(currentReportId, shareHours, sharePassword.trim(), shareCollaborators.trim());
+      setShareMsg(`已生成，有效期 ${shareHours} 小时${res.需密码 ? '，需访问密码' : ''}${res.协作者?.length ? `，协作者 ${res.协作者.length} 人` : ''}`);
       setShareErr('');
       setSharePassword(''); // 生成完清空密码输入框，下次默认不带密码
+      setShareCollaborators('');
       await reloadShares();
     } catch (e) {
       setShareMsg('');
@@ -321,6 +329,20 @@ export default function Report() {
       setLoadError('重放失败：' + (e.message || e));
     } finally {
       setReplaying(false);
+    }
+  };
+
+  // 阶段 31：收藏切换（乐观更新 UI，失败回滚）
+  const handleToggleFav = async () => {
+    if (!currentReportId) return;
+    const prev = isFav;
+    setIsFav(!prev);
+    try {
+      const res = await toggleFavorite(currentReportId);
+      setIsFav(res?.is_favorited ?? !prev);
+    } catch (e) {
+      setIsFav(prev);
+      setLoadError('收藏操作失败：' + (e.message || e));
     }
   };
 
@@ -401,6 +423,25 @@ export default function Report() {
                 className="ml-2 text-xs text-gray-400 hover:text-red-500 transition-colors">
                 清空
               </button>
+              {/* 阶段 31：历史检索——标题搜索 + 只看收藏 */}
+              <div className="ml-2 flex items-center gap-1.5">
+                <div className="relative">
+                  <Search className="w-3 h-3 text-gray-400 absolute left-2 top-1/2 -translate-y-1/2" />
+                  <input
+                    className="pl-6 pr-2 py-0.5 w-32 text-[11px] border border-gray-200 rounded-md bg-gray-50 focus:outline-none focus:border-accent"
+                    placeholder="搜索标题…"
+                    value={searchQ}
+                    onChange={(e) => setSearchQ(e.target.value)}
+                  />
+                </div>
+                <button
+                  onClick={() => setFavOnly(!favOnly)}
+                  className={`flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded transition-colors ${favOnly ? 'text-amber-500 bg-amber-50' : 'text-gray-400 hover:text-gray-600'}`}
+                  title="只看收藏的报表"
+                >
+                  <Star className={`w-3 h-3 ${favOnly ? 'fill-amber-400' : ''}`} /> 收藏
+                </button>
+              </div>
               {hasMore && (
                 <button onClick={handleLoadMore} disabled={loadingMore}
                   className="ml-2 text-xs text-accent hover:underline transition-colors disabled:opacity-50">
@@ -413,7 +454,6 @@ export default function Report() {
             <Sparkles className="w-3 h-3" /> {intentSource === 'LLM' ? 'AI 生成' : intentSource === '规则' ? '规则匹配' : '自动'}
           </span>
           <span className="px-2.5 py-1 rounded text-xs bg-gray-50 text-gray-500 border border-gray-200">{chartTypeLabel}</span>
-          {/* 阶段 29：筛选条件 / TopN 徽标——让用户明确看到"这份报表是筛选后的视角" */}
           {Array.isArray(chartConfig?.筛选说明) && chartConfig.筛选说明.length > 0 && (
             <span className="flex items-center gap-1 px-2.5 py-1 rounded text-xs bg-violet-50 text-violet-600 border border-violet-200"
                   title="本报表基于以下筛选条件生成（只统计筛选后的数据）">
@@ -424,6 +464,14 @@ export default function Report() {
             <span className="px-2.5 py-1 rounded text-xs bg-violet-50 text-violet-600 border border-violet-200"
                   title="只保留聚合结果中数值最大的前 N 行">Top {chartConfig.TopN}</span>
           )}
+          {/* 阶段 31：收藏星标（乐观更新） */}
+          <button
+            onClick={handleToggleFav}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs border transition-all ${isFav ? 'bg-amber-50 text-amber-500 border-amber-200 hover:bg-amber-100' : 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100 hover:text-amber-500'}`}
+            title={isFav ? '取消收藏' : '收藏这份报表'}
+          >
+            <Star className={`w-3 h-3 ${isFav ? 'fill-amber-400' : ''}`} /> {isFav ? '已收藏' : '收藏'}
+          </button>
           <button
             onClick={openShareModal}
             className="flex items-center gap-1 px-2.5 py-1 rounded text-xs bg-emerald-50 text-emerald-600 border border-emerald-200 hover:bg-emerald-100 transition-all"
@@ -662,8 +710,15 @@ export default function Report() {
                 <Link2 className="w-3.5 h-3.5" /> 生成分享链接
               </button>
             </div>
+            {/* 阶段 31：协作者白名单——填了则只有这些登录用户可看，公开访客 401 */}
+            <input
+              value={shareCollaborators}
+              onChange={(e) => setShareCollaborators(e.target.value)}
+              placeholder="协作者 username（逗号分隔，留空 = 公开链接）"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-white focus:outline-none focus:border-accent mb-3"
+            />
             <p className="text-[11px] text-gray-400 mb-4">
-              任何人凭链接可查看本报表（只读）；设置密码后需输入密码访问；到期或撤销后立即失效
+              任何人凭链接可查看本报表（只读）；设置密码后需输入密码访问；指定协作者后仅白名单内登录用户可看；到期或撤销后立即失效
             </p>
 
             {shareMsg && <p className="text-xs text-emerald-600 mb-3">{shareMsg}</p>}

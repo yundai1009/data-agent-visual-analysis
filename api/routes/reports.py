@@ -396,11 +396,39 @@ def generate_report_stream(
 def list_reports(
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    favorites: int = Query(0, ge=0, le=1, description="1=只看收藏"),
+    q: str = Query("", max_length=100, description="标题/关键词搜索"),
+    chart_type: Optional[str] = Query(None, max_length=32, description="图表类型过滤"),
     user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """列出当前用户的报表历史（支持分页）。"""
-    from repositories import report_repo
-    return {"报表列表": report_repo.列出报表(user["user_id"], limit=limit, offset=offset)}
+    """列出当前用户的报表历史（支持分页、收藏过滤、标题搜索、图表类型过滤）。"""
+    from repositories import report_repo, favorite_repo
+
+    favorited_ids = favorite_repo.已收藏集合(user["user_id"])
+    items = report_repo.列出报表(user["user_id"], limit=limit, offset=offset)
+    # 阶段 31：按收藏/标题/图表类型过滤（在列表内做内存过滤——分页量小，性能无忧）
+    if favorites:
+        items = [r for r in items if r["报表ID"] in favorited_ids]
+    if q:
+        kw = q.lower()
+        items = [r for r in items if kw in r.get("标题", "").lower()]
+    if chart_type:
+        items = [r for r in items if r.get("图表类型") == chart_type]
+    # 阶段 31：列表项附加 is_favorited 标记（前端星标即时展示，不需额外接口）
+    for r in items:
+        r["is_favorited"] = r["报表ID"] in favorited_ids
+    return {"报表列表": items}
+
+
+@router.put("/{report_id}/favorite")
+def 切换收藏(report_id: str, user: dict = Depends(get_current_user)) -> Dict[str, bool]:
+    """收藏/取消收藏切换（幂等）；报表不存在时仍操作（不泄露信息）。"""
+    from repositories import favorite_repo, report_repo
+    item = report_repo.读取报表(user["user_id"], report_id)
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报表不存在")
+    已收藏 = favorite_repo.切换收藏(user["user_id"], report_id)
+    return {"is_favorited": 已收藏}
 
 
 @router.get("/{report_id}")
@@ -628,17 +656,23 @@ def 创建分享链接(
     report_id: str,
     有效小时数: int = Query(24, ge=1, le=720),
     密码: str = Query("", max_length=32, description="可选访问密码，空=无需密码"),
+    协作者: str = Query("", max_length=500, description="阶段31：协作者 username 白名单（逗号分隔；空=公开/仅密码）"),
     user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """为报表创建分享链接（仅创建者）。返回可公开访问的只读链接。"""
+    """为报表创建分享链接（仅创建者）。返回可公开访问的只读链接。
+
+    阶段 31：协作者非空时，链接对白名单内登录用户开放（公开访客 401）。
+    """
     _确认报表归属(user["user_id"], report_id)
     from repositories import share_repo
-    info = share_repo.创建分享(user["user_id"], report_id, 有效小时数, 密码.strip())
+    collaborators = [u.strip() for u in 协作者.split(",") if u.strip()]
+    info = share_repo.创建分享(user["user_id"], report_id, 有效小时数, 密码.strip(), collaborators)
     return {
         "链接ID": info["share_id"],
         "分享链接": f"/s/{info['share_id']}",
         "过期时间": info["过期时间"],
         "需密码": info["需密码"],
+        "协作者": info["协作者"],
     }
 
 

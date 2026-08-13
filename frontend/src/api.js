@@ -246,8 +246,11 @@ export async function getDataset(id) {
   return request(`/datasets/${id}`);
 }
 
-export async function listDatasets(limit = 50) {
-  return request(`/datasets/?limit=${limit}`);
+export async function listDatasets(limit = 200, q = '', sort = 'created_at_desc') {
+  const p = new URLSearchParams({ limit: String(limit) });
+  if (q) p.set('q', q);
+  p.set('sort', sort);
+  return request(`/datasets/?${p.toString()}`);
 }
 
 export async function deleteDataset(id) {
@@ -397,8 +400,11 @@ export async function deleteSchedule(jobId) {
 
 // ---- 报表历史（阶段 6：后端持久化）----
 
-export async function listReports(limit = 50, offset = 0) {
-  return request(`/reports/?limit=${limit}&offset=${offset}`);
+export async function listReports(limit = 50, offset = 0, { favorites = 0, q = '', chart_type = '' } = {}) {
+  const p = new URLSearchParams({ limit: String(limit), offset: String(offset), favorites: String(favorites) });
+  if (q) p.set('q', q);
+  if (chart_type) p.set('chart_type', chart_type);
+  return request(`/reports/?${p.toString()}`);
 }
 
 export async function getReport(reportId) {
@@ -456,10 +462,16 @@ export async function deleteReport(reportId) {
 
 // ---- 报表分享（批次 6：带权限的只读链接；批次 C3：可选访问密码）----
 
-export async function createShare(reportId, hours = 24, password = '') {
+export async function createShare(reportId, hours = 24, password = '', collaborators = '') {
   const q = new URLSearchParams({ 有效小时数: String(hours) });
   if (password) q.set('密码', password);
+  if (collaborators) q.set('协作者', collaborators);
   return request(`/reports/${reportId}/share?${q.toString()}`, { method: 'POST' });
+}
+
+// 阶段 31：收藏切换（返回 { is_favorited }）
+export async function toggleFavorite(reportId) {
+  return request(`/reports/${reportId}/favorite`, { method: 'PUT' });
 }
 
 export async function listShares(reportId) {

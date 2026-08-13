@@ -125,6 +125,38 @@ def get_current_user(
     }
 
 
+def get_current_user_optional(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+) -> Optional[dict]:
+    """可选登录依赖（阶段 31 · 协作者分享用）：有 token 且有效 → 用户 dict；否则 None。
+
+    与 get_current_user 的区别：不抛 401——"访客可看公开分享、登录用户可看协作者分享"
+    的场景需要区分"未登录"与"登录但不是协作者"两种状态。
+    """
+    if not EnvConfig.AUTH_ENABLED:
+        return _demo_user()
+    if credentials is None or not credentials.credentials:
+        return None
+    try:
+        payload = auth_service.verify_access_token(credentials.credentials)
+    except Exception:
+        return None
+    if payload is None:
+        return None
+    from repositories import user_repo as _repo
+    try:
+        if int(payload.get("ver") or 0) != _repo.读取token版本(payload.get("sub", "")):
+            return None
+    except Exception:
+        return None
+    return {
+        "user_id": payload.get("sub", ""),
+        "username": payload.get("username", ""),
+        "role": payload.get("role", "analyst"),
+        "roles": [payload.get("role", "analyst")],
+    }
+
+
 # 【函数】管理员鉴权依赖：只有 roles 含 "admin" 的用户才能通过。
 # 入参：user —— 由 get_current_user 先解析出的当前用户（依赖链自动注入，先认证后鉴权）
 # 返回：dict —— 鉴权通过后原样返回 user，路由函数继续使用
