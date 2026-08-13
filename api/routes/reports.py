@@ -326,9 +326,10 @@ async def generate_report(
     try:
         df, llm_config = _准备上下文(payload, request, user)
         try:
+            from services.tracking import 推断发起入口
             report_id, report = _生成报表流式(
                 payload, df, llm_config, user,
-                source_page=(request.headers.get("x-source-page") or "").strip() or None,
+                source_page=推断发起入口(request.headers.get("referer")),
             )
         except ValueError as exc:
             raise HTTPException(
@@ -364,8 +365,9 @@ def generate_report_stream(
         )
 
     event_q: "queue.Queue[Optional[Dict[str, Any]]]" = queue.Queue(maxsize=_STREAM_QUEUE_MAX)
-    # 发起入口：请求头 x-source-page（看板/报表/提问框…），闭包传入 worker 用于埋点
-    _source_page = (request.headers.get("x-source-page") or "").strip() or None
+    # 发起入口：由后端按 Referer 路径推断（用户无感知），闭包传入 worker 用于埋点
+    from services.tracking import 推断发起入口
+    _source_page = 推断发起入口(request.headers.get("referer"))
 
     def _push(ev: Optional[Dict[str, Any]]) -> None:
         # 队列满说明客户端已断开且无人消费：丢弃事件，绝不阻塞 worker，

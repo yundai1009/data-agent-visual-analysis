@@ -153,16 +153,18 @@ def register(payload: RegisterRequest, request: Request) -> AuthResponse:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     email_code_repo.标记已用(email)
 
-    # 预测数据采集：注册事件落库（渠道/设备/城市/活动来源由前端请求头上报，
-    # 无则留空；user_id 即 u_+16hex 脱敏编号，与预测系统规范一致）
+    # 预测数据采集：注册事件落库——设备/渠道/活动来源全部由后端自动推断
+    # （UA + Referer，用户无感知、前端零参与；user_id 即 u_+16hex 脱敏编号）
     try:
         from repositories import event_repo
+        from services.tracking import 解析渠道与活动来源, 推断设备类型
+        _channel, _user_source = 解析渠道与活动来源(request.headers.get("referer"))
         event_repo.记录注册事件(
             user["user_id"],
-            channel=(request.headers.get("x-register-channel") or "").strip() or None,
-            device_type=(request.headers.get("x-device-type") or "").strip() or None,
-            city_tier=(request.headers.get("x-city-tier") or "").strip() or None,
-            user_source=(request.headers.get("x-user-source") or "").strip() or None,
+            channel=_channel,
+            device_type=推断设备类型(request.headers.get("user-agent")),
+            city_tier=None,  # 城市线级后端不可得，留空（可选字段）
+            user_source=_user_source or None,
         )
     except Exception:  # noqa: BLE001 - 埋点失败不影响注册主流程
         logger.warning("记录注册事件失败", exc_info=True)
