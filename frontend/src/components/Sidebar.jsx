@@ -12,7 +12,7 @@
  *   - api.js submitFeedback() —— 提交反馈到后端 /feedback
  *   - react-router-dom NavLink + useNavigate —— 导航高亮与路由跳转
  * ============================================================================= */
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { Database, Zap, BarChart3, LayoutDashboard, Shield, ChevronLeft, ChevronRight, LogOut, X, UserRoundPen, MessageSquareHeart, Moon, Sun } from 'lucide-react';

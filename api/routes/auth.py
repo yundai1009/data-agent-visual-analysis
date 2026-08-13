@@ -121,7 +121,7 @@ def send_code(payload: SendCodeRequest) -> Dict[str, str]:
 
 
 @router.post("/register", response_model=AuthResponse)
-def register(payload: RegisterRequest) -> AuthResponse:
+def register(payload: RegisterRequest, request: Request) -> AuthResponse:
     """邮箱验证码注册，注册成功固定为普通账号（analyst），不接收 role 字段。"""
     email = payload.email.strip().lower()
 
@@ -152,6 +152,20 @@ def register(payload: RegisterRequest) -> AuthResponse:
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     email_code_repo.标记已用(email)
+
+    # 预测数据采集：注册事件落库（渠道/设备/城市/活动来源由前端请求头上报，
+    # 无则留空；user_id 即 u_+16hex 脱敏编号，与预测系统规范一致）
+    try:
+        from repositories import event_repo
+        event_repo.记录注册事件(
+            user["user_id"],
+            channel=(request.headers.get("x-register-channel") or "").strip() or None,
+            device_type=(request.headers.get("x-device-type") or "").strip() or None,
+            city_tier=(request.headers.get("x-city-tier") or "").strip() or None,
+            user_source=(request.headers.get("x-user-source") or "").strip() or None,
+        )
+    except Exception:  # noqa: BLE001 - 埋点失败不影响注册主流程
+        logger.warning("记录注册事件失败", exc_info=True)
 
     token = auth_service.create_access_token(user["user_id"], user["role"], user["username"])
     return AuthResponse(access_token=token, user=user)

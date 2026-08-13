@@ -226,6 +226,8 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
   // 入参：isFollowUp = true 时进入「追问模式」——清空上一轮字段，携带 lastReportId 传给后端
   // 业务定位：整个分析流程的入口，串联 payload 构造 → SSE 发起 → 事件驱动 UI
   async function handleGenerate(isFollowUp = false) {
+    // 预测数据采集：标记本次发起入口（分析页提问框），随请求头上报
+    try { localStorage.setItem('tracking_source_page', isFollowUp ? '追问提问框' : '提问框'); } catch { /* ignore */ }
     if (!dataset) {
       setError('请先在数据管理页面上传数据');
       navigate('/data');

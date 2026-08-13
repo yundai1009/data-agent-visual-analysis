@@ -65,6 +65,7 @@ data/daa.db-shm
 # 9. 上传 & 缓存数据
 # ──────────────────────────────────────────────
 data/uploads/
+data/export/
 data/*.csv
 data/*.xls
 data/*.xlsx

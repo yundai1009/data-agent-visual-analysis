@@ -6,6 +6,7 @@ metrics 改为返回真实用量；statistics / users 为用户与用量统计�
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, Query
@@ -14,6 +15,22 @@ from api.dependencies import require_admin
 from repositories import admin_repo
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+@router.get("/export-events")
+def export_events(user: dict = Depends(require_admin)) -> Dict[str, Any]:
+    """导出预测数据四张表 CSV 到 data/export/（会员开通预测系统 data/raw 直接用）。
+
+    中文表头 + 东八区 YYYY-MM-DD HH:MM:SS + u_ 脱敏用户编号，符合预测系统数据规范。
+    """
+    from repositories import event_repo
+    out_dir = Path("data/export")
+    exported = event_repo.导出全部事件CSV(out_dir)
+    return {
+        "导出目录": str(out_dir),
+        "文件": {table: {"路径": str(p), "行数": 0} for table, p in exported.items()},
+        "提示": "把 data/export/ 下四张 CSV 复制到预测系统 data/raw/ 后运行 run-all --no-generate",
+    }
 
 
 @router.get("/metrics")

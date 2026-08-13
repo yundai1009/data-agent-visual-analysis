@@ -69,12 +69,32 @@ function handleAuthExpired(url) {
   window.dispatchEvent(new Event('auth:expired'));
 }
 
+// 预测数据采集头：从 localStorage 读取渠道/设备/城市/活动来源/发起入口，
+// 随请求上报给后端（注册/生成打点用）。无值则不带头，后端留空。
+// 为什么用 localStorage：埋点信息（设备类型、渠道）由前端探测一次缓存，
+// 后续所有请求自动携带，无需每个页面重复传参。
+function getTrackingHeaders() {
+  const headers = {};
+  const channel = localStorage.getItem('tracking_channel');
+  const device = localStorage.getItem('tracking_device');
+  const city = localStorage.getItem('tracking_city');
+  const userSource = localStorage.getItem('tracking_source');
+  const sourcePage = localStorage.getItem('tracking_source_page');
+  if (channel) headers['X-Register-Channel'] = channel;
+  if (device) headers['X-Device-Type'] = device;
+  if (city) headers['X-City-Tier'] = city;
+  if (userSource) headers['X-User-Source'] = userSource;
+  if (sourcePage) headers['X-Source-Page'] = sourcePage;
+  return headers;
+}
+
 // 通用请求封装：任何业务接口都走这里，自动获得 token 注入 + 超时 + 401 处理 + 错误解析
 // 入参：url（接口路径）、options（fetch 选项：method/body/headers 等）
 // 返回：解析后的 JSON 对象；非 2xx 抛出带 status 的 Error（调用方 catch 展示 message）
 async function request(url, options = {}) {
   const llmHeaders = getLLMHeaders();
   const authHeaders = getAuthHeaders();
+  const trackingHeaders = getTrackingHeaders();
   const controller = new AbortController();
   // 超时兜底：LLM 分析链路可能挂起，30s 强制中止，避免按钮永远 loading
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -86,7 +106,7 @@ async function request(url, options = {}) {
     // 替代方案：用 axios 拦截器统一加（代码更少），但会多一个依赖；原生 fetch 封装
     //   已足够，且保持与 SSE 流式请求同一套 header 拼装逻辑。
     const res = await fetch(`${BASE}${url}`, {
-      headers: { 'Content-Type': 'application/json', ...authHeaders, ...llmHeaders, ...options.headers },
+      headers: { 'Content-Type': 'application/json', ...authHeaders, ...llmHeaders, ...trackingHeaders, ...options.headers },
       signal: controller.signal,
       ...options,
     });

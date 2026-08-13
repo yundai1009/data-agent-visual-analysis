@@ -252,6 +252,7 @@ def _生成报表流式(
     llm_config: LLMRequestConfig,
     user: dict,
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
+    source_page: Optional[str] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """生成报表 + 持久化；on_event 实时推送决策事件（SSE 直播）。返回 (report_id, report)。"""
     payload = _注入追问上下文(payload, user)
@@ -289,6 +290,19 @@ def _生成报表流式(
         chart_type=report.get("图表类型", ""),
         report=report,
     )
+    # 预测数据采集：生成事件落库（生成图数=1、分析类型=实际图表类型、
+    # 是否消耗付费额度=0（额度体系未上线）、发起入口=请求头上报）
+    try:
+        from repositories import event_repo
+        event_repo.记录生成事件(
+            user["user_id"],
+            image_count=1,
+            analysis_type=report.get("图表类型") or payload.图表类型 or None,
+            is_paid_quota=0,
+            source_page=source_page,
+        )
+    except Exception:  # noqa: BLE001 - 埋点失败不影响报表主流程
+        logger.warning("记录生成事件失败", exc_info=True)
     if on_event:
         on_event({"type": "done", "报表ID": report_id, "标题": report.get("标题", "")})
     return report_id, report
@@ -312,7 +326,10 @@ async def generate_report(
     try:
         df, llm_config = _准备上下文(payload, request, user)
         try:
-            report_id, report = _生成报表流式(payload, df, llm_config, user)
+            report_id, report = _生成报表流式(
+                payload, df, llm_config, user,
+                source_page=(request.headers.get("x-source-page") or "").strip() or None,
+            )
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -347,6 +364,8 @@ def generate_report_stream(
         )
 
     event_q: "queue.Queue[Optional[Dict[str, Any]]]" = queue.Queue(maxsize=_STREAM_QUEUE_MAX)
+    # 发起入口：请求头 x-source-page（看板/报表/提问框…），闭包传入 worker 用于埋点
+    _source_page = (request.headers.get("x-source-page") or "").strip() or None
 
     def _push(ev: Optional[Dict[str, Any]]) -> None:
         # 队列满说明客户端已断开且无人消费：丢弃事件，绝不阻塞 worker，
@@ -358,7 +377,7 @@ def generate_report_stream(
 
     def worker() -> None:
         try:
-            _生成报表流式(payload, df, llm_config, user, on_event=_push)
+            _生成报表流式(payload, df, llm_config, user, on_event=_push, source_page=_source_page)
         except ValueError as exc:
             # 参数/字段问题（词云无词、桑基缺分组）→ 可给用户看的明确提示
             logger.warning("报表流式生成参数不满足: %s", exc)

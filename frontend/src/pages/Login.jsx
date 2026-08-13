@@ -34,6 +34,24 @@ export default function Login() {
   const [cooldown, setCooldown] = useState(0); // 获取验证码倒计时（秒）
   const cooldownRef = useRef(null);
 
+  // 预测数据采集：挂载时探测设备类型与渠道参数并缓存（注册请求自动上报）。
+  // 为什么：注册埋点需要 来源渠道/设备类型，但注册页不收集这些输入——设备
+  //   从 UA 推断、渠道从 URL 参数（channel / utm_source）带，只探测一次。
+  useEffect(() => {
+    try {
+      if (!localStorage.getItem('tracking_device')) {
+        const ua = navigator.userAgent;
+        const device = /Android/i.test(ua) ? '安卓' : (/iPhone|iPad/i.test(ua) ? '苹果' : '网页');
+        localStorage.setItem('tracking_device', device);
+      }
+      const params = new URLSearchParams(window.location.search);
+      const ch = params.get('channel') || params.get('utm_source');
+      if (ch && !localStorage.getItem('tracking_channel')) {
+        localStorage.setItem('tracking_channel', ch);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
   // 验证码倒计时
   useEffect(() => {
     if (cooldown <= 0) return;
