@@ -85,10 +85,13 @@ graph TB
 ## ✨ 功能亮点
 
 - **自然语言 → 可视化报表**：上传 CSV/Excel，一句中文生成 18 种图表 + 分析结论 + 决策 Trace
+- **条件筛选 + TopN**："只看华东区"/"销量 Top 10"——筛选贯穿画像/聚合/结论全链路，无 LLM key 也能听懂（规则层兜底）
+- **同比环比**：日期时间序列图自动计算环比/同比（差值 + 百分比）
 - **多轮追问**：生成后可连续追问（"那华南区呢？""按月份对比呢？"），报表带追问溯源链
 - **图表看板**：多份报表并排对比，可命名保存 / 排序 / 移除
 - **报表分享**：带时效与可选密码的公开只读链接
-- **导出全家桶**：Excel / CSV / PDF / 图表 PNG / Agent 决策记录
+- **导出全家桶**：Excel / CSV / PDF / 图表 PNG / Agent 决策记录；PDF 支持**图文完整报告**（图表图 + 结论 + 数据表 + Trace）
+- **报表模板 + 定时生成**：分析配置一键收藏为模板，模板 + cron 到点自动出报表（如每周一早 9 点）
 - **管理后台**：用户用量 / LLM token 成本 / 操作审计 / 7 天趋势
 - **18 家 LLM 供应商**：DeepSeek / OpenAI / 智谱 / 千问 / GLM 等，BYOK 后端存储（加密）
 
@@ -96,7 +99,7 @@ graph TB
 
 | 维度 | 落地 |
 |------|------|
-| 质量 | 96 后端测试 + 15 前端单测 + 服务级/真实浏览器双冒烟；**CI（GitHub Actions）每次 push 全量回归** |
+| 质量 | 171 后端测试 + 29 前端单测 + 服务级/真实浏览器双冒烟；**CI（GitHub Actions）每次 push 全量回归** |
 | 安全（9 项 P0） | 启动自检（缺省拒绝不安全配置）、SSRF 防护（LLM 供应商 URL 白名单+禁 key 回退）、Agent 记忆按 user 隔离、ECharts tooltip XSS 转义、reportlab 注入转义、请求体/并发限流、分享密码哈希+限频、JWT 吊销（token_version）、LLM Key 静态加密 |
 | 稳定 | LLM 失败 4 层降级 + 失败原因透传；LLM 可重试错误自动重试（指数退避）；SSE 180s 超时兜底 |
 | 运维 | 依赖全版本锁定、数据备份脚本、操作审计、LLM 用量统计、RFC 5987 中文文件名 |
@@ -230,7 +233,10 @@ copy .env.example .env
 | GET  | `/health` | 健康检查 |
 | POST | `/datasets/upload` | 上传 CSV / Excel，返回数据集 ID + 字段画像 |
 | GET  | `/datasets/{id}` | 凭 ID 取回数据集（预览前 20 行 + 画像） |
-| POST | `/reports/generate` | 用自然语言 + 字段配置生成可视化报表 |
+| POST | `/reports/generate` | 用自然语言 + 字段配置生成可视化报表（支持筛选条件/TopN/对比） |
+| POST | `/reports/{id}/export-report` | 完整 PDF 报告导出（图表图 + 结论 + 数据表 + Trace，前端传图表 PNG） |
+| POST | `/templates` | 保存报表模板（分析配置收藏）；GET 列表 / DELETE 删除 / POST /{id}/run 一键执行 |
+| POST | `/schedules` | 创建定时任务（模板 + cron）；GET 列表 / DELETE 删除 |
 | GET  | `/datasets/` | 列出最近的数据集（阶段 2 新增） |
 
 API 文档：启动后端后访问 `http://127.0.0.1:8000/docs`（FastAPI 自带 Swagger UI）。
@@ -243,7 +249,7 @@ API 文档：启动后端后访问 `http://127.0.0.1:8000/docs`（FastAPI 自带
 python -m pytest tests/ -v
 ```
 
-不依赖网络、不依赖真实 LLM key，后端 96 个测试 + 前端 15 个单测可在秒级跑完；CI（GitHub Actions）每次 push 自动跑 后端 pytest + 前端 build/lint/单测 + 服务级与真实浏览器双冒烟。
+不依赖网络、不依赖真实 LLM key，后端 171 个测试 + 前端 29 个单测可在秒级跑完；CI（GitHub Actions）每次 push 自动跑 后端 pytest + 前端 build/lint/单测 + 服务级与真实浏览器双冒烟。
 
 ---
 
