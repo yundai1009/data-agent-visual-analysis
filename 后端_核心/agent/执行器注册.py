@@ -134,18 +134,15 @@ def _聚合分析_executor(arguments: Dict[str, Any], context: Dict[str, Any]) -
     y轴列表 = arguments.get("Y轴") or arguments.get("y轴") or []
     分组字段 = arguments.get("分组字段")
     聚合方式 = arguments.get("聚合方式") or "求和"
-    筛选条件 = arguments.get("筛选条件") or []
 
-    # 阶段 34 修复（Bug2 补全）：x轴/分组字段/筛选字段 全部经 _归一化字段——
-    # GLM 常把单值返回为数组（X轴=["地区"]），且 Y轴 元素、筛选字段 也可能嵌套
-    # list，直接参与 set 成员判断会抛 unhashable type。
+    # 阶段 34 修复（Bug2 补全）：LLM 常把单值参数返回为数组（GLM 风格），
+    # list 直接参与 set/df.columns 判断会抛 unhashable；对 x轴/分组/筛选/y轴
+    # 元素统一过 _归一化字段（list→首元素 str），再做白名单校验。
     x轴 = _归一化字段(x轴)
     分组字段 = _归一化字段(分组字段)
     if isinstance(y轴列表, str):
         y轴列表 = [y轴列表]
     y轴列表 = [f for f in (_归一化字段(f) for f in y轴列表) if f]
-
-    # 字段白名单校验
     可用字段 = set(画像.get("字段列表", []))
     if x轴 and x轴 not in 可用字段:
         return None
@@ -153,12 +150,15 @@ def _聚合分析_executor(arguments: Dict[str, Any], context: Dict[str, Any]) -
     if 分组字段 and 分组字段 not in 可用字段:
         分组字段 = None
 
-    # 阶段 29：工具层也应用筛选——LLM 观察到的聚合摘要必须反映筛选后的数据，
-    # 否则"只看华东区"的 LLM 会基于全量摘要做错误推断。
-    筛选条件 = [
-        f for f in 筛选条件
-        if isinstance(f, dict) and _归一化字段(f.get("字段")) in 可用字段
-    ]
+    筛选条件原始 = arguments.get("筛选条件") or []
+    筛选条件 = []
+    for f in 筛选条件原始:
+        if not isinstance(f, dict):
+            continue
+        f_field = _归一化字段(f.get("字段"))
+        if f_field in 可用字段:
+            # 写回归一化后的字段名：否则 "['地区']" 之类值会让 应用筛选 静默跳过
+            筛选条件.append({**f, "字段": f_field})
     if 筛选条件:
         from 后端_核心.数据筛选 import 应用筛选
         df, _ = 应用筛选(df, 筛选条件)
