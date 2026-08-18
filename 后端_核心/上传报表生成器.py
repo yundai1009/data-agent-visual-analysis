@@ -1030,8 +1030,6 @@ def 生成报表数据(
         report_df = _生成桑基图数据(df, x轴, 分组字段, y轴列表, 聚合方式)
     elif effective_chart == "箱线图":
         report_df = _生成箱线图数据(df, x轴, y轴列表)
-    elif effective_chart == "环形图":
-        report_df = _聚合数据(df, x轴, y轴列表, None, 聚合方式)  # 同饼图数据
     elif effective_chart == "瀑布图":
         report_df = _生成瀑布图数据(df, x轴, y轴列表, 聚合方式)
     elif effective_chart == "旭日图":
@@ -1039,6 +1037,14 @@ def 生成报表数据(
     elif effective_chart == "K线图":
         report_df = _生成K线数据(df, x轴, y轴列表)
     else:
+        # 阶段 33 修复（饼图全 0.0% bug）：饼图/环形图是"占比"语义，若 LLM 意图
+        # 未给出值字段（y轴 为空）且聚合方式非计数，_聚合数据 会命中"无有效值列"
+        # 的明细兜底——把原始数据行当报表数据（图例大量重复 + 占比全 0.0%）。
+        # 强制按分类计数并把 y轴 补为聚合计数列：占比图在空 y轴 时"各分类出现
+        # 次数"是唯一合理语义，且前端能据此取到值字段正确渲染占比。
+        if effective_chart in ("饼图", "环形图") and not y轴列表:
+            聚合方式 = "计数"
+            y轴列表 = ["记录数"]
         report_df = _聚合数据(df, x轴, y轴列表, 分组字段, 聚合方式)
 
     # 阶段 30：TopN 截断——"销量 Top 10"：按聚合结果的数值列降序保留前 N。

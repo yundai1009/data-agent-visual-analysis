@@ -129,7 +129,8 @@ export default function EChartsChart({ chartType, chartConfig, height = 320 }) {
   );
 }
 
-function buildOption(chartType, config) {
+// oxlint-disable-next-line react/only-export-components -- 导出 buildOption 供单测直接断言图表配置（防回归）
+export function buildOption(chartType, config) {
   const rows = Array.isArray(config?.数据) ? config.数据 : [];
   if (!rows.length) return null;
 
@@ -166,6 +167,18 @@ function buildOption(chartType, config) {
     // 自动用数据里第一个非名称列，避免全部显示 0%
     const fallbackVk = (rows[0] && rows[0][vk] !== undefined) ? vk
       : (Object.keys(rows[0] || {}).find(k => k !== nk) || vk);
+    // 阶段 33 修复（饼图全 0.0% bug）：值列数值全部无效（0/NaN/文本，如历史"明细饼图"
+    // 把原始数据行当报表数据）时，兜底为"按名称计数"——图例自动合并重复分类，
+    // 占比正常展示，而不是画一个全 0.0% 的实心圆。
+    let pieData = rows.map(r => ({ name: String(r[nk] ?? ''), value: Number(r[fallbackVk]) || 0 }));
+    if (pieData.reduce((s, d) => s + d.value, 0) <= 0) {
+      const countMap = new Map();
+      for (const r of rows) {
+        const n = String(r[nk] ?? '');
+        countMap.set(n, (countMap.get(n) || 0) + 1);
+      }
+      pieData = [...countMap.entries()].map(([name, value]) => ({ name, value }));
+    }
     return {
       ...base,
       // 用 formatter 函数手动算百分比（不依赖 {d} 占位符，避免显示 0%）
@@ -176,7 +189,7 @@ function buildOption(chartType, config) {
       },
       series: [{
         type: 'pie', radius: type === 'donut' ? ['45%', '70%'] : ['0%', '60%'],
-        data: rows.map(r => ({ name: String(r[nk] ?? ''), value: Number(r[fallbackVk]) || 0 })),
+        data: pieData,
         label: { formatter: (p) => `${p.name}\n${(p.percent ?? 0).toFixed(1)}%` },
       }],
     };
