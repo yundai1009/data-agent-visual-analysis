@@ -136,10 +136,11 @@ def _聚合分析_executor(arguments: Dict[str, Any], context: Dict[str, Any]) -
     聚合方式 = arguments.get("聚合方式") or "求和"
 
     # 阶段 34 修复（Bug2 补全）：LLM 常把单值参数返回为数组（GLM 风格），
-    # list 直接参与 set/df.columns 判断会抛 unhashable；对 x轴/分组/筛选/y轴
-    # 元素统一过 _归一化字段（list→首元素 str），再做白名单校验。
+    # list 直接参与 set/df.columns/字典 key 判断会抛 unhashable；对 x轴/分组/
+    # 聚合方式/筛选/y轴 元素统一过 _归一化字段（list→首元素 str），再做白名单校验。
     x轴 = _归一化字段(x轴)
     分组字段 = _归一化字段(分组字段)
+    聚合方式 = _归一化字段(聚合方式) or "求和"
     if isinstance(y轴列表, str):
         y轴列表 = [y轴列表]
     y轴列表 = [f for f in (_归一化字段(f) for f in y轴列表) if f]
@@ -178,7 +179,9 @@ def _聚合分析_executor(arguments: Dict[str, Any], context: Dict[str, Any]) -
     else:
         聚合映射 = {"求和": "sum", "平均值": "mean", "计数": "count", "最大值": "max", "最小值": "min"}
         agg = 聚合映射.get(聚合方式, "sum")
-        valid_y = [f for f in y轴列表 if f in df.columns]
+        # 阶段 34 修复：y轴 里若含分组字段（LLM 常把维度同时放 y 和分组），
+        # agg 后 reset_index 会报 "cannot insert X, already exists"——先排除。
+        valid_y = [f for f in y轴列表 if f in df.columns and f not in group_fields]
         if not valid_y:
             return {"数据摘要": "无有效的 Y 轴字段", "行数": 0}
         grouped = df.groupby(group_fields, dropna=False)[valid_y].agg(agg).reset_index()

@@ -394,7 +394,12 @@ def _解析自然语言意图(
                 return override, agent_result["意图来源"], agent_result["Agent_Trace"], fail_reason
             logger.warning("LLM 意图解析返回 None, 降级到关键词匹配")
         except Exception as exc:
+            # 阶段 34 修复：异常时把原因透传给调用方（此前硬编码空串，
+            # 前端/评测看不到"为什么降级"，排查全靠猜）
             logger.warning("LLM 意图解析异常, 降级到关键词匹配: %s", exc)
+            _降级原因 = f"LLM 意图解析异常: {str(exc)[:200]}"
+            rule_override = _意图驱动配置(画像, 分析需求, df)
+            return rule_override, ("规则" if rule_override else "无"), [], _降级原因
     # 规则降级路径：关键词匹配 + 模板语法解析（不依赖 LLM，永远可用）
     rule_override = _意图驱动配置(画像, 分析需求, df)
     return rule_override, ("规则" if rule_override else "无"), [], ""
