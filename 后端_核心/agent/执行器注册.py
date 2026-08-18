@@ -97,6 +97,20 @@ def _获取数据画像_executor(arguments: Dict[str, Any], context: Dict[str, A
     }
 
 
+def _归一化字段(field: Any) -> Optional[str]:
+    """把 LLM 返回的字段参数归一化为 str（GLM 等模型常把单值返回为数组）。
+
+    阶段 34 修复（Bug2 补全）：x轴/分组字段 已归一化，但 y轴列表 元素与
+    筛选条件.字段 若仍是 list，参与 set 成员判断会抛 unhashable type。
+    list→取首个元素（须为 str），其他形态返回 None。
+    """
+    if isinstance(field, str):
+        return field
+    if isinstance(field, list) and field and isinstance(field[0], str):
+        return field[0]
+    return None
+
+
 def _聚合分析_executor(arguments: Dict[str, Any], context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Tool：按 X/Y/分组/聚合方式执行数据聚合。
 
@@ -122,16 +136,14 @@ def _聚合分析_executor(arguments: Dict[str, Any], context: Dict[str, Any]) -
     聚合方式 = arguments.get("聚合方式") or "求和"
     筛选条件 = arguments.get("筛选条件") or []
 
-    # 阶段 34 修复（Bug2）：GLM-4-Flash 等模型把单值参数返回为数组（如
-    # X轴=["地区"]），list 直接参与 set 成员判断会抛 unhashable type。
-    # 对 x轴/分组字段 做 list→str 归一化（y轴列表 本来就是列表语义）。
-    if isinstance(x轴, list):
-        x轴 = x轴[0] if x轴 else None
-    if isinstance(分组字段, list):
-        分组字段 = 分组字段[0] if 分组字段 else None
-
+    # 阶段 34 修复（Bug2 补全）：x轴/分组字段/筛选字段 全部经 _归一化字段——
+    # GLM 常把单值返回为数组（X轴=["地区"]），且 Y轴 元素、筛选字段 也可能嵌套
+    # list，直接参与 set 成员判断会抛 unhashable type。
+    x轴 = _归一化字段(x轴)
+    分组字段 = _归一化字段(分组字段)
     if isinstance(y轴列表, str):
         y轴列表 = [y轴列表]
+    y轴列表 = [f for f in (_归一化字段(f) for f in y轴列表) if f]
 
     # 字段白名单校验
     可用字段 = set(画像.get("字段列表", []))
@@ -143,7 +155,10 @@ def _聚合分析_executor(arguments: Dict[str, Any], context: Dict[str, Any]) -
 
     # 阶段 29：工具层也应用筛选——LLM 观察到的聚合摘要必须反映筛选后的数据，
     # 否则"只看华东区"的 LLM 会基于全量摘要做错误推断。
-    筛选条件 = [f for f in 筛选条件 if isinstance(f, dict) and f.get("字段") in 可用字段]
+    筛选条件 = [
+        f for f in 筛选条件
+        if isinstance(f, dict) and _归一化字段(f.get("字段")) in 可用字段
+    ]
     if 筛选条件:
         from 后端_核心.数据筛选 import 应用筛选
         df, _ = 应用筛选(df, 筛选条件)

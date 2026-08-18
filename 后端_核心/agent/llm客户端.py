@@ -78,7 +78,11 @@ def 最近LLM失败() -> Dict[str, Any]:
 def _record_llm_fail(reason: str, llm_config: Optional["LLMRequestConfig"] = None) -> None:
     """记录失败原因。优先写入请求级 llm_config（并发安全）；无 config 时写全局并清空旧值。"""
     if llm_config is not None:
-        llm_config.llm_fail_reason = reason
+        # 阶段 34 修复：LLMRequestConfig 是 frozen dataclass，直接赋值会抛
+        # FrozenInstanceError（cannot assign to field），导致 LLM 失败时
+        # 意图解析异常降级、失败原因丢失——用 object.__setattr__ 绕过冻结，
+        # 保留 frozen 的"防意外修改"设计，仅允许内部记录失败原因。
+        object.__setattr__(llm_config, "llm_fail_reason", reason)
         return
     _last_llm_fail.clear()
     _last_llm_fail.update({"reason": reason})

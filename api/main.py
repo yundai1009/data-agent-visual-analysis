@@ -148,6 +148,15 @@ def _启动安全自检() -> None:
 async def lifespan(app: FastAPI):
     # P0 加固：启动即做安全自检，不通过则进程拒绝启动
     _启动安全自检()
+    # 阶段 34 修复：启动即幂等初始化 SQLite 表结构。原因：api.main 模块级
+    # `数据集仓储()` 只在首次 import 时建表，测试多模块换临时库、或生产手动
+    # 换库路径后，新库会缺 datasets 等表——每次启动都 CREATE IF NOT EXISTS，
+    # 确保表一定存在（幂等，重复调用安全）。
+    try:
+        from 后端_核心.存储 import sqlite_repo
+        sqlite_repo.初始化数据库()
+    except Exception as exc:
+        logger.error("初始化数据库失败：%s", exc)
     # 阶段十三：启动时幂等创建种子管理员（密码来自 EnvConfig，生产务必覆盖默认值）
     try:
         from repositories import user_repo

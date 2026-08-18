@@ -334,6 +334,20 @@ def _执行一轮(
     token_usage = 提取token(resp)
     tc = extract_tool_call(resp)
 
+    # 阶段 34：GLM 等模型偶发在中间轮（聚合/推荐图表）只返回文字不调工具
+    #（"很抱歉/分析如下…"），导致该轮字段丢失而降级。重试一次并明确要求
+    # 调用工具；重试仍无 tool_call 才判失败。临时提示用完即移除，不污染历史。
+    if (not tc or not tc.get("name")) and 轮次 >= 2:
+        messages.append({"role": "user", "content": "请调用工具完成本步骤的分析，必须返回工具调用，不要仅返回文字。"})
+        resp_retry = chat_completion(messages=messages, tools=tools, tool_choice="auto", llm_config=llm_config)
+        messages.pop()
+        if resp_retry:
+            tc_retry = extract_tool_call(resp_retry)
+            if tc_retry and tc_retry.get("name"):
+                tc = tc_retry
+                resp = resp_retry
+                token_usage = 提取token(resp_retry)
+
     if not tc or not tc.get("name"):
         trace.记录LLM调用(轮次=轮次, prompt_summary=messages[-1].get("content", "")[:200],
                           耗时_ms=timer.elapsed_ms, token=token_usage,
@@ -501,18 +515,33 @@ def _从消息提取意图(messages: List[Dict[str, Any]], 画像: Dict[str, Any
         return None
 
     可用字段 = set(画像.get("字段列表", []))
+
+    # 阶段 34 修复（Bug2 补全）：LLM 返回的字段参数可能是数组（GLM 风格），
+    # list 参与 set 判断抛 unhashable——x轴/分组/y轴元素/筛选字段统一归一化。
+    def _归一化(field: Any) -> Optional[str]:
+        if isinstance(field, str):
+            return field
+        if isinstance(field, list) and field and isinstance(field[0], str):
+            return field[0]
+        return None
+
+    x_axis = _归一化(x_axis)
     if x_axis and x_axis not in 可用字段:
         x_axis = None
     if isinstance(y_axis_list, str):
         y_axis_list = [y_axis_list]
-    y_axis_list = [f for f in y_axis_list if f in 可用字段]
+    y_axis_list = [f for f in (_归一化(f) for f in y_axis_list) if f and f in 可用字段]
+    group_field = _归一化(group_field)
     if group_field and group_field not in 可用字段:
         group_field = None
     # 阶段 29：筛选条件字段必须来自画像字段列表（白名单校验）
-    valid_filters = [
-        {"字段": f["字段"], "操作": f.get("操作", "等于"), "值": f.get("值")}
-        for f in filter_list if f.get("字段") in 可用字段
-    ]
+    valid_filters = []
+    for f in filter_list:
+        if not isinstance(f, dict):
+            continue
+        f_field = _归一化(f.get("字段"))
+        if f_field in 可用字段:
+            valid_filters.append({"字段": f_field, "操作": f.get("操作", "等于"), "值": f.get("值")})
     if top_n is not None:
         try:
             top_n = max(1, min(int(top_n), 200))

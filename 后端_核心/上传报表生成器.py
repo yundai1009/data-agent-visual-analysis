@@ -440,6 +440,9 @@ def _推荐图表类型(画像: Dict[str, Any], x轴: Optional[str], y轴列表:
     数值字段 = set(画像.get("数值字段", []))
     分类字段 = set(画像.get("分类字段", []))
     需求文本 = 分析需求.strip()
+    # 阶段 34 修复：y轴列表 可能为 None（LLM/规则 override 未给 y轴），
+    # 统一归一化为 []，避免 len(None) TypeError。
+    y轴列表 = y轴列表 or []
 
     if any(keyword in 需求文本 for keyword in 占比关键词):
         return "饼图"

@@ -314,8 +314,13 @@ def 评测(verbose: bool = False, enable_llm: bool = False) -> Dict[str, Any]:
         start = time.perf_counter()
         try:
             # 阶段 34 修复：透传按画像构造的样例 df——否则编排器第 2 轮聚合分析
-            # 因 df=None 必失败降级，--llm 跑出的结果与规则基线完全相同
-            result = 解析自然语言需求(需求, 画像, df=_构造样例df(画像), enable_llm=enable_llm)
+            # 因 df=None 必失败降级，--llm 跑出的结果与规则基线完全相同。
+            # 且画像必须用真实生成（含 行数/列数/质量）——golden case 的画像只有
+            # 字段清单，缺"行数"会令 LLM 读到"数据集共 0 行"而误判为空拒绝分析。
+            sample_df = _构造样例df(画像)
+            from 后端_核心.数据画像 import 生成数据画像
+            真实画像 = 生成数据画像(sample_df)
+            result = 解析自然语言需求(需求, 真实画像, df=sample_df, enable_llm=enable_llm)
         except Exception as e:
             if verbose:
                 print(f"  ❌ 异常: {e}")
