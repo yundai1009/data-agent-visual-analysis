@@ -122,6 +122,14 @@ def _聚合分析_executor(arguments: Dict[str, Any], context: Dict[str, Any]) -
     聚合方式 = arguments.get("聚合方式") or "求和"
     筛选条件 = arguments.get("筛选条件") or []
 
+    # 阶段 34 修复（Bug2）：GLM-4-Flash 等模型把单值参数返回为数组（如
+    # X轴=["地区"]），list 直接参与 set 成员判断会抛 unhashable type。
+    # 对 x轴/分组字段 做 list→str 归一化（y轴列表 本来就是列表语义）。
+    if isinstance(x轴, list):
+        x轴 = x轴[0] if x轴 else None
+    if isinstance(分组字段, list):
+        分组字段 = 分组字段[0] if 分组字段 else None
+
     if isinstance(y轴列表, str):
         y轴列表 = [y轴列表]
 

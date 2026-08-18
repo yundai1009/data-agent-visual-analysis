@@ -88,6 +88,8 @@ def 解析自然语言需求(
     分析需求: str,
     画像: Dict[str, Any],
     *,
+    df: Any = None,          # 阶段 34 修复：透传数据（评测脚本按画像构造样例 df），
+                             # 修复"LLM 路径第 2 轮聚合分析因 df=None 必降级"的 bug
     enable_llm: Optional[bool] = None,
     llm_config: Optional[LLMRequestConfig] = None,
 ) -> Optional[Dict[str, Any]]:
@@ -104,7 +106,7 @@ def 解析自然语言需求(
       - 成功：标准化意图 dict，结构为 {"图表类型", "x轴", "y轴", "分组字段", "聚合方式", "推荐理由"}
       - 失败：None（LLM 不可用 + 关键词匹配也未命中）
     业务定位：报表生成器的"快速通道"，跳过 Trace 等诊断信息，只返回核心意图。"""
-    agent_result = 编排Agent(画像, 分析需求, df=None, enable_llm=enable_llm, llm_config=llm_config)
+    agent_result = 编排Agent(画像, 分析需求, df=df, enable_llm=enable_llm, llm_config=llm_config)
     if agent_result is None:
         return None
     return {

@@ -25,6 +25,12 @@ class EnvConfig:
     LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
     LLM_API_KEY = os.getenv("LLM_API_KEY", "")
     LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+    # 阶段 34 修复（Bug3）：向量记忆的 embedding 独立配置。
+    # 不少 OpenAI 兼容供应商（如智谱 GLM）的 chat 端点不支持 /embeddings 或
+    # 模型名不同——固定走 LLM_BASE_URL 会 HTTP 400，记忆功能静默失效。
+    # 留空 = 回退通用 base_url + text-embedding-3-small；配置后按此独立端点/模型。
+    LLM_EMBEDDING_BASE_URL = (os.getenv("LLM_EMBEDDING_BASE_URL") or "").strip()
+    LLM_EMBEDDING_MODEL = (os.getenv("LLM_EMBEDDING_MODEL") or "").strip()
     LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "60"))
     LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 

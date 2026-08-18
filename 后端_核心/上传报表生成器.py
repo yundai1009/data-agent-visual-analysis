@@ -661,8 +661,16 @@ def _格式化数值(value: Any) -> str:
 
 
 def _生成直方图数据(df: pd.DataFrame, field: Optional[str]) -> pd.DataFrame:
-    if not field or field not in df.columns or not pd.api.types.is_numeric_dtype(df[field]):
-        return df.head(200).copy()
+    if not field or field not in df.columns:
+        return pd.DataFrame(columns=["记录数"])
+    if not pd.api.types.is_numeric_dtype(df[field]):
+        # 阶段 34 修复：文本字段直方图 → 按分类计数（原实现返回 df.head(200)
+        # 原始明细，前端取值字段回退文本列 → 全 0，与饼图同源问题）。
+        return (
+            df[field].dropna().astype(str).value_counts()
+            .reset_index()
+            .rename(columns={"index": field, 0: "记录数"})
+        )
     series = df[field].dropna()
     if series.empty or series.nunique() < 2:
         # 全常量列：分布无意义，直接返回空表（避免 cut 边界重合的晦涩异常）
@@ -853,7 +861,17 @@ def _聚合数据(
 
     agg = 聚合映射.get(聚合方式, "sum")
     if not valid_y:
-        return df.head(200).copy()
+        # 阶段 34 修复（全图表"明细泄漏"）：空值列（LLM 漏填 y轴/聚合方式）时
+        # 原实现返回 df.head(200) 原始明细——前端取值字段回退到第一个非名称列
+        # （往往是日期/文本）→ Number()=NaN → 柱状图/折线图等同样出现"全 0"。
+        # 兜底为"按 x轴 分类计数"：分类出现次数是空值列下唯一合理语义。
+        return (
+            df.groupby([x轴], dropna=False)
+            .size()
+            .reset_index(name="记录数")
+            .sort_values(x轴)
+            .head(500)
+        )
 
     grouped = df.groupby(group_fields, dropna=False)[valid_y].agg(agg).reset_index()
     return grouped.sort_values(group_fields).head(500)
@@ -1020,6 +1038,9 @@ def 生成报表数据(
         report_df = df.head(200).copy()
     elif effective_chart == "直方图":
         report_df = _生成直方图数据(df, x轴)
+        # 阶段 34 修复：直方图数据固定为 [桶标签, 记录数]，y轴 必须指向计数列，
+        # 否则前端 resolveKey 会命中桶标签文本列（Number→NaN→全 0，与饼图同源）。
+        y轴列表 = ["记录数"]
     elif effective_chart == "热力图":
         report_df = _生成热力图数据(df, x轴, 分组字段, y轴列表, 聚合方式)
     elif effective_chart == "词云图":

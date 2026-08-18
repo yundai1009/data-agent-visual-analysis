@@ -21,6 +21,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import pandas as pd
+
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 
 # 阶段 16 排障先例：en-US CI runner 与中文 Windows 控制台均为非 UTF-8，
@@ -262,6 +264,29 @@ def _字段匹配(实际: Dict[str, Any], 期望: Dict[str, Any], key: str) -> b
     return False
 
 
+def _构造样例df(画像: Dict[str, Any]) -> pd.DataFrame:
+    """按画像字段类型构造一份可聚合的样例数据（60 行）。
+
+    阶段 34 修复：LLM 路径的第 2 轮「聚合分析」需要真实 DataFrame 才能执行
+    （执行器在 df=None 时直接返回 None 触发降级）。golden set 只有画像没有
+    原始数据，这里按 分类/数值/日期/通用 四类字段生成采样值，让 LLM 路径
+    可真实跑通（评测只比意图，不比聚合数值，样例分布不影响结论）。
+    """
+    n = 60
+    分类值 = ["华东", "华南", "华北"]
+    data: Dict[str, list] = {}
+    for field in 画像.get("字段列表", []):
+        if field in (画像.get("数值字段") or []):
+            data[field] = [((i * 7) % 97) + 1 for i in range(n)]
+        elif field in (画像.get("日期字段") or []):
+            data[field] = pd.date_range("2026-01-01", periods=n, freq="D").strftime("%Y-%m-%d")
+        elif field in (画像.get("分类字段") or []):
+            data[field] = [分类值[i % 3] for i in range(n)]
+        else:
+            data[field] = [f"值{i % 5}" for i in range(n)]
+    return pd.DataFrame(data)
+
+
 def 评测(verbose: bool = False, enable_llm: bool = False) -> Dict[str, Any]:
     """运行全部 golden case，返回统计结果。
 
@@ -288,7 +313,9 @@ def 评测(verbose: bool = False, enable_llm: bool = False) -> Dict[str, Any]:
 
         start = time.perf_counter()
         try:
-            result = 解析自然语言需求(需求, 画像, enable_llm=enable_llm)
+            # 阶段 34 修复：透传按画像构造的样例 df——否则编排器第 2 轮聚合分析
+            # 因 df=None 必失败降级，--llm 跑出的结果与规则基线完全相同
+            result = 解析自然语言需求(需求, 画像, df=_构造样例df(画像), enable_llm=enable_llm)
         except Exception as e:
             if verbose:
                 print(f"  ❌ 异常: {e}")

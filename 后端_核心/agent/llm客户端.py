@@ -389,13 +389,17 @@ def embed_text(
         or EnvConfig.LLM_BASE_URL
         or ""
     ).rstrip("/")
-    url = f"{base_url}/embeddings"
+    # 阶段 34 修复（Bug3）：embedding 优先走独立配置 LLM_EMBEDDING_BASE_URL/
+    # LLM_EMBEDDING_MODEL——chat 端点（如智谱 GLM）不支持 /embeddings 时，
+    # 可指向供应商的专用 embedding 端点；未配置则回退通用 base_url 与模型。
+    embed_base = (EnvConfig.LLM_EMBEDDING_BASE_URL or base_url).rstrip("/")
+    url = f"{embed_base}/embeddings"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     # DeepSeek 使用 text-embedding-v3，OpenAI 使用 text-embedding-3-small
-    model = "text-embedding-3-small"  # 通用 fallback
+    model = EnvConfig.LLM_EMBEDDING_MODEL or "text-embedding-3-small"  # 通用 fallback
     payload = {
         "input": text,
         "model": model,
