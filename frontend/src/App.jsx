@@ -77,6 +77,19 @@ function ProtectedRoute({ children }) {
 }
 
 export default function App() {
+  return (
+    <AppProvider>
+      <AuthBootstrap />
+      <AppRouter />
+    </AppProvider>
+  );
+}
+
+// Provider 内的路由与布局层。为什么单独拆组件：App() 自身不能被
+// AppProvider 包裹（它负责渲染 Provider），而 useApp() 必须在 Provider
+// 内调用——之前的实现把 useApp() 写在 App() 顶层，context 为 null，
+// 解构 isAuthed 直接抛错导致整页白屏（阶段 33 修复的 P0）。
+function AppRouter() {
   const [collapsed, setCollapsed] = useState(false);
   // 阶段 32：新手引导——首次登录展示（localStorage 记忆，老用户无感）
   const { isAuthed } = useApp();
@@ -87,9 +100,7 @@ export default function App() {
   }, [isAuthed]);
 
   return (
-    <AppProvider>
-      <AuthBootstrap />
-      <BrowserRouter>
+    <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Suspense fallback={<PageFallback />}><Login /></Suspense>} />
           <Route path="/s/:shareId" element={<Suspense fallback={<PageFallback />}><ShareView /></Suspense>} />
@@ -129,6 +140,5 @@ export default function App() {
           />
         </Routes>
       </BrowserRouter>
-    </AppProvider>
-  );
+    );
 }
