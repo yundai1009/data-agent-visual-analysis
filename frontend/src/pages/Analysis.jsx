@@ -117,6 +117,8 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
   const [elapsed, setElapsed] = useState(0);
   const abortRef = useRef(null);
   const scrollRef = useRef(null);
+  const [showChartSwitch, setShowChartSwitch] = useState(false);
+
   // 多轮追问：最近一次分析完成的报表ID（追问链），追问输入框内容
   const lastReportIdRef = useRef(null);
   // B6 修复：请求序号守卫——取消后立即重开时，旧 finally 不能误关新请求的 generating
@@ -312,6 +314,7 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
             //   纯内部记忆，不触发渲染，最适合存这类“只给下次请求用”的值。
             setLiveSteps(prev => prev.map(s => ({ ...s, status: 'done' })));
             setLiveDone({ 报表ID: ev.报表ID, 标题: ev.标题 });
+        setShowChartSwitch(true);
             lastReportIdRef.current = ev.报表ID;  // 更新追问链
             return 'stop';
           } else if (ev.type === 'error') {
@@ -684,6 +687,25 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
               查看报表 <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
+        </div>
+      )}
+
+      {/* 阶段 35：图表推荐切换提示——LLM 推荐的图表类型可能不是最优，给用户一键切换为其他图表的选择 */}
+      {showChartSwitch && !generating && (
+        <div className="mt-2 px-3 py-2.5 rounded-lg bg-amber-50 border border-amber-200/60 flex items-center gap-2 text-xs text-amber-700">
+          <span>已使用当前图表生成，如需查看各分类占比可一键切换：</span>
+          <button onClick={() => { setChartType('pie'); setTimeout(() => handleGenerate(), 0); }}
+            className="px-2 py-1 rounded-md bg-white border border-amber-200 text-amber-600 hover:bg-amber-100 font-medium transition-all">
+            饼图
+          </button>
+          <button onClick={() => { setChartType('bar'); setTimeout(() => handleGenerate(), 0); }}
+            className="px-2 py-1 rounded-md bg-white border border-amber-200 text-amber-600 hover:bg-amber-100 font-medium transition-all">
+            柱状图
+          </button>
+          <button onClick={() => setShowChartSwitch(false)}
+            className="ml-1 text-amber-400 hover:text-amber-600 transition-colors">
+            ×
+          </button>
         </div>
       )}
 
