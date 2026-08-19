@@ -164,9 +164,13 @@ async function parseError(res) {
   return err;
 }
 
-export async function uploadFile(file) {
+export async function uploadFile(files) {
   const form = new FormData();
-  form.append('file', file);
+  // 支持单文件（File 对象）和多文件（FileList / File[]）
+  const fileArr = files instanceof File ? [files] : Array.from(files);
+  for (const f of fileArr) {
+    form.append('file', f);
+  }
   const llmHeaders = getLLMHeaders();
   const authHeaders = getAuthHeaders();
   const controller = new AbortController();

@@ -135,14 +135,27 @@ export default function DataManagement() {
     } catch (e) { setError(e.message || '重命名失败'); }
   };
 
-  async function handleUpload(file) {
+  async function handleUpload(files) {
     setError('');
     setUploading(true);
     try {
-      const res = await uploadFile(file);
-      setDataset(res);
-      setProfile(res.数据画像);
-      setAppDataset({ 数据集ID: res.数据集ID, 文件名: res.文件名, 行数: res.行数, 数据画像: res.数据画像 });
+      // uploadFile 支持单文件（File）与多文件（FileList / File[]）
+      const res = await uploadFile(files);
+      const 成功列表 = res.上传成功 || [];
+      const 失败列表 = res.上传失败 || [];
+      // 设置当前数据集为最后一个成功的文件
+      if (成功列表.length > 0) {
+        const last = 成功列表[成功列表.length - 1];
+        setDataset(last);
+        setProfile(last.数据画像);
+        setAppDataset({ 数据集ID: last.数据集ID, 文件名: last.文件名, 行数: last.行数, 数据画像: last.数据画像 });
+      }
+      // 展示成功/失败信息
+      if (成功列表.length > 0 && 失败列表.length > 0) {
+        setError(`成功上传 ${成功列表.length} 个文件，失败 ${失败列表.length} 个：${失败列表.map(f => f.文件名 + '（' + f.错误 + '）').join('；')}`);
+      } else if (失败列表.length > 0 && 成功列表.length === 0) {
+        setError(`全部上传失败：${失败列表.map(f => f.文件名 + '（' + f.错误 + '）').join('；')}`);
+      }
       setUploading(false);
     } catch (e) {
       setError(e.message);
@@ -179,8 +192,8 @@ export default function DataManagement() {
 
   function handleDrop(e) {
     e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (file) handleUpload(file);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) handleUpload(files);
   }
 
   const fields = profile?.字段列表 || [];
@@ -324,7 +337,7 @@ export default function DataManagement() {
           dataset ? 'border border-emerald-200 bg-emerald-50/50 px-5 py-3' : 'border-2 border-dashed border-gray-300 hover:border-accent hover:bg-accent-soft/30 px-6 py-10'
         }`}
       >
-        <input id="file-input" type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={(e) => e.target.files[0] && handleUpload(e.target.files[0])} />
+        <input id="file-input" type="file" accept=".csv,.xlsx,.xls" multiple className="hidden" onChange={(e) => { if (e.target.files.length > 0) handleUpload(e.target.files); e.target.value = ''; }} />
         {uploading ? (
           <div className="max-w-sm mx-auto">
             <div className="flex items-center gap-3">

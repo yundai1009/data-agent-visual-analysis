@@ -8,7 +8,18 @@
 - API：generate 带 对比 → 报表含对比列；replay 保留对比
 """
 
+
+
 from __future__ import annotations
+
+
+# --- _did helper ---
+
+def _did(j):
+    """从 upload 响应中提取第一个成功的数据集ID（兼容旧单文件格式+新批量格式）。"""
+    if "上传成功" in j:
+        return j["上传成功"][0]["数据集ID"]
+    return j["数据集ID"]
 
 import os
 import sys
@@ -75,7 +86,7 @@ def _upload(client, token) -> str:
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 200, r.text
-    return r.json()["数据集ID"]
+    return _did(r.json())
 
 
 # ============================================================================

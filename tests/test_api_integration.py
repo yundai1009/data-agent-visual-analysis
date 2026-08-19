@@ -6,7 +6,18 @@
     python -m pytest tests/test_api_integration.py -v
 """
 
+
+
 from __future__ import annotations
+
+
+# --- _did helper ---
+
+def _did(j):
+    """从 upload 响应中提取第一个成功的数据集ID（兼容旧单文件格式+新批量格式）。"""
+    if "上传成功" in j:
+        return j["上传成功"][0]["数据集ID"]
+    return j["数据集ID"]
 
 import io
 import os
@@ -230,7 +241,7 @@ def test_上传合法CSV(client):
     tok = _register(client, "dave")
     r = _upload(client, tok)
     assert r.status_code == 200
-    body = r.json()
+    body = r.json()["上传成功"][0]
     assert body["数据集ID"]
     assert body["行数"] == 2
     assert "地区" in body["字段列表"]
@@ -242,7 +253,7 @@ def test_生成词云图(client):
     content = "评论\n这个产品非常好用强烈推荐\n产品性价比很高很好用\n推荐给朋友都说好\n这个产品一般般还可以\n强烈推荐这个产品\n性价比一般但好用\n"
     r = _upload(client, tok, filename="reviews.csv", content=content)
     assert r.status_code == 200, r.text
-    did = r.json()["数据集ID"]
+    did = _did(r.json())
     r = client.post("/reports/generate", json={
         "数据集ID": did, "分析需求": "生成词云图", "图表类型": "词云图",
         "x轴": "评论", "y轴": [], "分组字段": None, "聚合方式": "计数", "agent_mode": "single",
@@ -267,7 +278,7 @@ def test_七种新增图表生成(client):
                "华北,线上,80,2024-01-05\n华北,线下,250,2024-01-06\n")
     r = _upload(client, tok, filename="sales.csv", content=content)
     assert r.status_code == 200, r.text
-    did = r.json()["数据集ID"]
+    did = _did(r.json())
     cases = [
         ("漏斗图", "funnel", "地区", ["销售额"], None, "求和"),
         ("桑基图", "sankey", "地区", ["销售额"], "渠道", "求和"),
@@ -295,7 +306,7 @@ def test_图表数据不满足时返回400而非500(client):
     content = ("地区,销售额,备注\n华东,100,优质客户\n华南,200,普通客户\n华北,150,优质客户\n")
     r = _upload(client, tok, filename="s.csv", content=content)
     assert r.status_code == 200, r.text
-    did = r.json()["数据集ID"]
+    did = _did(r.json())
 
     # 词云图 + 数值列 → 400
     r = client.post("/reports/generate", json={
@@ -320,7 +331,7 @@ def test_箱线图K线图_XY同列返回400(client):
     content = "销售额\n100\n200\n300\n400\n"
     r = _upload(client, tok, filename="one.csv", content=content)
     assert r.status_code == 200, r.text
-    did = r.json()["数据集ID"]
+    did = _did(r.json())
     for ct in ("箱线图", "K线图"):
         r = client.post("/reports/generate", json={
             "数据集ID": did, "分析需求": "", "图表类型": ct,
@@ -340,9 +351,9 @@ def test_文本字段识别与词云自然语言自动选字段(client):
                "华北,150,推荐给朋友都说好\n")
     r = _upload(client, tok, filename="d.csv", content=content)
     assert r.status_code == 200, r.text
-    profile = r.json()["数据画像"]
+    profile = r.json()["上传成功"][0]["数据画像"]
     assert "评论" in profile.get("文本字段", []), profile.get("文本字段")
-    did = r.json()["数据集ID"]
+    did = _did(r.json())
     # 自然语言生成词云 → 自动选"评论"
     r = client.post("/reports/generate", json={
         "数据集ID": did, "分析需求": "生成词云图", "图表类型": "自动推荐",
@@ -361,7 +372,7 @@ def test_旭日不被占比关键词抢先(client):
     content = ("地区,渠道,销售额\n华东,线上,100\n华东,线下,200\n华南,线上,300\n华南,线下,150\n华北,线上,80\n")
     r = _upload(client, tok, filename="d.csv", content=content)
     assert r.status_code == 200, r.text
-    did = r.json()["数据集ID"]
+    did = _did(r.json())
     r = client.post("/reports/generate", json={
         "数据集ID": did, "分析需求": "多层占比旭日图", "图表类型": "自动推荐",
         "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "计数", "agent_mode": "single",
@@ -377,7 +388,7 @@ def test_折线K线自然语言自动用日期(client):
                "华北,150,2024-01-03\n华东,120,2024-01-04\n")
     r = _upload(client, tok, filename="d.csv", content=content)
     assert r.status_code == 200, r.text
-    did = r.json()["数据集ID"]
+    did = _did(r.json())
     for req, expected_ct, expected_x in [
         ("按日期看销售额趋势", "折线图", "日期"),
         ("按日期看销售额K线", "K线图", "日期"),
@@ -398,7 +409,7 @@ def test_词云单列数值_400提示(client):
     content = "销售额\n100\n200\n300\n"
     r = _upload(client, tok, filename="one.csv", content=content)
     assert r.status_code == 200, r.text
-    did = r.json()["数据集ID"]
+    did = _did(r.json())
     r = client.post("/reports/generate", json={
         "数据集ID": did, "分析需求": "", "图表类型": "词云图",
         "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "计数", "agent_mode": "single",
@@ -416,7 +427,7 @@ def test_字段模板不误设分组(client):
                "华北,线上,150,2024-01-03\n")
     r = _upload(client, tok, filename="d.csv", content=content)
     assert r.status_code == 200, r.text
-    did = r.json()["数据集ID"]
+    did = _did(r.json())
     # 占比 → 饼图：y=销售额，分组必须为 None（否则 groupby 重复列报错）
     r = client.post("/reports/generate", json={
         "数据集ID": did, "分析需求": "按【地区】看【销售额】占比", "图表类型": "自动推荐",
@@ -449,7 +460,7 @@ def test_BYOK用户Key优先于服务端(client):
         content = "地区,销售额\n华东,100\n华南,200\n华北,150\n"
         r = _upload(client, tok, filename="d.csv", content=content)
         assert r.status_code == 200, r.text
-        did = r.json()["数据集ID"]
+        did = _did(r.json())
         r = client.post("/reports/generate", json={
             "数据集ID": did, "分析需求": "各地区销售额对比", "图表类型": "自动推荐",
             "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
@@ -480,7 +491,7 @@ def test_BYOK不填Key回退服务端(client):
         tok = _register(client, "byok2")
         content = "地区,销售额\n华东,100\n华南,200\n"
         r = _upload(client, tok, filename="d.csv", content=content)
-        did = r.json()["数据集ID"]
+        did = _did(r.json())
         r = client.post("/reports/generate", json={
             "数据集ID": did, "分析需求": "各地区销售额对比", "图表类型": "自动推荐",
             "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
@@ -519,7 +530,7 @@ def test_数据集隔离(client):
     tok_a = _register(client, "alice2")
     tok_b = _register(client, "bob2")
     r = _upload(client, tok_a)
-    did = r.json()["数据集ID"]
+    did = _did(r.json())
 
     # B 读 A 的数据集 → 404
     r = client.get(f"/datasets/{did}", headers={"Authorization": f"Bearer {tok_b}"})
@@ -536,7 +547,7 @@ def test_数据集隔离(client):
 def test_报表隔离(client):
     tok_a = _register(client, "alice3")
     tok_b = _register(client, "bob3")
-    did = _upload(client, tok_a).json()["数据集ID"]
+    did = _did(_upload(client, tok_a).json())
     r = client.post("/reports/generate", json={"数据集ID": did, "分析需求": "按地区统计"},
                     headers={"Authorization": f"Bearer {tok_a}"})
     assert r.status_code == 200
@@ -551,7 +562,7 @@ def test_报表隔离(client):
 def test_报表导出(client):
     """导出端点：xlsx / csv / pdf 均返回附件流，非法 format 422，跨用户 404。"""
     tok = _register(client, "exporter1")
-    did = _upload(client, tok).json()["数据集ID"]
+    did = _did(_upload(client, tok).json())
     r = client.post("/reports/generate", json={"数据集ID": did, "分析需求": "按地区统计"},
                     headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 200
@@ -579,7 +590,7 @@ def test_报表导出(client):
 def test_报表追问链路(client):
     """多轮追问：带 上一报表ID 生成新报表；上下文注入分析需求；跨用户 404。"""
     tok = _register(client, "followup1")
-    did = _upload(client, tok).json()["数据集ID"]
+    did = _did(_upload(client, tok).json())
     h = {"Authorization": f"Bearer {tok}"}
     r1 = client.post("/reports/generate", json={"数据集ID": did, "分析需求": "按地区统计"}, headers=h)
     assert r1.status_code == 200
@@ -633,7 +644,7 @@ def test_报表追问链路(client):
 def test_看板CRUD与隔离(client):
     """图表看板：新建/列表/详情/更新/删除 + 归属校验（跨用户 404 + 非法引用 400）。"""
     tok = _register(client, "dashuser1")
-    did = _upload(client, tok).json()["数据集ID"]
+    did = _did(_upload(client, tok).json())
     h = {"Authorization": f"Bearer {tok}"}
     rids = []
     for 需求 in ("按地区统计", "按月份统计"):
@@ -727,7 +738,7 @@ def test_报表分享链接(client):
     """分享：创建（时效）→ 匿名只读访问 → 列表 → 跨用户 404 → 撤销 → 过期 404。"""
     from services import auth_service
     tok = _register(client, "sharer1")
-    did = _upload(client, tok).json()["数据集ID"]
+    did = _did(_upload(client, tok).json())
     h = {"Authorization": f"Bearer {tok}"}
     r = client.post("/reports/generate", json={"数据集ID": did, "分析需求": "按地区统计"}, headers=h)
     assert r.status_code == 200
@@ -779,7 +790,7 @@ def test_报表分享链接(client):
 def test_分享密码保护(client):
     """分享密码：创建带密码 → 无密码 401、错密码 401、对密码 200；旧数据兼容（无密码字段）。"""
     tok = _register(client, "sharepwd1")
-    did = _upload(client, tok).json()["数据集ID"]
+    did = _did(_upload(client, tok).json())
     h = {"Authorization": f"Bearer {tok}"}
     r = client.post("/reports/generate", json={"数据集ID": did, "分析需求": "按地区统计"}, headers=h)
     rid = r.json()["报表ID"]
@@ -807,7 +818,7 @@ def test_分享密码保护(client):
 def test_报表重放(client):
     """历史重放：用原报表参数重新生成 → 新报表（ID 不同、内容一致）；跨用户 404。"""
     tok = _register(client, "replayer1")
-    did = _upload(client, tok).json()["数据集ID"]
+    did = _did(_upload(client, tok).json())
     h = {"Authorization": f"Bearer {tok}"}
     r = client.post("/reports/generate", json={"数据集ID": did, "分析需求": "按地区统计"}, headers=h)
     assert r.status_code == 200
@@ -837,7 +848,7 @@ def test_报表重放(client):
 def test_报表分页(client):
     """列表分页：limit/offset 生效，页间不重叠且覆盖全部。"""
     tok = _register(client, "pager1")
-    did = _upload(client, tok).json()["数据集ID"]
+    did = _did(_upload(client, tok).json())
     h = {"Authorization": f"Bearer {tok}"}
     ids = []
     for i in range(3):
@@ -861,14 +872,14 @@ def test_报表分页(client):
 
 def test_非法provider_400(client):
     tok = _register(client, "hugo")
-    did = _upload(client, tok).json()["数据集ID"]
+    did = _did(_upload(client, tok).json())
     r = client.post("/reports/generate", json={"数据集ID": did, "分析需求": "x"},
                     headers={"Authorization": f"Bearer {tok}", "X-LLM-Provider": "evil"})
     assert r.status_code == 400
 
 def test_非法model_400(client):
     tok = _register(client, "ivan")
-    did = _upload(client, tok).json()["数据集ID"]
+    did = _did(_upload(client, tok).json())
     r = client.post("/reports/generate", json={"数据集ID": did, "分析需求": "x"},
                     headers={"Authorization": f"Bearer {tok}",
                              "X-LLM-Provider": "deepseek", "X-LLM-Model": "gpt-999"})
@@ -922,7 +933,7 @@ def test_账号key_报表生成自动回退(client):
     try:
         tok = _register(client, "keyacct3")
         client.put("/auth/llm-key", json={"api_key": "sk-account-abcdef"}, headers={"Authorization": f"Bearer {tok}"})
-        did = _upload(client, tok).json()["数据集ID"]
+        did = _did(_upload(client, tok).json())
         r = client.post("/reports/generate", json={
             "数据集ID": did, "分析需求": "各地区销售额对比", "图表类型": "自动推荐",
             "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
@@ -948,7 +959,7 @@ def test_账号key_请求头优先于账号(client):
     try:
         tok = _register(client, "keyacct4")
         client.put("/auth/llm-key", json={"api_key": "sk-account-111111"}, headers={"Authorization": f"Bearer {tok}"})
-        did = _upload(client, tok).json()["数据集ID"]
+        did = _did(_upload(client, tok).json())
         r = client.post("/reports/generate", json={
             "数据集ID": did, "分析需求": "各地区销售额对比", "图表类型": "自动推荐",
             "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
@@ -994,7 +1005,7 @@ def test_工作时间占比_自动选中时间字段(client):
     content = "地点,工作时间,职位ID\n武汉,8,101\n上海,10,102\n北京,6,103\n"
     r = _upload(client, tok, filename="wt.csv", content=content)
     assert r.status_code == 200, r.text
-    did = r.json()["数据集ID"]
+    did = _did(r.json())
     r = client.post("/reports/generate", json={
         "数据集ID": did, "分析需求": "工作时间占比", "图表类型": "自动推荐",
         "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
@@ -1032,7 +1043,7 @@ def test_工作经验占比_优先经验字段而非时间(client):
                "无经验,2025年09月20日,北京\n")
     r = _upload(client, tok, filename="exp.csv", content=content)
     assert r.status_code == 200, r.text
-    did = r.json()["数据集ID"]
+    did = _did(r.json())
     r = client.post("/reports/generate", json={
         "数据集ID": did, "分析需求": "工作经验要求占比图", "图表类型": "自动推荐",
         "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
@@ -1058,7 +1069,7 @@ def test_LLM失败原因_透传到报表(client):
         tok = _register(client, "llmfail1")
         # 账号配 key（非占位符）→ 触发 LLM 链路 → fake 记录 402 失败 → 降级规则
         client.put("/auth/llm-key", json={"api_key": "sk-llm-fail-12345678"}, headers={"Authorization": f"Bearer {tok}"})
-        did = _upload(client, tok).json()["数据集ID"]
+        did = _did(_upload(client, tok).json())
         r = client.post("/reports/generate", json={
             "数据集ID": did, "分析需求": "各地区销售额占比", "图表类型": "自动推荐",
             "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
@@ -1110,7 +1121,7 @@ def test_自定义供应商_生成报表不报400(client):
             "name": "myproxy", "base_url": "https://api.myproxy.com/v1",
             "api_key": "sk-myproxy-abcdef", "models": ["m1"], "default": "m1",
         }, headers=h)
-        did = _upload(client, tok).json()["数据集ID"]
+        did = _did(_upload(client, tok).json())
         r = client.post("/reports/generate", json={
             "数据集ID": did, "分析需求": "各地区销售额占比", "图表类型": "自动推荐",
             "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
@@ -1150,7 +1161,7 @@ def test_数据画像_自动洞察存在(client):
                "华南,200,20\n华南,210,21\n华北,150,15\n")
     r = _upload(client, tok, filename="ins.csv", content=content)
     assert r.status_code == 200, r.text
-    画像 = r.json()["数据画像"]
+    画像 = r.json()["上传成功"][0]["数据画像"]
     assert "自动洞察" in 画像, "画像应含自动洞察"
     assert len(画像["自动洞察"]) > 0, "应至少一条洞察"
 
@@ -1159,7 +1170,7 @@ def test_数据集_重命名与删除(client):
     """PATCH 重命名 → 列表更新；DELETE 删除 → 列表移除。"""
     tok = _register(client, "ds1")
     h = {"Authorization": f"Bearer {tok}"}
-    did = _upload(client, tok).json()["数据集ID"]
+    did = _did(_upload(client, tok).json())
     # 重命名
     r = client.patch(f"/datasets/{did}", json={"文件名": "我的销售数据"}, headers=h)
     assert r.status_code == 200, r.text
@@ -1213,7 +1224,7 @@ def test_generate_stream_事件流与持久化(client):
     tok = _register(client, "stream1")
     content = "地区,销售额\n华东,100\n华南,200\n华北,150\n"
     r = _upload(client, tok, filename="s.csv", content=content)
-    did = r.json()["数据集ID"]
+    did = _did(r.json())
     r = client.post("/reports/generate-stream", json={
         "数据集ID": did, "分析需求": "各地区销售额对比", "图表类型": "自动推荐",
         "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
@@ -1238,7 +1249,7 @@ def test_generate_stream_未认证401(client):
 
 def test_generate_stream_非法provider400(client):
     tok = _register(client, "stream2")
-    did = _upload(client, tok).json()["数据集ID"]
+    did = _did(_upload(client, tok).json())
     r = client.post("/reports/generate-stream", json={"数据集ID": did, "分析需求": "x"},
                     headers={"Authorization": f"Bearer {tok}", "X-LLM-Provider": "evil"})
     assert r.status_code == 400
@@ -1249,7 +1260,7 @@ def test_generate_stream_生成失败走error事件(client):
     tok = _register(client, "stream3")
     content = "地区,销售额\n华东,100\n华南,200\n"
     r = _upload(client, tok, filename="s.csv", content=content)
-    did = r.json()["数据集ID"]
+    did = _did(r.json())
     r = client.post("/reports/generate-stream", json={
         "数据集ID": did, "分析需求": "", "图表类型": "桑基图",
         "x轴": "地区", "y轴": ["销售额"], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",

@@ -70,7 +70,7 @@ def _setup_template(client, token) -> str:
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 200, r.text
-    ds = r.json()["数据集ID"]
+    ds = r.json()["上传成功"][0]["数据集ID"]
     payload = {"数据集ID": ds, "分析需求": "按地区统计销售额", "图表类型": "自动推荐"}
     r = client.post("/templates", json={"名称": "定时模板", "payload": payload},
                     headers={"Authorization": f"Bearer {token}"})

@@ -83,7 +83,7 @@ def _make_report(client, token) -> str:
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 200, r.text
-    ds_id = r.json()["数据集ID"]
+    ds_id = r.json()["上传成功"][0]["数据集ID"]
     r = client.post("/reports/generate", json={
         "数据集ID": ds_id,
         "分析需求": "按地区统计销售额Top 1",

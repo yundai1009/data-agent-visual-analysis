@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 from pathlib import Path
 from uuid import uuid4
 import io
@@ -51,35 +51,60 @@ _MAX_FILENAME_LEN = 120
 
 
 # ---- 上传数据集：校验 → 落盘 → 解析 → 画像 → 入库 ------------------
-# 为什么流程是这个顺序：先挡掉非法输入（空文件/超 50MB/非白名单格式），
-# 再写磁盘，最后才解析入库——解析失败时 unlink 清理，不留半成品。
-# 注意 file.filename 在 UploadFile 里是客户端可控字段，取 base name
-# 防止 "../" 之类路径穿越。
-@router.post("/upload", response_model=DatasetUploadResponse)
+# 支持多文件上传：逐文件校验/解析/入库，返回成功列表 + 失败列表。
+@router.post("/upload")
 async def upload_dataset(
-    file: UploadFile = File(...),
+    file: List[UploadFile] = File(...),
     user: dict = Depends(get_current_user),
-) -> DatasetUploadResponse:
-    # S6 修复：限长读取——旧实现 file.read() 全量读进内存再校验 50MB，
-    # 超大文件直接 OOM；改 read(MAX+1) 只读上限多 1 字节，超限即 413。
+) -> Dict[str, Any]:
+    """批量上传数据集：支持同时传入多个文件（CSV/Excel）。
+
+    每个文件独立校验（空/超大/非法格式/文件名过长）、独立解析入库；
+    成功与失败分别返回，前端可展示「成功 N 个，失败 M 个」。
+    """
     _MAX_UPLOAD_BYTES = 50 * 1024 * 1024
-    content = await file.read(_MAX_UPLOAD_BYTES + 1)
+    成功列表: List[Dict[str, Any]] = []
+    失败列表: List[Dict[str, Any]] = []
+
+    for f in file:
+        try:
+            result = await _处理单个上传(f, user["user_id"], _MAX_UPLOAD_BYTES)
+            成功列表.append(result)
+        except HTTPException as exc:
+            失败列表.append({"文件名": f.filename or "未知", "错误": exc.detail})
+        except Exception as exc:
+            logger.exception("批量上传未知异常：%s", exc)
+            失败列表.append({"文件名": f.filename or "未知", "错误": "解析失败，请重试"})
+
+    # 兼容旧契约：全部文件都失败时返回 400（单文件上传失败即是此场景），
+    # 部分成功时返回 200 + 成功/失败列表，前端展示「成功 N 个，失败 M 个」。
+    if not 成功列表 and 失败列表:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="；".join(f"{f['文件名']}: {f['错误']}" for f in 失败列表) or "全部文件上传失败",
+        )
+
+    return {"上传成功": 成功列表, "上传失败": 失败列表, "成功数": len(成功列表), "失败数": len(失败列表)}
+
+
+async def _处理单个上传(
+    f: UploadFile, user_id: str, max_bytes: int
+) -> Dict[str, Any]:
+    """单文件上传流程：读取 → 校验 → 落盘 → 解析 → 画像 → 入库 → 返回响应字典。"""
+    content = await f.read(max_bytes + 1)
     if not content:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="上传文件为空")
-    if len(content) > _MAX_UPLOAD_BYTES:
+    if len(content) > max_bytes:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="文件超过 50MB 限制")
 
-    # MIME 类型校验
-    safe_name = (file.filename or "").lower()
+    safe_name = (f.filename or "").lower()
     if not safe_name.endswith(('.csv', '.xlsx', '.xls')):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="仅支持 .csv / .xlsx / .xls 格式")
-    # M19：文件名长度上限（超长文件名会写盘/入库）
-    if len(Path(file.filename or "upload").name) > _MAX_FILENAME_LEN:
+    if len(Path(f.filename or "upload").name) > _MAX_FILENAME_LEN:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"文件名过长（最多 {_MAX_FILENAME_LEN} 字符）")
 
     dataset_id = uuid4().hex
-    # 只使用文件名末尾组件，防止路径穿越
-    safe_name = Path(file.filename or "upload").name
+    safe_name = Path(f.filename or "upload").name
     stored_name = f"{dataset_id}_{safe_name}"
     stored_path = _UPLOAD_DIR / stored_name
     stored_path.write_bytes(content)
@@ -90,11 +115,9 @@ async def upload_dataset(
         df = 读取上传表格(uploaded_proxy)
         画像 = 生成数据画像(df)
     except ValueError as exc:
-        # 解析失败：清理已写入的文件，避免残留
         stored_path.unlink(missing_ok=True)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except ImportError as exc:
-        # B2 修复：.xls 依赖 xlrd 缺失等导入错误 → 400 并清理残留，而非 500
         stored_path.unlink(missing_ok=True)
         logger.error("上传解析依赖缺失: %s", exc)
         raise HTTPException(
@@ -102,30 +125,26 @@ async def upload_dataset(
             detail="文件解析依赖缺失（.xls 需要 xlrd），请检查服务端依赖",
         ) from exc
     except Exception as exc:
-        # M19：其余未知解析异常同样清理残留文件（此前仅捕 ValueError/ImportError，
-        # 其他异常 500 且 data/uploads 留下孤儿文件）
         stored_path.unlink(missing_ok=True)
         logger.exception("上传文件解析失败（未知异常），已清理残留")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="文件解析失败，请重试") from exc
 
-    # 持久化到 SQLite。进程重启后仍可凭 dataset_id 取回数据。
     _仓储.保存(
-        user_id=user["user_id"],
+        user_id=user_id,
         dataset_id=dataset_id,
         文件名=safe_name,
         存储路径=str(stored_path),
         df=df,
         画像=画像,
     )
-
-    return DatasetUploadResponse(
-        数据集ID=dataset_id,
-        文件名=safe_name,
-        行数=画像["行数"],
-        列数=画像["列数"],
-        字段列表=画像["字段列表"],
-        数据画像=画像,
-    )
+    return {
+        "数据集ID": dataset_id,
+        "文件名": safe_name,
+        "行数": 画像["行数"],
+        "列数": 画像["列数"],
+        "字段列表": 画像["字段列表"],
+        "数据画像": 画像,
+    }
 
 
 @router.get("/{dataset_id}", response_model=DatasetPreviewResponse)

@@ -8,7 +8,18 @@
 - 报表列表：q 标题搜索、chart_type 过滤、favorites 过滤
 """
 
+
+
 from __future__ import annotations
+
+
+# --- _did helper ---
+
+def _did(j):
+    """从 upload 响应中提取第一个成功的数据集ID（兼容旧单文件格式+新批量格式）。"""
+    if "上传成功" in j:
+        return j["上传成功"][0]["数据集ID"]
+    return j["数据集ID"]
 
 import os
 import sys
@@ -66,7 +77,7 @@ def _upload_and_report(client, tok, name="t.csv"):
                     files={"file": (name, "地区,销售额\n华东,100\n华南,200\n", "text/csv")},
                     headers=_h(tok))
     assert r.status_code == 200, r.text
-    ds = r.json()["数据集ID"]
+    ds = _did(r.json())
     r = client.post("/reports/generate",
                     json={"数据集ID": ds, "分析需求": "按地区统计销售额", "图表类型": "柱状图",
                           "x轴": "地区", "y轴": ["销售额"], "聚合方式": "求和"},
