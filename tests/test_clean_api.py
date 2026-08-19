@@ -37,11 +37,13 @@ def client(monkeypatch):
 
 
 def _register(client: TestClient, username: str) -> str:
-    email = f"{username}@{int(time.time())}.test.com"
+    # username 加时间戳后缀防止跨测试会话重复
+    uname = f"{username}{int(time.time()) % 100000}"
+    email = f"{uname}@test.com"
     assert client.post("/auth/send-code", json={"email": email}).status_code == 200
     code = _SENT.get(email)
     assert code
-    r = client.post("/auth/register", json={"username": username, "email": email, "code": code, "password": "secret123"})
+    r = client.post("/auth/register", json={"username": uname, "email": email, "code": code, "password": "secret123"})
     assert r.status_code == 200, r.text
     return r.json()["access_token"]
 
