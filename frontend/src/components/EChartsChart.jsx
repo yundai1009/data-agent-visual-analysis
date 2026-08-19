@@ -76,7 +76,10 @@ export default function EChartsChart({ chartType, chartConfig, height = 320 }) {
       }
     };
     // ready：echarts 懒加载完成后才初始化（首次 chartType/chartConfig 到来时可能还没加载完）
-  }, [ready, chartType, chartConfig]);
+    // 优化：chartConfig 是对象引用，父组件每次渲染都传新对象——直接依赖会导致
+    // dispose+重建循环；改用其内容签名（JSON.stringify），仅内容真正变化才重建。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, chartType, JSON.stringify(chartConfig)]);
 
   // resize 监听：handler 动态读取最新 chartRef，避免图表重建后调用已 dispose 的旧实例
   useEffect(() => {
@@ -190,7 +193,8 @@ export function buildOption(chartType, config) {
       series: [{
         type: 'pie', radius: type === 'donut' ? ['45%', '70%'] : ['0%', '60%'],
         data: pieData,
-        label: { formatter: (p) => `${p.name}\n${(p.percent ?? 0).toFixed(1)}%` },
+        // 优化：label 同样转义 p.name（名称来自上传数据，统一走 escapeHtml）
+        label: { formatter: (p) => `${escapeHtml(p.name)}\n${(p.percent ?? 0).toFixed(1)}%` },
       }],
     };
   }

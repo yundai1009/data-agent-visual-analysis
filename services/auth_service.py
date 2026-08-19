@@ -106,6 +106,10 @@ def hash_password(password: str) -> str:
 #           避免把哈希内部格式等实现细节泄露给调用方/前端。
 def verify_password(password: str, stored_hash: str) -> bool:
     """校验密码。stored_hash 格式不合法时返回 False（不抛异常）。"""
+    # P0 加固：入口限长（PBKDF2 耗时随输入长度线性增长，超长输入可作 CPU DoS）。
+    # 128 个 UTF-8 中文字符最多 384 字节，1024 字节上限对正常密码绰绰有余。
+    if len(password.encode("utf-8")) > 1024:
+        return False
     try:
         # 拆出哈希串的四个组成部分：算法名/迭代次数/盐/期望哈希
         scheme, iterations_str, salt_b64, hash_b64 = stored_hash.split("$")

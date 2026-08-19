@@ -81,9 +81,13 @@ def _get_conn() -> Iterator[sqlite3.Connection]:
     """
     db_path = _resolve_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path), isolation_level=None)  # 自动事务
+    # S9 修复：isolation_level="DEFERRED"（显式事务）替代 None（autocommit）——
+    # 之前 with conn: 在 autocommit 下不开启事务，多表删除非原子、rollback 无效。
+    # timeout=30 + busy_timeout 让写锁竞争时等待而非立即报 database is locked。
+    conn = sqlite3.connect(str(db_path), isolation_level="DEFERRED", timeout=30)
     try:
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout = 30000")
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
         yield conn
@@ -91,6 +95,16 @@ def _get_conn() -> Iterator[sqlite3.Connection]:
         conn.rollback()
         raise
     finally:
+        # S9 修复：DEFERRED 显式事务下，with 块结束前必须显式提交。
+        # _get_conn 是 @contextmanager 上下文，本身不执行 commit；旧
+        # isolation_level=None（autocommit）模式下 execute 即提交，把这个缺陷掩盖了。
+        # 现改 DEFERRED 后，若只依靠 conn.close()，未提交事务会被隐式回滚——
+        # 导致验证码/用户/数据集/事件全部写入对其它连接不可见（注册查不到码、admin 种子
+        # 查不到、sqlite_repo round-trip 失败）。finally 提交；异常分支已 rollback。
+        try:
+            conn.commit()
+        except Exception:
+            conn.rollback()
         conn.close()
 
 

@@ -74,12 +74,18 @@ def 读取报表(user_id: str, report_id: str) -> Optional[Dict[str, Any]]:
         ).fetchone()
     if row is None:
         return None
+    try:
+        报表_json = json.loads(row["report_json"])
+    except (ValueError, TypeError):
+        # M11：report_json 损坏（旧版本/异常写入）→ 返回空报表结构而非 500
+        logger.warning("报表 %s 的 report_json 损坏，按空报表返回", row["report_id"])
+        报表_json = {}
     return {
         "报表ID": row["report_id"],
         "数据集ID": row["dataset_id"],
         "标题": row["title"],
         "图表类型": row["chart_type"],
-        "报表": json.loads(row["report_json"]),
+        "报表": 报表_json,
         "创建时间": row["created_at"],
     }
 
@@ -109,6 +115,12 @@ def 删除报表(user_id: str, report_id: str) -> bool:
     """删除一份报表（仅限归属用户）。"""
     初始化报表表()
     with _write_lock, _get_conn() as conn:
+        # M8 修复：级联清理收藏/分享，防悬空引用（表可能尚未初始化，先查存在性）
+        tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        if "favorites" in tables:
+            conn.execute("DELETE FROM favorites WHERE report_id = ? AND user_id = ?", (report_id, user_id))
+        if "share_links" in tables:
+            conn.execute("DELETE FROM share_links WHERE report_id = ? AND user_id = ?", (report_id, user_id))
         cur = conn.execute(
             "DELETE FROM reports WHERE report_id = ? AND user_id = ?",
             (report_id, user_id),

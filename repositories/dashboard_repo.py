@@ -92,11 +92,20 @@ def 列出看板(user_id: str) -> List[Dict[str, Any]]:
         {
             "看板ID": row["dashboard_id"],
             "名称": row["name"],
-            "报表数": len(json.loads(row["report_ids"])),
+            # M11：report_ids JSON 损坏时兜底为空列表（此前 json.loads 抛错 → 500）
+            "报表数": len(_safe_loads(row["report_ids"])),
             "创建时间": row["created_at"],
         }
         for row in rows
     ]
+
+
+def _safe_loads(raw: str, fallback: Any = None) -> Any:
+    """M11：JSON 解析兜底——损坏数据返回 fallback 而非抛 500。"""
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        return fallback
 
 
 def 读取看板(user_id: str, dashboard_id: str) -> Optional[Dict[str, Any]]:
@@ -113,7 +122,8 @@ def 读取看板(user_id: str, dashboard_id: str) -> Optional[Dict[str, Any]]:
     return {
         "看板ID": row["dashboard_id"],
         "名称": row["name"],
-        "报表ID列表": json.loads(row["report_ids"]),
+        # M11：损坏 JSON 兜底为空列表
+        "报表ID列表": _safe_loads(row["report_ids"], []),
         "创建时间": row["created_at"],
     }
 

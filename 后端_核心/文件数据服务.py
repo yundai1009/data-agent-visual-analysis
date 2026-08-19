@@ -46,8 +46,18 @@ def 读取上传表格(uploaded_file: Any) -> pd.DataFrame:
             if hasattr(uploaded_file, "seek"):
                 uploaded_file.seek(0)
             df = pd.read_csv(uploaded_file, encoding="gbk")
+        except Exception as exc:
+            # M10：此前只捕 UnicodeDecodeError，其余解析异常（格式损坏/
+            # 分隔符错误/空文件）直接 500——统一转为可读的 ValueError 400
+            if isinstance(exc, ValueError):
+                raise
+            raise ValueError(f"CSV 解析失败：{type(exc).__name__}（文件可能损坏或格式不标准）") from exc
     else:
-        df = pd.read_excel(uploaded_file)
+        try:
+            df = pd.read_excel(uploaded_file)
+        except Exception as exc:
+            # M10：Excel 解析异常同样统一转 ValueError（此前 500）
+            raise ValueError(f"Excel 解析失败：{type(exc).__name__}（文件可能损坏或格式不支持）") from exc
 
     df = df.dropna(how="all")
     df.columns = [str(column).strip() for column in df.columns]

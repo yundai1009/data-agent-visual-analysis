@@ -32,6 +32,12 @@ _TICK_INTERVAL = 30  # 秒；30s 粒度保证每分钟至少检查两次（防�
 _scheduler_lock = threading.Lock()
 _scheduler_thread: Optional[threading.Thread] = None
 
+# S8 修复：进程内"执行中"任务集合——慢任务执行期间不再重复触发，
+# 并限制并发作业数，防止线程无限堆积。
+_in_flight: set = set()
+_in_flight_lock = threading.Lock()
+_MAX_CONCURRENT_JOBS = 5
+
 
 # ═══ 1. cron 解析（5 字段：分 时 日 月 周）═══
 
@@ -227,7 +233,22 @@ def _tick() -> None:
     now = datetime.now()
     for 任务 in schedule_repo.查启用的任务():
         if cron匹配(任务["cron"], now) and not _同分钟(任务["上次执行"], now):
-            threading.Thread(target=执行作业, args=(任务,), daemon=True).start()
+            # S8 修复：任务执行中（_in_flight 含任务ID）跳过本轮，避免慢任务
+            # 未结束时重复触发；并发作业数封顶，防线程无限增长。
+            with _in_flight_lock:
+                if 任务["任务ID"] in _in_flight or len(_in_flight) >= _MAX_CONCURRENT_JOBS:
+                    continue
+                _in_flight.add(任务["任务ID"])
+            threading.Thread(target=_执行并释放, args=(任务,), daemon=True).start()
+
+
+def _执行并释放(任务: Dict[str, Any]) -> None:
+    """S8：执行作业并在 finally 中释放 in_flight 标记（异常也不残留）。"""
+    try:
+        执行作业(任务)
+    finally:
+        with _in_flight_lock:
+            _in_flight.discard(任务["任务ID"])
 
 
 def _循环() -> None:

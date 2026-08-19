@@ -10,7 +10,7 @@
 //   - 卡片用 typeColors/typeLabels 给日期/分类/数值字段着色，
 //     字段类型一眼可辨，降低理解成本。
 // 删除它会怎样：用户无法管理自己的数据，分析无从谈起。
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Upload, Download, FileDown, Database, FileText, AlertTriangle, Search, Sparkles, Loader2, BarChart3, LineChart, Pencil, Trash2, Lightbulb } from 'lucide-react';
 import { uploadFile, loadExample, cleanDataset, healthCheck, listDatasets, deleteDataset, renameDataset, getDataset, exportUserData } from '../api';
@@ -91,14 +91,22 @@ export default function DataManagement() {
   }, [dataset?.数据集ID, dsQ, dsSort]);
 
   // 切换数据集
+  // F-M7：switchSeqRef 序号守卫（照抄 Dashboard.jsx:60-73 模式）——
+  // 快速切换两个数据集时，旧响应不得覆盖新选择
+  const switchSeqRef = useRef(0);
   const handleSwitchDataset = async (id) => {
+    const seq = ++switchSeqRef.current;
     try {
       const res = await getDataset(id);
+      if (switchSeqRef.current !== seq) return; // 已有更新的切换，丢弃旧响应
       setDataset({ 数据集ID: id, 文件名: res.文件名, 数据画像: res.数据画像 });
       setAppDataset({ 数据集ID: id, 文件名: res.文件名, 数据画像: res.数据画像 });
       setProfile(res.数据画像);
       setDsOpen(false);
-    } catch (e) { setError(e.message || '切换失败'); }
+    } catch (e) {
+      if (switchSeqRef.current !== seq) return;
+      setError(e.message || '切换失败');
+    }
   };
 
   // 删除数据集

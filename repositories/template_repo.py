@@ -51,23 +51,22 @@ def 保存模板(user_id: str, name: str, payload: Dict[str, Any], template_id: 
     初始化模板表()
     now = _now_iso()
     tid = template_id or uuid.uuid4().hex
+    payload_json = json.dumps(payload, ensure_ascii=False, default=str)
     with _write_lock, _get_conn() as conn:
-        existing = conn.execute(
-            "SELECT 1 FROM report_templates WHERE template_id = ? AND user_id = ?",
-            (tid, user_id),
-        ).fetchone()
-        if existing:
-            conn.execute(
-                "UPDATE report_templates SET name = ?, dataset_id = ?, payload_json = ?, updated_at = ? "
-                "WHERE template_id = ? AND user_id = ?",
-                (name, payload.get("数据集ID", ""), json.dumps(payload, ensure_ascii=False, default=str), now, tid, user_id),
-            )
-        else:
-            conn.execute(
-                "INSERT INTO report_templates (template_id, user_id, name, dataset_id, payload_json, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (tid, user_id, name, payload.get("数据集ID", ""), json.dumps(payload, ensure_ascii=False, default=str), now, now),
-            )
+        # M12：SELECT-then-INSERT 存在 TOCTOU——并发同 id 保存时两个连接都查不到
+        # 记录 → 双 INSERT 撞主键。改用单语句 UPSERT（ON CONFLICT DO UPDATE）原子化。
+        conn.execute(
+            """
+            INSERT INTO report_templates (template_id, user_id, name, dataset_id, payload_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(template_id) DO UPDATE SET
+                name = excluded.name,
+                dataset_id = excluded.dataset_id,
+                payload_json = excluded.payload_json,
+                updated_at = excluded.updated_at
+            """,
+            (tid, user_id, name, payload.get("数据集ID", ""), payload_json, now, now),
+        )
     logger.info("保存模板 %s（用户 %s）", tid, user_id)
     return tid
 

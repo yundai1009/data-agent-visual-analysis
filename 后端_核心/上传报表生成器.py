@@ -5,6 +5,7 @@ import html
 import json
 import logging
 
+import numpy as np
 import pandas as pd
 
 from 后端_核心.数据画像 import 生成数据画像
@@ -78,12 +79,16 @@ def _可_json值(value: Any) -> Any:
     if isinstance(value, (list, tuple, set)):
         return list(value)  # 嵌套 list 直接返回（箱线五数概括 / K 线 OHLC）
     if hasattr(value, "item"):
-        return value.item()
+        value = value.item()
     try:
         if pd.isna(value):
             return None
     except (ValueError, TypeError):
         pass
+    # M24：非有限浮点（±inf/NaN，来自"环比/同比"等除零计算）→ None，
+    # 否则 json.dumps 产出非法 JSON（Infinity/NaN）导致前端解析崩溃
+    if isinstance(value, float) and not np.isfinite(value):
+        return None
     if hasattr(value, "isoformat"):
         return value.isoformat()
     return value
@@ -680,6 +685,8 @@ def _生成直方图数据(df: pd.DataFrame, field: Optional[str]) -> pd.DataFra
             .rename(columns={"index": field, 0: "记录数"})
         )
     series = df[field].dropna()
+    # S14 修复：剔除 ±inf/NaN——pd.cut 遇到无穷值会抛 ValueError 导致 500
+    series = series[np.isfinite(series)]
     if series.empty or series.nunique() < 2:
         # 全常量列：分布无意义，直接返回空表（避免 cut 边界重合的晦涩异常）
         return pd.DataFrame(columns=[field, "记录数"])
@@ -833,9 +840,27 @@ def _生成K线数据(df: pd.DataFrame, x轴: Optional[str], y轴列表: List[st
     return pd.DataFrame(rows).head(500)  # 高基数分组限流
 
 
+def _限基数列(df: pd.DataFrame, col: Optional[str], top: int = 200) -> pd.DataFrame:
+    """S13：高基数列截断——保留出现频次最高的 top 个值，其余行丢弃。
+
+    用于 pivot/透视前的防护：高基数分类列（如几万种商品名）直接 pivot
+    会产生巨矩阵导致 OOM；截断到频次 top-N 后行列数可控。
+    """
+    if not col or col not in df.columns:
+        return df
+    counts = df[col].value_counts()
+    if len(counts) <= top:
+        return df
+    keep = set(counts.head(top).index)
+    return df[df[col].isin(keep)]
+
+
 def _生成热力图数据(df: pd.DataFrame, x轴: Optional[str], 分组字段: Optional[str], y轴列表: List[str], 聚合方式: str) -> pd.DataFrame:
     if not x轴 or not 分组字段 or x轴 not in df.columns or 分组字段 not in df.columns:
         return df.head(200).copy()
+    # S13 修复：pivot 前两列各截断 top-200，防高基数列 pivot 出巨矩阵 OOM
+    df = _限基数列(df, 分组字段)
+    df = _限基数列(df, x轴)
     value_field = y轴列表[0] if y轴列表 else "记录数"
     if 聚合方式 == "计数" or value_field == "记录数" or value_field not in df.columns:
         pivot = df.pivot_table(index=分组字段, columns=x轴, aggfunc="size", fill_value=0)
@@ -906,7 +931,9 @@ def _生成结论(
     x_field = 推荐说明.get("推荐字段", {}).get("X轴")
     if x_field and y_fields and x_field in report_df.columns:
         first_y = y_fields[0]
-        if first_y in report_df.columns and not report_df.empty:
+        # S15 修复：混合类型列（如"100"与"abc"混存）排序会 TypeError 500——
+        # 仅数值列参与 Top/Bottom 排序，非数值列跳过该洞察。
+        if first_y in report_df.columns and not report_df.empty and pd.api.types.is_numeric_dtype(report_df[first_y]):
             top_row = report_df.sort_values(first_y, ascending=False).iloc[0]
             insight_lines.append(
                 f"- `{x_field}` 中 `{_格式化数值(top_row[x_field])}` 的 `{first_y}` 最高，值为 {_格式化数值(top_row[first_y])}。"
@@ -1010,6 +1037,9 @@ def 生成报表数据(
         y轴列表 = [field for field in (y轴 or []) if field]
 
     intent_override, intent_source, agent_trace, llm_fail_reason = _解析自然语言意图(画像, 分析需求, df, llm_config=llm_config, on_event=on_event, user_id=user_id)
+    # M23：用户原始请求语义（推荐说明文案用）——用户选了"自动推荐"时，即使
+    # LLM 意图覆盖出了具体图表，文案也应说"系统自动选择"而非"用户手动选择"。
+    用户请求自动推荐 = 图表类型 == "自动推荐"
     if intent_override:
         # 优先级策略（阶段 B 改造）：
         # - 图表类型：仅当用户选"自动推荐"时采用 LLM 推荐；用户显式选择则尊重用户
@@ -1034,6 +1064,8 @@ def 生成报表数据(
         if not 对比 and intent_override.get("对比"):
             对比 = intent_override.get("对比")
 
+    # 是否自动推荐（意图覆盖后语义）：决定 effective_chart 是否走规则推荐——
+    # intent 未给出图表类型（覆盖后仍为"自动推荐"）才用 _推荐图表类型 兜底
     是否自动推荐 = 图表类型 == "自动推荐"
     effective_chart = 图表类型
     if 是否自动推荐:
@@ -1041,7 +1073,6 @@ def 生成报表数据(
 
     if intent_override and 图表类型 == "饼图":
         effective_chart = "饼图"
-
     if effective_chart == "表格":
         report_df = df.head(200).copy()
     elif effective_chart == "直方图":
@@ -1071,7 +1102,10 @@ def 生成报表数据(
         # 的明细兜底——把原始数据行当报表数据（图例大量重复 + 占比全 0.0%）。
         # 强制按分类计数并把 y轴 补为聚合计数列：占比图在空 y轴 时"各分类出现
         # 次数"是唯一合理语义，且前端能据此取到值字段正确渲染占比。
-        if effective_chart in ("饼图", "环形图") and not y轴列表:
+        if effective_chart in ("饼图", "环形图") and (not y轴列表 or y轴列表[0] not in df.columns):
+            # M22：值列与数据列不一致（LLM 幻觉字段/意图覆盖给出不存在的列）时，
+            # 前端取不到值 → 占比全 0。降级为"各分类出现次数"（计数），
+            # 值列统一为「记录数」，保证前端能正确取到值字段。
             聚合方式 = "计数"
             y轴列表 = ["记录数"]
         report_df = _聚合数据(df, x轴, y轴列表, 分组字段, 聚合方式)
@@ -1131,7 +1165,7 @@ def 生成报表数据(
         chart_config["名称"] = "name"
         chart_config["值"] = "value"
 
-    推荐说明 = _生成推荐说明(画像, effective_chart, x轴, y轴列表, 分组字段, 聚合方式, 是否自动推荐, 分析需求)
+    推荐说明 = _生成推荐说明(画像, effective_chart, x轴, y轴列表, 分组字段, 聚合方式, 用户请求自动推荐, 分析需求)
     风险提示 = _字段问题提示(画像, effective_chart, x轴, y轴列表, 分析需求)
     conclusion, conclusion_source = _生成结论_含来源(
         分析需求, 画像, report_df, effective_chart, 推荐说明, 风险提示,

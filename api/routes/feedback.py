@@ -36,6 +36,6 @@ async def submit_feedback(
 
 
 @router.get("/{task_id}")
-async def get_feedback(task_id: str) -> dict[str, Any]:
-    """查询指定任务的反馈列表。"""
-    return {"任务ID": task_id, "反馈列表": feedback_repo.按任务查询(task_id)}
+async def get_feedback(task_id: str, user: dict = Depends(get_current_user)) -> dict[str, Any]:
+    """查询指定任务的反馈列表（S5：需登录且仅返回本人反馈，防 IDOR 越权读取他人纠错内容）。"""
+    return {"任务ID": task_id, "反馈列表": feedback_repo.按任务查询(task_id, user["user_id"])}

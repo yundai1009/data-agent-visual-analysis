@@ -151,11 +151,19 @@ def 多智能体分析(
             f"图表设计师推荐：{chart_result.get('摘要', '')}\n\n"
             f"请判断结果是否合理。如果发现问题，请明确说明具体原因和改进方向。"
         )
-        quality_result = _运行_agent("质量审查员", quality_prompt, tools, context, trace, 轮次起始=轮次图表 + 1, llm_config=llm_config)
+        # S12：质量审查员走纯文本（不需要工具）——旧实现强制 tool_call，
+        # 审查员要么被工具流程卡死要么返回空 tool_call 导致"执行失败"，
+        # 而失败分支又直接判通过，打回重做闭环永远不可达。
+        quality_result = _运行_agent(
+            "质量审查员", quality_prompt, tools, context, trace,
+            轮次起始=轮次图表 + 1, llm_config=llm_config, 需要工具=False,
+        )
 
         if not quality_result["成功"]:
-            trace.记录观察(轮次=轮次图表 + 1, 说明="质量审查员执行失败，跳过审查", 状态="失败")
-            passed = True
+            # S12：审查失败不再直接判通过——保守按"未通过"处理（接受当前结果，
+            # 不再无意义重试，因为 LLM 大概率已不可用）。
+            trace.记录观察(轮次=轮次图表 + 1, 说明="质量审查员执行失败（LLM 不可用），接受当前结果", 状态="需关注")
+            passed = False
             break
 
         # 质量审查判定：明确输出"不通过/打回"才算不通过，避免模型措辞变化误判
@@ -185,6 +193,11 @@ def 多智能体分析(
         "y轴": intent.get("y轴", []),
         "分组字段": intent.get("分组字段"),
         "聚合方式": intent.get("聚合方式", "求和"),
+        # S11 修复：补三键——LLM 产出的筛选条件/TopN/对比此前被丢弃，
+        # 路由层只能用 payload 默认值；现在透传给 生成报表数据 合并。
+        "筛选条件": intent.get("筛选条件", []),
+        "topN": intent.get("topN"),
+        "对比": intent.get("对比"),
         "意图来源": intent_source,
         "推荐理由": intent.get("推荐理由", ""),
         "Agent_Trace": trace.to_list(),
@@ -199,12 +212,26 @@ def _运行_agent(
     trace: TraceRecorder,
     轮次起始: int = 1,
     llm_config: Optional[LLMRequestConfig] = None,
+    需要工具: bool = True,
 ) -> Dict[str, Any]:
-    """运行一个 Agent，返回执行结果。"""
+    """运行一个 Agent，返回执行结果。
+
+    S12：``需要工具=False`` 时走纯文本回复（质量审查员用）——
+    不再强制 tool_call，让"打回重做"闭环真正可达。
+    """
     messages = [
         {"role": "system", "content": _SYSTEM_PROMPTS.get(role, _SYSTEM_PROMPTS["supervisor"])},
         {"role": "user", "content": prompt},
     ]
+
+    if not 需要工具:
+        from 后端_核心.agent.llm客户端 import chat_completion as _纯文本
+        resp = _纯文本(messages=messages, tools=None, llm_config=llm_config)
+        if not resp:
+            return {"成功": False, "消息": messages, "摘要": "执行失败"}
+        text = (((resp.get("choices") or [{}])[0].get("message") or {}).get("content")) or ""
+        messages.append({"role": "assistant", "content": text})
+        return {"成功": True, "消息": messages, "摘要": text}
 
     max_rounds = 2  # 每个 Agent 最多 2 轮 tool 调用
     for i in range(max_rounds):
@@ -244,6 +271,10 @@ def _降级(画像: Dict[str, Any], 分析需求: str, trace: TraceRecorder) -> 
             "y轴": rule_over.get("y轴", []),
             "分组字段": rule_over.get("分组字段"),
             "聚合方式": rule_over.get("聚合方式", "求和"),
+            # S11：降级路径同样补齐三键，保持返回结构一致
+            "筛选条件": rule_over.get("筛选条件", []),
+            "topN": rule_over.get("topN"),
+            "对比": rule_over.get("对比"),
             "意图来源": "规则",
             "推荐理由": rule_over.get("推荐理由", ""),
             "Agent_Trace": trace.to_list(),
@@ -251,7 +282,8 @@ def _降级(画像: Dict[str, Any], 分析需求: str, trace: TraceRecorder) -> 
     trace.记录观察(轮次=0, 说明="未命中规则，自动推荐", 状态="成功")
     return {
         "图表类型": "自动推荐", "x轴": None, "y轴": [], "分组字段": None,
-        "聚合方式": "求和", "意图来源": "规则", "推荐理由": "",
+        "聚合方式": "求和", "筛选条件": [], "topN": None, "对比": None,
+        "意图来源": "规则", "推荐理由": "",
         "Agent_Trace": trace.to_list(),
     }
 

@@ -187,7 +187,13 @@ export default function ShareView() {
           <div className="px-5 py-4 space-y-2 text-xs text-gray-500">
             <p>图表类型：<span className="text-gray-700">{report.图表类型 || '—'}</span></p>
             <p>数据规模：{report.数据画像?.行数 ? `${report.数据画像.行数} 行 × ${report.数据画像.列数} 列` : '—'}</p>
-            {report.过期时间 && <p>链接有效期至：<span className="text-gray-700">{new Date(report.过期时间).toLocaleString('zh-CN', { hour12: false })}</span></p>}
+            {report.过期时间 && (() => {
+              // 优化：非法日期（损坏数据）不再 RangeError 崩溃，直接跳过展示
+              const d = new Date(report.过期时间);
+              return Number.isNaN(d.getTime())
+                ? null
+                : <p>链接有效期至：<span className="text-gray-700">{d.toLocaleString('zh-CN', { hour12: false })}</span></p>;
+            })()}
           </div>
         )}
       </div>

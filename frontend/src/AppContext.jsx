@@ -12,7 +12,7 @@
  * 被依赖：App.jsx 包裹全应用；Sidebar/Data/Analysis/Report/Account 等页面与组件 useApp()
  * ============================================================================= */
 /* oxlint-disable react/only-export-components -- Context 惯例：Provider 组件 + useApp hook 同文件导出 */
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 
 const AppContext = createContext(null);
 
@@ -47,11 +47,20 @@ export function AppProvider({ children }) {
     try { return !!localStorage.getItem('access_token'); } catch { return false; }
   });
 
+  // F-S3 辅助：记录当前内存态 user_id，用于 setAuth 判断"换账号"（user_id 变化）。
+  // 初始从恢复的 user 同步，mount 后随 user 变动更新。
+  const userIdRef = useRef(user?.user_id ?? null);
+
   // 挂载时一次性清理旧版前端报表缓存（阶段 12 收尾：报表历史一律以服务端为准，
   // 避免旧版本残留的本地列表与新接口返回的数据混在一起）
   useEffect(() => {
     localStorage.removeItem('reports_cache');
   }, []);
+
+  // F-S3 辅助：随 user 变动（登出等）同步 userIdRef，保证换账号判定准确。
+  useEffect(() => {
+    userIdRef.current = user?.user_id ?? null;
+  }, [user]);
 
   // 401 全局登出：token 失效/残留时（由 api.js 的 handleAuthExpired 广播）
   // 同步清空内存态 → ProtectedRoute 检测 isAuthed=false 自动重定向登录页
@@ -89,7 +98,21 @@ export function AppProvider({ children }) {
       if (userInfo) localStorage.setItem('user_cache', JSON.stringify(userInfo));
     } catch { /* localStorage 不可用时忽略，仅本次会话有效 */ }
     // 第三处同步：更新内存态 user —— 界面立即反映新用户名（不刷新页面也生效）。
-    if (userInfo) setUser(userInfo);
+    if (userInfo) {
+      // F-S3 修复：换账号（user_id 变化）时必须清 dataset_cache/reports_cache 与
+      //   内存 dataset，否则 A 账号的数据会串到 B 账号界面（跨账号数据泄露）。
+      //   改名/改密仍是同一 user_id，不清缓存，不影响当前会话的数据集选择。
+      const prevUserId = userIdRef.current;
+      if (prevUserId && prevUserId !== userInfo.user_id) {
+        try {
+          localStorage.removeItem('dataset_cache');
+          localStorage.removeItem('reports_cache');
+        } catch { /* ignore */ }
+        setDataset(null);
+      }
+      userIdRef.current = userInfo.user_id;
+      setUser(userInfo);
+    }
     // 同步登录态标记：token 非空即为已登录，ProtectedRoute 据此放行。
     setIsAuthed(!!token);
   }, []);

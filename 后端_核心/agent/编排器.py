@@ -56,6 +56,14 @@ from 后端_核心.agent.记忆 import 检索相似记忆, 保存记忆, 生成_
 
 logger = logging.getLogger(__name__)
 
+# M25：图表类型枚举白名单（与 上传报表生成器.图表类型映射 对齐），
+# LLM 推荐图表时必须命中白名单才采纳，杜绝幻觉图表类型进入结论。
+_图表类型白名单 = {
+    "柱状图", "折线图", "面积图", "饼图", "环形图", "散点图", "直方图",
+    "热力图", "词云图", "漏斗图", "桑基图", "箱线图", "瀑布图", "旭日图",
+    "K线图", "表格", "堆积柱状图", "自动推荐",
+}
+
 # 启动时注册所有 Tool executor（幂等，多次调用无害）
 # 【关键行】这行在模块加载时就把 4 个工具的执行函数注册到全局 TOOL_EXECUTORS 字典中。
 # 为什么：LLM 通过 Function Calling 选出工具名后，编排器需要立刻找到对应的后端执行函数来真正运行；
@@ -554,8 +562,12 @@ def _从消息提取意图(messages: List[Dict[str, Any]], 画像: Dict[str, Any
                 except (json.JSONDecodeError, TypeError):
                     args = {}
                 if name == "推荐图表":
-                    chart_type = args.get("图表类型") or chart_type
-                    reason = args.get("理由") or reason
+                    # M25：图表类型走枚举白名单——LLM 幻觉的图表类型（如
+                    # "雷达图""3D饼图"）此前直接进结论，前端渲染失败/结论失真
+                    _候选图表 = args.get("图表类型") or chart_type
+                    if _候选图表 in _图表类型白名单:
+                        chart_type = _候选图表
+                        reason = args.get("理由") or reason
                 elif name == "聚合分析":
                     x_axis = args.get("X轴") or args.get("x轴") or x_axis
                     y_axis_list = args.get("Y轴") or args.get("y轴") or y_axis_list

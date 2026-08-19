@@ -47,14 +47,14 @@ def 保存反馈(user_id: str, task_id: str, score: int, correction: str, sync_k
         return int(cur.lastrowid)
 
 
-def 按任务查询(task_id: str, limit: int = 50) -> List[Dict[str, Any]]:
-    """查询某任务的全部反馈（新→旧）。"""
+def 按任务查询(task_id: str, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    """查询某任务的全部反馈（新→旧）。S5：按归属用户过滤，杜绝越权读取他人反馈。"""
     初始化反馈表()
     with _get_conn() as conn:
         rows = conn.execute(
             "SELECT id, user_id, task_id, score, correction, sync_kb, created_at "
-            "FROM feedback WHERE task_id = ? ORDER BY id DESC LIMIT ?",
-            (task_id, limit),
+            "FROM feedback WHERE task_id = ? AND user_id = ? ORDER BY id DESC LIMIT ?",
+            (task_id, user_id, limit),
         ).fetchall()
     return [
         {

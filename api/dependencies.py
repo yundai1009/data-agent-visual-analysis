@@ -110,7 +110,11 @@ def get_current_user(
     # 删除后果：改密码后旧 token 依然有效，被泄露的 token 永久可用，会话吊销形同虚设。
     # 替代方案：Redis 黑名单/白名单缓存（性能更好但引入外部依赖）；当前"每请求查库比对"在单机场景够用且零依赖。
     from repositories import user_repo as _repo
-    if int(payload.get("ver") or 0) != _repo.读取token版本(payload.get("sub", "")):
+    # S4 修复：用户不存在（读取token版本返回 None）时旧 JWT 一律失效——
+    # 删号后 ver=0 的旧 token 不得继续通过对账（旧实现 None→0 与 ver=0 相等，
+    # 形成"删号后旧 token 仍可认证"的漏洞）。
+    _ver = _repo.读取token版本(payload.get("sub", ""))
+    if _ver is None or int(payload.get("ver") or 0) != _ver:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="认证令牌已失效，请重新登录",
@@ -145,7 +149,9 @@ def get_current_user_optional(
         return None
     from repositories import user_repo as _repo
     try:
-        if int(payload.get("ver") or 0) != _repo.读取token版本(payload.get("sub", "")):
+        # S4 修复：同 get_current_user——用户不存在（None）视为无效 token
+        _ver = _repo.读取token版本(payload.get("sub", ""))
+        if _ver is None or int(payload.get("ver") or 0) != _ver:
             return None
     except Exception:
         return None

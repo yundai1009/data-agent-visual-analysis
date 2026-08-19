@@ -19,6 +19,7 @@ from typing import Any, Dict
 from pathlib import Path
 from uuid import uuid4
 import io
+import threading
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 
@@ -42,6 +43,12 @@ _仓储 = 数据集仓储()
 _UPLOAD_DIR = Path("data/uploads")
 _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+# M21：数据集级操作锁——clean/rename 等"读-改-写"路径共享，防并发覆盖丢数据
+_数据集操作锁 = threading.Lock()
+
+# M19：上传文件名长度上限（超长文件名会写盘/入库，需在源头拦截）
+_MAX_FILENAME_LEN = 120
+
 
 # ---- 上传数据集：校验 → 落盘 → 解析 → 画像 → 入库 ------------------
 # 为什么流程是这个顺序：先挡掉非法输入（空文件/超 50MB/非白名单格式），
@@ -53,16 +60,22 @@ async def upload_dataset(
     file: UploadFile = File(...),
     user: dict = Depends(get_current_user),
 ) -> DatasetUploadResponse:
-    content = await file.read()
+    # S6 修复：限长读取——旧实现 file.read() 全量读进内存再校验 50MB，
+    # 超大文件直接 OOM；改 read(MAX+1) 只读上限多 1 字节，超限即 413。
+    _MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+    content = await file.read(_MAX_UPLOAD_BYTES + 1)
     if not content:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="上传文件为空")
-    if len(content) > 50 * 1024 * 1024:
+    if len(content) > _MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="文件超过 50MB 限制")
 
     # MIME 类型校验
     safe_name = (file.filename or "").lower()
     if not safe_name.endswith(('.csv', '.xlsx', '.xls')):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="仅支持 .csv / .xlsx / .xls 格式")
+    # M19：文件名长度上限（超长文件名会写盘/入库）
+    if len(Path(file.filename or "upload").name) > _MAX_FILENAME_LEN:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"文件名过长（最多 {_MAX_FILENAME_LEN} 字符）")
 
     dataset_id = uuid4().hex
     # 只使用文件名末尾组件，防止路径穿越
@@ -88,6 +101,12 @@ async def upload_dataset(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="文件解析依赖缺失（.xls 需要 xlrd），请检查服务端依赖",
         ) from exc
+    except Exception as exc:
+        # M19：其余未知解析异常同样清理残留文件（此前仅捕 ValueError/ImportError，
+        # 其他异常 500 且 data/uploads 留下孤儿文件）
+        stored_path.unlink(missing_ok=True)
+        logger.exception("上传文件解析失败（未知异常），已清理残留")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="文件解析失败，请重试") from exc
 
     # 持久化到 SQLite。进程重启后仍可凭 dataset_id 取回数据。
     _仓储.保存(
@@ -155,6 +174,8 @@ async def rename_dataset(dataset_id: str, payload: dict, user: dict = Depends(ge
     新名 = str(payload.get("文件名") or "").strip()
     if not 新名 or len(新名) > 120:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="文件名需 1-120 字符")
-    if not _仓储.重命名(user["user_id"], dataset_id, 新名):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在")
+    # M21：与 clean 共用数据集级锁，防读-改-写并发交错
+    with _数据集操作锁:
+        if not _仓储.重命名(user["user_id"], dataset_id, 新名):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在")
     return {"message": "已重命名", "文件名": 新名}

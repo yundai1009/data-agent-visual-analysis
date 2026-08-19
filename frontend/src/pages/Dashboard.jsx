@@ -327,7 +327,7 @@ export default function Dashboard() {
                 {chartTypeKey === 'table' ? (
                   <p className="text-xs text-gray-400 text-center py-10">表格类报表请到详情页查看</p>
                 ) : (
-                  <EChartsChart key={i} chartType={chartTypeKey} chartConfig={cfg} height={280} />
+                  <EChartsChart key={cfg?.标题 ? `${cfg.标题}-${i}` : i} chartType={chartTypeKey} chartConfig={cfg} height={280} />
                 )}
                 {conclusion && (
                   <p className="px-4 pb-3.5 text-[11px] text-gray-500 leading-relaxed line-clamp-2">{conclusion}</p>

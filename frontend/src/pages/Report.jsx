@@ -68,33 +68,38 @@ export default function Report() {
   // 挂载时从后端加载报表列表与详情：reportId（路由参数）优先展示指定报表，否则展示最新一张
   // 设计：列表与详情分两次请求（列表只含元数据），避免单次返回过大
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    (async () => {
-      try {
-        const res = await listReports(PAGE_SIZE, 0, { favorites: favOnly ? 1 : 0, q: searchQ });
-        const items = res?.报表列表 || [];
-        if (cancelled) return;
-        setReportMeta(items);
-        setHasMore(items.length >= PAGE_SIZE);
-        const targetId = reportId || items[0]?.报表ID;
-        if (targetId) {
-          const idx = items.findIndex((i) => i.报表ID === targetId);
-          if (idx >= 0) setIsFav(items[idx].is_favorited ?? false); // 阶段 31：星标状态
-          const detail = await getReport(targetId);
-          if (!cancelled && detail?.报表) {
-            setLocalReport(detail.报表);
-            setViewingReportId(detail.报表ID); // B4：以详情响应为准
-            setPrevTitle(detail.上一报表标题 || '');
-            if (idx >= 0) setCurrentIndex(idx);
+    // F-M4：搜索防抖 300ms——输入时不立即请求，停止输入后才刷新列表
+    const timer = setTimeout(() => {
+      let cancelled = false;
+      setLoading(true);
+      (async () => {
+        try {
+          const res = await listReports(PAGE_SIZE, 0, { favorites: favOnly ? 1 : 0, q: searchQ });
+          const items = res?.报表列表 || [];
+          if (cancelled) return;
+          setReportMeta(items);
+          setHasMore(items.length >= PAGE_SIZE);
+          const targetId = reportId || items[0]?.报表ID;
+          if (targetId) {
+            const idx = items.findIndex((i) => i.报表ID === targetId);
+            if (idx >= 0) setIsFav(items[idx].is_favorited ?? false); // 阶段 31：星标状态
+            const detail = await getReport(targetId);
+            if (!cancelled && detail?.报表) {
+              setLocalReport(detail.报表);
+              setViewingReportId(detail.报表ID); // B4：以详情响应为准
+              setPrevTitle(detail.上一报表标题 || '');
+              // F-M6：列表刷新后 currentIndex 收敛到有效范围（防越界渲染空白页）
+              if (idx >= 0) setCurrentIndex(Math.min(idx, items.length - 1));
+            }
           }
-        }
-      } catch (e) {
-        console.error('报表列表加载失败:', e);
-        setLoadError('报表加载失败，请检查后端服务是否可用');
-      } finally { if (!cancelled) setLoading(false); }
-    })();
-    return () => { cancelled = true; };
+        } catch (e) {
+          console.error('报表列表加载失败:', e);
+          setLoadError('报表加载失败，请检查后端服务是否可用');
+        } finally { if (!cancelled) setLoading(false); }
+      })();
+      return () => { cancelled = true; };
+    }, 300);
+    return () => clearTimeout(timer); // F-M4：防抖清理
   }, [reportId, favOnly, searchQ]);
 
   // 翻页（上一张/下一张）：从后端拉对应报表的详情
@@ -123,18 +128,23 @@ export default function Report() {
   const nextReport = () => switchTo(currentIndex + 1);
 
   // 加载更多历史报表：以当前列表长度作为 offset 向后翻页，追加到列表尾部
+  // F-M5：loadMoreSeqRef 序号守卫——加载更多期间切换搜索/收藏时，旧响应不追加到新列表
+  const loadMoreSeqRef = useRef(0);
   const handleLoadMore = async () => {
     if (loadingMore) return; // 防重复点击并发请求
+    const seq = ++loadMoreSeqRef.current;
     setLoadingMore(true);
     try {
       const res = await listReports(PAGE_SIZE, reportMeta.length);
+      if (loadMoreSeqRef.current !== seq) return; // 已有更新的操作，丢弃本次结果
       const extra = res?.报表列表 || [];
       setReportMeta((prev) => [...prev, ...extra]);
       setHasMore(extra.length >= PAGE_SIZE); // 这次没满页说明到底了
     } catch (e) {
+      if (loadMoreSeqRef.current !== seq) return;
       setLoadError('加载更多报表失败：' + (e.message || e));
     } finally {
-      setLoadingMore(false);
+      if (loadMoreSeqRef.current === seq) setLoadingMore(false);
     }
   };
 
@@ -150,9 +160,11 @@ export default function Report() {
     if (failed.length > 0) {
       setLoadError(`有 ${failed.length} 份报表删除失败，已保留`);
       setReportMeta(prev => prev.filter(item => !failed.includes(item.报表ID)));
+      setCurrentIndex(0); // F-M6：列表变化后 currentIndex 收敛，防越界
     } else {
       setReportMeta([]);
       setLocalReport(null);
+      setCurrentIndex(0); // F-M6
     }
   };
 

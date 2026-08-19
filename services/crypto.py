@@ -39,11 +39,16 @@ def 加密(value: str) -> str:
 
 
 def 解密(value: str) -> str:
-    """解密；无法解密（历史明文或密钥变更）时按原样返回并告警。"""
+    """解密；失败抛 ValueError（显式）。
+
+    M6 修复：解密失败不再静默按明文返回。
+    旧行为会把历史明文 key / 密钥轮换后无法解密的数据原样回传给调用方与内存，
+    形同把"密文"当作可用 Key 使用——在 Key 遗忘/密钥轮换后安全风险。
+    改为显式抛错，调用方捕获后降级为"未配置"。
+    """
     if not value:
         return value
     try:
         return _get_fernet().decrypt(value.encode()).decode()
     except (InvalidToken, ValueError) as exc:
-        logger.warning("LLM Key 解密失败（按明文兼容返回，保存时将重新加密）: %s", type(exc).__name__)
-        return value
+        raise ValueError("LLM Key 解密失败（密钥不匹配/历史明文）") from exc

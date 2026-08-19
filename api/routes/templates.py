@@ -46,6 +46,11 @@ def 保存模板(body: 模板请求, user: dict = Depends(get_current_user)) -> 
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"模板配置不合法：{exc.errors()[0]['msg'] if exc.errors() else '字段超限'}",
         )
+    # M18：模板 payload 无大小上限此前可无限膨胀（入库 JSON 列/读取时撑爆内存），
+    # 加 64KB 硬上限
+    import json as _json
+    if len(_json.dumps(body.payload, ensure_ascii=False, default=str)) > 64 * 1024:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="模板配置过大（上限 64KB）")
     tid = template_repo.保存模板(user["user_id"], body.名称.strip(), body.payload)
     return {"模板ID": tid, "message": "模板已保存"}
 

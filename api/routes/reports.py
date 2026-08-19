@@ -225,7 +225,10 @@ def _注入追问上下文(
             数据 = prev.get("报表数据", [])
             if 数据:
                 import json
-                样例行 = f"  数据样例（前 5 条）：{json.dumps(数据[:5], ensure_ascii=False)}"
+                # M20：单元格值截断到 80 字符——此前超宽单元格（如超长结论列）
+                # 直接进 json.dumps，撑爆追问上下文
+                样例 = [{k: (str(v)[:80] if v is not None else v) for k, v in (row or {}).items()} for row in 数据[:5]]
+                样例行 = f"  数据样例（前 5 条）：{json.dumps(样例, ensure_ascii=False)}"
 
         cost = len(图表行) + len(结论行) + len(样例行)
         # 超预算且非最新轮：只保留一行主题摘要（链头不丢，细节让位给最新语境）
@@ -375,7 +378,21 @@ def generate_report_stream(
         try:
             event_q.put_nowait(ev)
         except queue.Full:
-            pass
+            if ev is None:
+                # S7 修复：结束哨兵必须送达——队列满（客户端断开、无人消费）
+                # 时清空积压腾位再放哨兵，否则 event_stream 永远等不到 None 而
+                # 挂死，流式线程与 SSE 连接永久泄漏。
+                # 注意：仅在“真的满”时才清空，正常排队中的 done/error 等合法
+                # 事件不得被提前丢弃（旧实现无条件清空导致 done 丢失）。
+                try:
+                    while True:
+                        event_q.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    event_q.put_nowait(ev)
+                except queue.Full:
+                    pass
 
     def worker() -> None:
         try:
@@ -474,18 +491,19 @@ def export_report(
     user: dict = Depends(get_current_user),
 ) -> StreamingResponse:
     """导出报表：xlsx / csv / pdf（仅限归属用户）。"""
-    # P2 加固：数据导出属敏感操作，记审计
+    from repositories import report_repo
+    item = report_repo.读取报表(user["user_id"], report_id)
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报表不存在")
+    # M14：审计写在存在性校验之后——此前先审计后校验，不存在的报表也会
+    # 被灌审计记录（可被用于污染审计日志）
     from repositories import audit_repo
     audit_repo.记录(user["user_id"], "导出报表", target_type="report", target_id=report_id, detail=f"format={format}")
     import io
     from urllib.parse import quote
 
     import pandas as pd
-    from repositories import report_repo
 
-    item = report_repo.读取报表(user["user_id"], report_id)
-    if not item:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报表不存在")
     report = item["报表"]
     rows = report.get("报表数据", [])
     标题 = (item["标题"] or "报表").replace('"', '').replace('\\', '_')
@@ -842,6 +860,9 @@ def _多智能体报表(
         )
 
     # 用多智能体返回的意图走标准报表链路
+    # S10 修复：llm_config=None 走规则路径——旧实现这里第二次跑完整 LLM
+    # （费用/延迟近翻倍）；多智能体已产出意图，二轮无需再让 LLM 决策。
+    # S11 合并：筛选条件/topN/对比 以 LLM 产出优先，缺失回退 payload。
     return 生成报表数据(
         df=df,
         分析需求=payload.分析需求,
@@ -850,10 +871,10 @@ def _多智能体报表(
         y轴=result.get("y轴", []),
         分组字段=result.get("分组字段"),
         聚合方式=result.get("聚合方式", "求和"),
-        筛选条件=[c.model_dump() for c in payload.筛选条件],
-        topN=payload.topN,
-        对比=payload.对比,
-        llm_config=llm_config,
+        筛选条件=result.get("筛选条件") or [c.model_dump() for c in payload.筛选条件],
+        topN=result.get("topN", payload.topN),
+        对比=result.get("对比", payload.对比),
+        llm_config=None,
         on_event=on_event,
         user_id=user_id,
     )
@@ -863,20 +884,21 @@ def _多智能体报表(
 
 
 def _构建响应(payload: ReportGenerateRequest, report: Dict[str, Any], report_id: str = "") -> ReportGenerateResponse:
-    报告_rows = report["报表数据"]
+    报告_rows = report.get("报表数据", [])
+    # M15：硬索引改 .get() 兜底——此前任一字段缺失（旧库/异常报表）直接 KeyError 500
     return ReportGenerateResponse(
         报表ID=report_id or uuid4().hex,
         数据集ID=payload.数据集ID,
-        标题=report["标题"],
-        图表类型=report["图表类型"],
-        图表配置=report["图表配置"],
+        标题=report.get("标题", "未命名报表"),
+        图表类型=report.get("图表类型", "自动推荐"),
+        图表配置=report.get("图表配置", {}),
         报表数据=报告_rows,
-        数据画像=report["数据画像"],
-        推荐说明=report["推荐说明"],
-        风险提示=report["风险提示"],
-        **{"Agent Trace": report["Agent Trace"]},
-        导出数据=report["导出数据"],
-        结论=report["结论"],
+        数据画像=report.get("数据画像", {}),
+        推荐说明=report.get("推荐说明", {}),
+        风险提示=report.get("风险提示", []),
+        **{"Agent Trace": report.get("Agent Trace", [])},
+        导出数据=report.get("导出数据", []),
+        结论=report.get("结论", ""),
         意图来源=report.get("意图来源", "无"),
         LLM失败原因=report.get("LLM失败原因", ""),
         agent_mode=payload.agent_mode,

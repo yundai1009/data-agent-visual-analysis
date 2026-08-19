@@ -41,19 +41,38 @@ def 初始化用户表() -> None:
         # 旧库幂等迁移：缺 email 列则补列（SQLite 的 ALTER TABLE ADD COLUMN
         # 不允许带 UNIQUE 约束，因此用唯一索引实现邮箱唯一；多个 NULL 不冲突）
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+        # M9：ALTER 迁移加 try/except——冷启动多进程/多测试 client 并发执行
+        # 迁移时，两个连接同时通过列检查后先后 ALTER，后者报 duplicate column；
+        # 捕获该异常视为"列已存在"（幂等迁移语义）。
         if "email" not in columns:
-            conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
+            try:
+                conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
+            except Exception as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
             logger.info("users 表已迁移：新增 email 列")
         # 账号级 LLM Key（BYOK 后端存储）：旧库幂等迁移
         if "llm_api_key" not in columns:
-            conn.execute("ALTER TABLE users ADD COLUMN llm_api_key TEXT")
+            try:
+                conn.execute("ALTER TABLE users ADD COLUMN llm_api_key TEXT")
+            except Exception as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
             logger.info("users 表已迁移：新增 llm_api_key 列")
         # 用户自定义 LLM 供应商（JSON 数组，阶段 13.6）
         if "llm_custom_providers" not in columns:
-            conn.execute("ALTER TABLE users ADD COLUMN llm_custom_providers TEXT")
+            try:
+                conn.execute("ALTER TABLE users ADD COLUMN llm_custom_providers TEXT")
+            except Exception as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
         # P1 加固：token_version（改密/改用户名时 +1，旧 JWT 吊销）
         if "token_version" not in columns:
-            conn.execute("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0")
+            try:
+                conn.execute("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0")
+            except Exception as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
             logger.info("users 表已迁移：新增 llm_custom_providers 列")
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)"
@@ -137,19 +156,21 @@ def 确保管理员存在(username: str, password_hash: str) -> Dict[str, Any]:
     """幂等确保指定用户名的种子管理员存在。
 
     按 SEED_ADMIN_USERNAME 精确匹配（而非"任意 admin 存在就跳过"）：
-    - 存在：角色已是 admin 则不动；否则升级为 admin 并告警
+    - 存在且已是 admin：不动
+    - 存在但角色非 admin：S3 修复——抛 ValueError 拒绝升级。
+      旧行为"静默升级为 admin"存在提权漏洞：演示模式（AUTH_ENABLED=false）
+      下注册的同名普通用户（保留原密码）会在正式启动时被悄悄提权为管理员。
+      正确姿势是拒绝并让运维更换种子管理员用户名，而不是改写他人账号角色。
     - 不存在：创建 admin 用户
     """
     初始化用户表()
     user = 按用户名查询(username)
     if user:
         if user["role"] != "admin":
-            with _write_lock, _get_conn() as conn:
-                conn.execute(
-                    "UPDATE users SET role = 'admin', updated_at = ? WHERE user_id = ?",
-                    (_now_iso(), user["user_id"]),
-                )
-            logger.warning("用户 %s 已存在但角色非 admin，已升级为 admin", username)
+            raise ValueError(
+                f"种子管理员用户名「{username}」已被同名非管理员用户占用，"
+                "拒绝静默提权；请更换 SEED_ADMIN_USERNAME 后重启"
+            )
         return user
     return 创建用户(username, password_hash, role="admin")
 
@@ -178,7 +199,14 @@ def 读取LLMKey(user_id: str) -> str:
             (user_id,),
         ).fetchone()
     stored = (row["llm_api_key"] or "") if row else ""
-    return 解密(stored) if stored else ""
+    if not stored:
+        return ""
+    try:
+        return 解密(stored)
+    except ValueError:
+        # M6：解密失败（历史明文/密钥轮换）→ 视为未配置，安全降级不泄露
+        logger.warning("LLM Key 解密失败，按未配置处理（user=%s）", user_id)
+        return ""
 
 
 def 清除LLMKey(user_id: str) -> None:
@@ -191,12 +219,17 @@ def 清除LLMKey(user_id: str) -> None:
         )
 
 
-def 读取token版本(user_id: str) -> int:
-    """读取用户 token_version（P1 加固：JWT 吊销用）。"""
+def 读取token版本(user_id: str) -> Optional[int]:
+    """读取用户 token_version（P1 加固：JWT 吊销用）。
+
+    S4 修复：用户不存在返回 None（而非 0）——旧行为使删号用户的旧 JWT
+    （ver=0）仍能通过吊销对账，形成"删号后旧 token 继续有效"的漏洞；
+    调用方拿到 None 必须拒绝（401）。
+    """
     初始化用户表()
     with _get_conn() as conn:
         row = conn.execute("SELECT token_version FROM users WHERE user_id = ?", (user_id,)).fetchone()
-    return int(row["token_version"] or 0) if row else 0
+    return int(row["token_version"] or 0) if row else None
 
 
 def 增加token版本(user_id: str) -> None:
@@ -313,7 +346,11 @@ def 读取自定义供应商(user_id: str) -> list:
             return []
         for p in data:
             if isinstance(p, dict) and p.get("api_key"):
-                p["api_key"] = 解密(p["api_key"])
+                try:
+                    p["api_key"] = 解密(p["api_key"])
+                except ValueError:
+                    # M6：历史明文/密钥轮换导致解密失败 → 该供应商 Key 视为无效
+                    p["api_key"] = ""
         return data
     except (ValueError, TypeError):
         return []

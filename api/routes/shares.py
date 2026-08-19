@@ -68,11 +68,13 @@ def 公开查看报表(
     if not share:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分享链接不存在或已过期")
 
-    # 密码保护：分享设置了密码时，请求需带 ?password= 且匹配，否则 401；连续失败限频 429
+    # 密码保护：分享设置了密码时，请求需带密码且匹配，否则 401；连续失败限频 429
+    # M16：密码从 URL query 移入请求头 X-Share-Password（URL 会进浏览器历史/
+    # 访问日志，明文泄露）；query 参数保留向后兼容（旧分享链接）。
     if share["需密码"]:
         if _密码尝试超限(share_id):
             raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="尝试次数过多，请稍后再试")
-        given = (request.query_params.get("password") or "").strip()
+        given = (request.headers.get("X-Share-Password") or request.query_params.get("password") or "").strip()
         import hashlib
         import hmac as _hmac
         from config.settings import EnvConfig
@@ -98,6 +100,7 @@ def 公开查看报表(
     report = item["报表"]
     view = {k: report.get(k) for k in _公开字段 if k in report}
     view["标题"] = item["标题"]
-    view["创建者"] = share["user_id"]
+    # M17：公开分享不再暴露内部 user_id（此前直接透传，可被用于跨账号枚举）——
+    # 前端 ShareView 未使用该字段，直接移除。
     view["过期时间"] = share["过期时间"]
     return view

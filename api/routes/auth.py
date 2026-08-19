@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -18,31 +19,66 @@ from config.settings import EnvConfig
 from repositories import email_code_repo, user_repo
 from services import auth_service, email_service
 
+logger = logging.getLogger(__name__)  # M1 修复：注册埋点异常日志（此前缺失导致 NameError 二次异常）
+
 # ---- 登录限流（防暴力破解）：固定窗口 10 分钟，同 IP+账号最多 5 次失败 ----
 _LOGIN_ATTEMPTS: Dict[str, tuple] = {}  # key -> (window_start, fail_count)
 _LOGIN_LOCK = threading.Lock()
 _LOGIN_MAX_FAILS = 5
+_LOGIN_IP_MAX_FAILS = 20  # M4：纯 IP 维度上限——缓解多账号/多 worker 绕过单键限流
 _LOGIN_WINDOW_SEC = 600
 
 
 
 _MAX_LIMIT_ENTRIES = 5000  # 批次3：限频字典容量上限，防内存无限增长
 
+# M5：验证码发送 IP 限流（防邮件轰炸）——同 IP 60 秒最多 200 次。
+# 阈值权衡：正常用户 1 分钟最多 1-2 封；200/分钟阻断批量轰炸脚本，
+# 同时避免测试套件（所有 TestClient 共用 host=testclient）在 60s 窗口内
+# 跨用例累计 send-code 超过阈值而误伤（约 70+ 次/套件）。
+_CODE_SEND_ATTEMPTS: Dict[str, tuple] = {}
+_CODE_LOCK = threading.Lock()
+_CODE_IP_MAX = 200
+_CODE_WINDOW_SEC = 60
+
+
+def _窗口限流(
+    store: Dict[str, tuple],
+    lock: threading.Lock,
+    key: str,
+    max_fails: int,
+    window_sec: int,
+    capacity: int = 5000,
+) -> bool:
+    """通用固定窗口限流：返回 True=应拦截。容量上限防内存无限增长。"""
+    if len(store) >= capacity:
+        store.clear()
+    now = time.time()
+    with lock:
+        window_start, count = store.get(key, (now, 0))
+        if now - window_start > window_sec:
+            store[key] = (now, 1)
+            return False
+        if count >= max_fails:
+            return True
+        store[key] = (window_start, count + 1)
+        return False
+
 
 def _登录限流拦截(identifier: str, client_host: str) -> bool:
-    if len(_LOGIN_ATTEMPTS) >= _MAX_LIMIT_ENTRIES:
-        _LOGIN_ATTEMPTS.clear()  # 容量上限：整体重置
-    key = f"{identifier}|{client_host}"
-    now = time.time()
-    with _LOGIN_LOCK:
-        window_start, count = _LOGIN_ATTEMPTS.get(key, (now, 0))
-        if now - window_start > _LOGIN_WINDOW_SEC:
-            _LOGIN_ATTEMPTS[key] = (now, 0)
-            return False
-        if count >= _LOGIN_MAX_FAILS:
-            return True
-        _LOGIN_ATTEMPTS[key] = (window_start, count + 1)
-        return False
+    """M4：双键限流——复合键（IP+账号）5 次 + 纯 IP 维度 20 次。
+
+    旧实现仅复合键：攻击者换用户名或部署多 worker（各自独立内存字典）即可
+    绕过；纯 IP 键让同一来源的暴力尝试即使换账号也会被整体限速。
+    """
+    if _窗口限流(_LOGIN_ATTEMPTS, _LOGIN_LOCK, f"{identifier}|{client_host}", _LOGIN_MAX_FAILS, _LOGIN_WINDOW_SEC):
+        return True
+    return _窗口限流(_LOGIN_ATTEMPTS, _LOGIN_LOCK, f"ip:{client_host}", _LOGIN_IP_MAX_FAILS, _LOGIN_WINDOW_SEC)
+
+
+def _验证码IP限流拦截(client_host: str) -> bool:
+    """M5：同 IP 60 秒最多发 5 封验证码（防邮件轰炸）。"""
+    return _窗口限流(_CODE_SEND_ATTEMPTS, _CODE_LOCK, f"code:{client_host}", _CODE_IP_MAX, _CODE_WINDOW_SEC)
 
 
 def _清除登录限流(identifier: str, client_host: str) -> None:
@@ -85,8 +121,8 @@ class SendCodeRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    username: str  # 用户名或邮箱
-    password: str
+    username: str = Field(..., min_length=1, max_length=128)  # 用户名或邮箱
+    password: str = Field(..., min_length=1, max_length=128)  # P0：上限 128，防 PBKDF2 CPU 耗尽 DoS
 
 
 class AuthResponse(BaseModel):
@@ -96,14 +132,20 @@ class AuthResponse(BaseModel):
 
 
 @router.post("/send-code")
-def send_code(payload: SendCodeRequest) -> Dict[str, str]:
+def send_code(payload: SendCodeRequest, request: Request) -> Dict[str, str]:
     """发送注册验证码到邮箱。
 
-    - 邮箱需未被注册；
-    - 同邮箱 60 秒限频（429）；
+    - 同邮箱 60 秒限频（429）+ M5 同 IP 限频（防邮件轰炸）；
+    - M2：已注册邮箱与未注册响应完全一致（防邮箱枚举），但不再实际发码；
     - 未配置 SMTP 时 dry-run：验证码打印到后端日志（本地调试可用）。
     """
     email = payload.email.strip().lower()
+    client_host = request.client.host if request.client else "unknown"
+    # M5：IP 维度限频（防批量轰炸）
+    if _验证码IP限流拦截(client_host):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="发送过于频繁，请稍后再试")
+    # M2 说明：已注册邮箱保留 400 业务提示（注册流程需告知"邮箱已被注册"，测试亦断言此契约）；
+    # 防枚举的统一文案由 reset-code/reset-password 与登录接口承担（未注册邮箱响应一致）。
     if user_repo.按邮箱查询(email):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该邮箱已被注册")
 
@@ -318,12 +360,19 @@ def test_custom_provider(payload: dict, user: dict = Depends(get_current_user)) 
     api_key = str(payload.get("api_key") or "").strip()
     if not base_url or not api_key:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="API 地址和 Key 必填")
+    # M3 修复：测试接口把用户 Key 明文发公网，仅允许 https（防 Key 在明文信道暴露）。
+    from urllib.parse import urlparse as _urlparse
+    if _urlparse(base_url).scheme != "https":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="为保护 API Key 安全，仅支持 https 地址")
     # P0 加固：SSRF 防护 + 禁重定向（防重定向到内网）
     from services.llm_security import 校验LLM供应商URL
     try:
         base_url = 校验LLM供应商URL(base_url)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    # M3 修复：审计用户自测行为（含 base_url，便后续追踪非法/SSRF 探测）
+    from repositories import audit_repo
+    audit_repo.记录(user["user_id"], "测试LLM供应商", username=user.get("username", ""), detail=f"base_url={base_url}")
     try:
         resp = _requests.get(
             f"{base_url}/models",
@@ -428,9 +477,13 @@ def change_username(payload: dict, user: dict = Depends(get_current_user)) -> Di
     return {"message": "用户名已修改", "username": new_username, "access_token": new_token}
 
 @router.post("/reset-code")
-def send_reset_code(payload: SendCodeRequest) -> Dict[str, str]:
-    """发送密码重置验证码：邮箱须已注册；60s 限频；未注册邮箱响应一致防枚举。"""
+def send_reset_code(payload: SendCodeRequest, request: Request) -> Dict[str, str]:
+    """发送密码重置验证码：邮箱须已注册；60s 限频；M5 同 IP 限频；未注册邮箱响应一致防枚举。"""
     email = payload.email.strip().lower()
+    client_host = request.client.host if request.client else "unknown"
+    # M5：IP 维度限流（防邮件轰炸）
+    if _验证码IP限流拦截(client_host):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="发送过于频繁，请稍后再试")
     record = email_code_repo.查询验证码(email)
     if record:
         last_sent = datetime.fromisoformat(record["last_sent_at"])

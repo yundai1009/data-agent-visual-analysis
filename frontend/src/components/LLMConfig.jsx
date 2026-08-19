@@ -21,8 +21,14 @@ const STORAGE_KEY = 'llm_config';
 const DEFAULTS = { provider: 'deepseek', model: 'deepseek-chat' };
 
 function loadLLMConfig() {
-  try { const c = localStorage.getItem(STORAGE_KEY); return c ? JSON.parse(c) : null; }
-  catch { return null; }
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    const sess = sessionStorage.getItem(STORAGE_KEY);
+    const config = raw ? JSON.parse(raw) : {};
+    // F-M10：sessionStorage 覆盖（仅本次会话的 Key 优先于持久配置）
+    if (sess) return { ...config, ...JSON.parse(sess) };
+    return raw ? config : null;
+  } catch { return null; }
 }
 
 export default function LLMConfig() {
@@ -52,13 +58,27 @@ export default function LLMConfig() {
 
   const handleSave = async () => {
     const finalModel = modelOptions.includes(config.model) ? config.model : (activeProvider?.default || modelOptions[0] || '');
-    const final = { provider: activeProvider?.id || config.provider, model: finalModel, apiKey: apiKey.trim() };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(final));
-    setConfig(final);
-    setSaved(true);
-    if (final.apiKey) {
-      try { await saveAccountLLMKey(final.apiKey); refreshAll(); } catch { /* ignore */ }
+    const key = apiKey.trim();
+    const providerId = activeProvider?.id || config.provider;
+    if (key) {
+      // F-M10 修复：Key 持久化必须二次确认；取消则"仅本次会话"（sessionStorage）。
+      const keep = window.confirm(
+        '将 API Key 保存到本机浏览器（下次打开自动带出）？\n确定＝长期保存到 localStorage；取消＝仅本次会话使用，关闭页面后需重新填写。'
+      );
+      try {
+        const payload = { provider: providerId, model: finalModel, apiKey: key };
+        if (keep) localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+        else sessionStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      } catch { /* 隐私模式等：忽略，仅内存生效 */ }
+      // 保存到账号（服务端加密落库）也需单独确认
+      if (keep && window.confirm('同时绑定到账号？（加密存服务端，登录后任意设备自动生效）')) {
+        try { await saveAccountLLMKey(key); refreshAll(); } catch { /* ignore */ }
+      }
+    } else {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ provider: providerId, model: finalModel, apiKey: '' })); } catch { /* ignore */ }
     }
+    setConfig({ provider: providerId, model: finalModel, apiKey: key });
+    setSaved(true);
     setOpen(false);
   };
 
@@ -89,9 +109,17 @@ export default function LLMConfig() {
     setFormError('');
     try {
       await saveCustomProvider({ ...form, api_key: form.api_key });
-      // 保存后自动选中该自定义供应商
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ provider: form.name, model: form.default || '', apiKey: form.api_key }));
-      setConfig({ provider: form.name, model: form.default || '', apiKey: form.api_key });
+      // F-M10 修复：写入 localStorage 的 Key 也需确认；取消则"仅本次会话"。
+      const key = form.api_key || '';
+      const payload = { provider: form.name, model: form.default || '', apiKey: key };
+      try {
+        if (key && !window.confirm('将 API Key 保存到本机浏览器（下次打开自动带出）？取消＝仅本次会话使用。')) {
+          sessionStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+        } else {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+        }
+      } catch { /* 隐私模式等：忽略 */ }
+      setConfig({ provider: form.name, model: form.default || '', apiKey: key });
       setSaved(true);
       setForm({ name: '', base_url: '', api_key: '', models: [], default: '' });
       refreshAll();
@@ -294,7 +322,8 @@ export default function LLMConfig() {
                     <button
                       className="w-full py-2 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-deep transition-all"
                       onClick={handleAddCustom}
-                    >保存供应商</button>
+                      disabled={testing} // 优化：测试连通性期间禁保存，防误提交未验证配置
+                    >{testing ? '测试中…' : '保存供应商'}</button>
                   </div>
                 </>
               )}

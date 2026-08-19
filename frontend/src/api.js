@@ -18,11 +18,15 @@ const BASE = '';
 
 // 从 localStorage 加载用户选择的 LLM provider + model + 可选自带 Key（BYOK）
 // URL/Base-URL 永不从前端传；Key 仅用于服务端 Authorization 头（防止 Key 明文出现在网络面板）
+// F-M10：合并 sessionStorage——用户选择"仅本次会话"时 key 只存 sessionStorage（关闭页面即丢），
+// session 优先级高于 localStorage（key 的覆盖只影响本会话）。
 function getLLMHeaders() {
   try {
+    const config = {};
     const raw = localStorage.getItem('llm_config');
-    if (!raw) return {};
-    const config = JSON.parse(raw);
+    const sessRaw = sessionStorage.getItem('llm_config');
+    if (raw) Object.assign(config, JSON.parse(raw));
+    if (sessRaw) Object.assign(config, JSON.parse(sessRaw));
     const headers = {};
     if (config.provider) headers['X-LLM-Provider'] = config.provider;
     if (config.model) headers['X-LLM-Model'] = config.model;
@@ -85,10 +89,18 @@ async function request(url, options = {}) {
     // 删除后果：所有接口返回 401，用户连登录外的任何页面都进不去（或界面全报错）。
     // 替代方案：用 axios 拦截器统一加（代码更少），但会多一个依赖；原生 fetch 封装
     //   已足够，且保持与 SSE 流式请求同一套 header 拼装逻辑。
+    // F-S1 修复：options 展开在前，headers 最后合并；signal 优先沿用调用方传入的
+    //   signal。这样带自定义 headers 的调用（如 saveTemplate/createSchedule）
+    //   不会被 ...options.headers 全盘覆盖 Authorization，避免 100% 401。
     const res = await fetch(`${BASE}${url}`, {
-      headers: { 'Content-Type': 'application/json', ...authHeaders, ...llmHeaders, ...options.headers },
-      signal: controller.signal,
       ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders,
+        ...llmHeaders,
+        ...options.headers,
+      },
+      signal: options.signal || controller.signal,
     });
     if (!res.ok) {
       // 401 专线处理：先全局登出，再抛错误给调用方展示（不重复走 parseError 的通用路径）
@@ -107,10 +119,15 @@ async function request(url, options = {}) {
       err.status = 0;
       throw err;
     }
-    if (e instanceof TypeError && e.message?.includes('Failed to fetch')) {
-      const err = new Error('连不上服务器，请检查后端服务是否已启动');
-      err.status = 0;
-      throw err;
+    if (e instanceof TypeError) {
+      // F-M：Firefox 网络错误文案是 "NetworkError when attempting to fetch resource"
+      // （非 Failed to fetch），Chrome/Safari 另有 "Load failed"——统一识别为断网
+      const msg = e.message || '';
+      if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('Load failed')) {
+        const err = new Error('连不上服务器，请检查后端服务是否已启动');
+        err.status = 0;
+        throw err;
+      }
     }
     throw e;
   } finally {
@@ -332,6 +349,8 @@ export async function generateReportStream(payload, { onEvent, signal } = {}) {
     if (res.status === 401) handleAuthExpired('/reports/generate-stream');
     throw await parseError(res);
   }
+  // F-M8 修复：res.body 可能为空（如空 204 响应）→ 直接抛错而非 TypeError 崩溃
+  if (!res.body) throw new Error('SSE 响应体为空，无法读取分析流');
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = ''; // 帧缓冲：SSE 帧以双换行 \n\n 结束，需要攒够再解析，避免截断
@@ -360,19 +379,23 @@ export async function generateReportStream(payload, { onEvent, signal } = {}) {
       // 一帧内可能有多行：只认 data: 前缀的行（SSE 标准字段），其余忽略
       for (const raw of chunk.split('\n')) {
         if (raw.startsWith('data: ')) {
+          let ev;
           try {
             // 【关键行】剥掉 "data: " 前缀后 JSON.parse，还原事件对象 {type, data}。
-            // 为什么：SSE 传输层是文本协议，结构化信息必须序列化成 JSON；
-            //   解析成功才交给 onEvent，畸形帧直接跳过不让它弄崩整个分析流程。
-            // 删除后果：前端拿不到 step/done/error 事件，决策流永远停在"唤醒中"。
-            // 替代方案：不用 JSON 用自定义分隔符协议（解析更脆弱），JSON 是标准做法。
-            const ev = JSON.parse(raw.slice(6));
+            // 畸形帧直接跳过，不让它弄崩整个分析流程。
+            ev = JSON.parse(raw.slice(6));
+          } catch { continue; }
+          // F-M9 修复：onEvent 抛错不再被外层 catch 吞掉——单独捕获并记录，
+          // 避免事件处理异常被静默丢弃（如页面崩溃但用户看到"分析中"卡死）。
+          try {
             // onEvent 返回 'stop'（done/error 事件）时主动取消读取，提前结束流
             if (onEvent && onEvent(ev) === 'stop') {
               await reader.cancel();
               return;
             }
-          } catch { /* 忽略畸形帧 */ }
+          } catch (e) {
+            console.error('SSE onEvent 处理异常:', e);
+          }
         }
       }
     }
@@ -437,48 +460,77 @@ export async function getReport(reportId) {
 }
 
 // 导出报表（带 token 下载，返回 { blob, filename }）
+// 优化：并入统一超时保护（fetch 无默认超时，后端挂起时按钮永久 loading）
 export async function exportReport(reportId, format) {
   const token = localStorage.getItem('access_token') || '';
-  const res = await fetch(`/reports/${reportId}/export?format=${format}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  if (!res.ok) {
-    if (res.status === 401) handleAuthExpired(`/reports/${reportId}/export`); // 批次3：走全局登出
-    const err = new Error(`导出失败（HTTP ${res.status}）`);
-    err.status = res.status;
-    throw err;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(`/reports/${reportId}/export?format=${format}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      if (res.status === 401) handleAuthExpired(`/reports/${reportId}/export`); // 批次3：走全局登出
+      const err = new Error(`导出失败（HTTP ${res.status}）`);
+      err.status = res.status;
+      throw err;
+    }
+    const blob = await res.blob();
+    // 从 Content-Disposition 解析文件名（UTF-8 中文走 RFC 5987 编码）
+    return {
+      blob,
+      filename: parseContentDispositionFilename(res.headers.get('Content-Disposition'), `report.${format}`),
+    };
+  } catch (e) {
+    if (e?.name === 'AbortError') {
+      const err = new Error('导出超时了，请重试');
+      err.status = 0;
+      throw err;
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
-  const blob = await res.blob();
-  // 从 Content-Disposition 解析文件名（UTF-8 中文走 RFC 5987 编码）
-  return {
-    blob,
-    filename: parseContentDispositionFilename(res.headers.get('Content-Disposition'), `report.${format}`),
-  };
 }
 
 // 阶段 30：完整 PDF 报告导出（图表 PNG + 结论 + 数据表 + Trace）
 // 前端把 ECharts 渲染的图表 base64 dataURL 传上来，后端 reportlab 排版成单文件 PDF
 export async function exportFullReport(reportId, chartPng = '') {
   const token = localStorage.getItem('access_token') || '';
-  const res = await fetch(`/reports/${reportId}/export-report`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify({ chart_png: chartPng }),
-  });
-  if (!res.ok) {
-    if (res.status === 401) handleAuthExpired(`/reports/${reportId}/export-report`);
-    const err = new Error(`导出失败（HTTP ${res.status}）`);
-    err.status = res.status;
-    throw err;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(`/reports/${reportId}/export-report`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ chart_png: chartPng }),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      if (res.status === 401) handleAuthExpired(`/reports/${reportId}/export-report`);
+      const err = new Error(`导出失败（HTTP ${res.status}）`);
+      err.status = res.status;
+      throw err;
+    }
+    const blob = await res.blob();
+    return {
+      blob,
+      filename: parseContentDispositionFilename(res.headers.get('Content-Disposition'), 'report.pdf'),
+    };
+  } catch (e) {
+    if (e?.name === 'AbortError') {
+      const err = new Error('导出超时了，请重试');
+      err.status = 0;
+      throw err;
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
-  const blob = await res.blob();
-  return {
-    blob,
-    filename: parseContentDispositionFilename(res.headers.get('Content-Disposition'), 'report.pdf'),
-  };
 }
 
 export async function deleteReport(reportId) {
@@ -509,18 +561,36 @@ export async function revokeShare(reportId, shareId) {
 
 // 公开只读访问（无 token；可选密码）
 export async function getSharedReport(shareId, password = '') {
-  const q = password ? `?password=${encodeURIComponent(password)}` : '';
-  const res = await fetch(`/share-data/${shareId}${q}`);
-  if (!res.ok) {
-    const err = new Error(
-      res.status === 404 ? '分享链接不存在或已过期'
-        : res.status === 401 ? '需要访问密码'
-          : `访问失败（HTTP ${res.status}）`,
-    );
-    err.status = res.status;
-    throw err;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(`/share-data/${shareId}`, {
+      // M16：密码走请求头 X-Share-Password（此前拼进 URL query，会进浏览器
+      // 历史/服务器日志明文泄露）
+      headers: password ? { 'X-Share-Password': password } : {},
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const err = new Error(
+        res.status === 404 ? '分享链接不存在或已过期'
+          : res.status === 401 ? '需要访问密码'
+            : res.status === 429 ? '尝试次数过多，请稍后再试'
+              : `访问失败（HTTP ${res.status}）`,
+      );
+      err.status = res.status;
+      throw err;
+    }
+    return res.json();
+  } catch (e) {
+    if (e?.name === 'AbortError') {
+      const err = new Error('加载超时了，请重试');
+      err.status = 0;
+      throw err;
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
-  return res.json();
 }
 
 // 分析历史重放：用原报表参数重新生成（返回新报表）

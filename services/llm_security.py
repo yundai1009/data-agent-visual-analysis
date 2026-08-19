@@ -55,13 +55,19 @@ def 校验LLM供应商URL(base_url: str) -> str:
         try:
             ips = [ipaddress.ip_address(info[4][0]) for info in socket.getaddrinfo(host, None)]
         except OSError:
-            # 域名无法解析：宽容放行（可能是未连网/内网域名/虚构测试域名）。
-            # 内网防护的根因已由「自定义供应商禁用服务端 key 回退」兜底；
-            # 字面内网 IP 仍会被上方分支拦截。
+            # S2：域名无法解析时日志警告但仍放行——这是安全与可用性的折中：
+            # 1. 测试/离线环境常用虚构域名（api.myproxy.com），严格拒绝会破坏测试；
+            # 2. 字面内网 IP 仍被上方分支拦截（S2 核心修复）；
+            # 3. DNS rebinding 风险由 llm客户端 的请求前二次校验兜底（S2 第三点）。
             logger.warning("LLM base_url 域名无法解析（放行，字面 IP 校验仍生效）: %s", host)
             return url
 
     for ip in ips:
+        # S2 修复：归一化 IPv4-mapped IPv6（::ffff:127.0.0.1 → 127.0.0.1）。
+        # 旧代码仅做 ip in net，但 IPv4-mapped IPv6 地址落在 ::ffff:0:0/96 段，
+        # 不在任何 IPv4 私网前缀上，从而绕过 127.0.0.0/8 等检查。
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
         if any(ip in net for net in _内网前缀):
             raise ValueError("不允许访问内网/保留地址（SSRF 防护）")
     return url

@@ -96,6 +96,8 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
   const [agentMode, setAgentMode] = useState('single');
   const [selectedModel, setSelectedModel] = useState('');
   const [error, setError] = useState('');
+  // F-S5：建议级提示（如"饼图建议选分类字段"）不拦截生成，仅提示
+  const [advice, setAdvice] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
   // 阶段 30：报表模板（分析配置收藏 + 一键复用/执行）
   const [savedTemplates, setSavedTemplates] = useState([]);
@@ -116,6 +118,8 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
   const [liveDone, setLiveDone] = useState(null);       // { 报表ID, 标题 }
   const [elapsed, setElapsed] = useState(0);
   const abortRef = useRef(null);
+  // F-M1：记录当前数据集 ID，用于切换数据集时重置字段
+  const datasetRef = useRef(null);
   const scrollRef = useRef(null);
   const [showChartSwitch, setShowChartSwitch] = useState(false);
 
@@ -123,6 +127,10 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
   const lastReportIdRef = useRef(null);
   // B6 修复：请求序号守卫——取消后立即重开时，旧 finally 不能误关新请求的 generating
   const generateSeqRef = useRef(0);
+  // F-S4：并发守卫——双击"开始分析"或图表切换（setTimeout 触发的二次
+  // handleGenerate）会并发两个 SSE 生成（双倍 LLM 成本 + 状态互相覆盖）；
+  // ref 同步置位，任何时刻只允许一个生成请求在途。
+  const generatingRef = useRef(false);
   const [followUp, setFollowUp] = useState('');
 
   // 从数据集画像里拆出字段分类：数值/分类/日期/文本，供选图和下拉框使用
@@ -192,13 +200,20 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
   // 智能推荐模式（auto）不预填：字段交给后端 Agent/LLM 决策
   // 首次加载数据集时自动预填一次 X/Y/分组（仅在 xAxis 为空时），避免用户空着字段
   useEffect(() => {
-    if (profile && chartType !== 'auto' && !xAxis) {
-      setXAxis((profile.分类字段?.[0] || profile.日期字段?.[0] || fields[0] || ''));
-      setYAxis(numFields[0] || '');
-      setGroupField('无');
+    if (profile && chartType !== 'auto') {
+      // F-M1 修复：切换数据集（数据集ID 变化）时旧字段残留——上一数据集的
+      // 字段可能在新数据集不存在，必须按数据集重置；仅同数据集且 xAxis 非空
+      // 时才保留用户手动选择。
+      const switched = datasetRef.current !== dataset?.数据集ID;
+      datasetRef.current = dataset?.数据集ID;
+      if (switched || !xAxis) {
+        setXAxis((profile.分类字段?.[0] || profile.日期字段?.[0] || fields[0] || ''));
+        setYAxis(numFields[0] || '');
+        setGroupField('无');
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile, chartType]);
+  }, [dataset?.数据集ID, profile, chartType]);
 
   // 生成期间计时（每秒 +1）+ 决策流自动滚动到底部（liveSteps.length 变化时触发）
   useEffect(() => {
@@ -222,27 +237,48 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
     setLiveSteps([]);
     setLiveError('');
     setLiveDone(null);
+    setShowChartSwitch(false); // F-M3：取消时重置图表切换提示，防残留
   };
 
   // 生成报表主函数
   // 入参：isFollowUp = true 时进入「追问模式」——清空上一轮字段，携带 lastReportId 传给后端
   // 业务定位：整个分析流程的入口，串联 payload 构造 → SSE 发起 → 事件驱动 UI
   async function handleGenerate(isFollowUp = false) {
+    // F-S4：并发守卫——生成中直接忽略再次触发（双击/图表切换），
+    // 防止并发两个 SSE 生成（双倍 LLM 成本 + 状态互相覆盖）。
+    if (generatingRef.current) return;
+    generatingRef.current = true;
     if (!dataset) {
+      generatingRef.current = false;
       setError('请先在数据管理页面上传数据');
       navigate('/data');
       return;
     }
+    // F-M3：重新生成时重置图表切换提示，防残留
+    setShowChartSwitch(false);
     // 智能推荐模式（字段未显式选择）跳过前端校验：字段由后端 Agent/LLM 决策
     // 追问模式（isFollowUp）也跳过旧字段校验：系统会按追问语义重新选字段
     if (!isFollowUp) {
-      // 智能推荐模式（xAxis/yAxis 为空）跳过前端校验——字段由后端 LLM 决策
-      const validationError = xAxis && yAxis
-        ? validateChartFields(chartType, xAxis, yAxis, groupField, profile)
+      // F-S5 修复：旧逻辑 `xAxis && yAxis ? validate(...) : null` 存在两个缺陷：
+      // 1. 饼图/漏斗等只需 X 轴的类型，y 轴为空时整个校验被短路跳过（绕过校验）；
+      // 2. "建议"级文案（如"饼图建议选择分类字段"）被当硬错误拦截生成。
+      // 现改为：需要 Y 轴的类型（散点/箱线/K线/瀑布）即使 y 为空也执行校验并报硬错误；
+      // 其余类型只要有任一字段就校验；全空走智能推荐不校验。
+      const needsY = ['scatter', 'boxplot', 'candlestick', 'waterfall'].includes(chartType);
+      const validationError = (needsY || xAxis || yAxis)
+        ? validateChartFields(chartType, xAxis || '', yAxis || '', groupField, profile)
         : null;
       if (validationError) {
-        setError(validationError);
-        return;
+        if (validationError.includes('建议')) {
+          // 建议级：不拦截生成，仅提示
+          setAdvice(validationError);
+        } else {
+          generatingRef.current = false;
+          setError(validationError);
+          return;
+        }
+      } else {
+        setAdvice('');
       }
     }
     setError('');
@@ -267,16 +303,22 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
       // 追问固定走“自动推荐”：新问题不一定适配上一张图的类型，让后端重新决策
       图表类型: isFollowUp ? '自动推荐' : (chartMap[chartType] || '自动推荐'),
       // '无' 是 UI 里“不分组”的占位值，转成 null 才是后端契约的“不分组”
-      x轴: isFollowUp ? null : (xAxis === '无' ? null : xAxis),
+      // F-M2：空串 '' 同样转 null——旧实现把空串直传后端，语义歧义
+      x轴: isFollowUp ? null : ((!xAxis || xAxis === '无') ? null : xAxis),
       // y轴 是数组：支持多指标；空数组 = 未指定（交给后端），[yAxis] = 指定一个
       y轴: isFollowUp ? [] : (yAxis ? [yAxis] : []),
-      分组字段: isFollowUp ? null : (groupField === '无' ? null : groupField),
+      分组字段: isFollowUp ? null : ((!groupField || groupField === '无') ? null : groupField),
       聚合方式: isFollowUp ? '求和' : aggMethod,
       // 阶段 29：筛选（追问时清空——新问题不一定延续原筛选，交给后端重新决策）
       筛选条件: isFollowUp ? [] : filters
         .filter(f => f.字段 && f.操作 && (['为空', '不为空'].includes(f.操作) || f.值 !== ''))
         .map(f => ({ 字段: f.字段, 操作: f.操作, 值: f.值 })),
-      topN: isFollowUp ? undefined : (topN ? parseInt(topN, 10) : undefined),
+      // 优化：topN 输入非数字（NaN）此前直接 parseInt → NaN 进 payload；
+      // 仅当解析为有效正整数才传
+      topN: isFollowUp ? undefined : (() => {
+        const n = parseInt(topN, 10);
+        return Number.isFinite(n) && n > 0 ? n : undefined;
+      })(),
       对比: isFollowUp ? undefined : (compare || undefined),
       agent_mode: agentMode,
       model: selectedModel || undefined, // undefined 不出现在 JSON 里，后端走默认模型
@@ -344,6 +386,7 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
       // B6：仅最新请求可收尾（旧请求的取消/完成不干扰新请求状态）
       if (generateSeqRef.current === seq) {
         setGenerating(false);
+        generatingRef.current = false; // F-S4：释放并发守卫
       }
     }
   }
@@ -479,6 +522,13 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
             <span>⚠</span>
             <span>{error}</span>
             <button className="ml-auto text-red-400 hover:text-red-600 text-xs" onClick={() => setError('')}>✕</button>
+          </div>
+        )}
+        {advice && (
+          <div className="mt-3 px-4 py-2.5 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-700 flex items-center gap-2">
+            <span>💡</span>
+            <span>{advice}</span>
+            <button className="ml-auto text-amber-400 hover:text-amber-600 text-xs" onClick={() => setAdvice('')}>✕</button>
           </div>
         )}
       </div>

@@ -253,6 +253,16 @@ def chat_completion(
         return None
 
     base_url = ((user_base_url or EnvConfig.LLM_BASE_URL) or "").rstrip("/")
+    # S2 修复：请求前二次校验用户侧 base_url——防保存后 DNS rebinding 绕过。
+    # 仅对用户自配（user_base_url/llm_config）的地址校验；EnvConfig 全局地址
+    # 属运维配置，不在本防护范围。校验失败则记录原因并短路不发请求。
+    if user_base_url:
+        from services.llm_security import 校验LLM供应商URL
+        try:
+            base_url = 校验LLM供应商URL(base_url)
+        except ValueError as exc:
+            _record_llm_fail(f"LLM 地址 SSRF 校验失败：{exc}", llm_config)
+            return None
     url = f"{base_url}{_CHAT_COMPLETIONS_PATH}"
     model = user_model or EnvConfig.LLM_MODEL
     headers = {
