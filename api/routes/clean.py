@@ -46,9 +46,10 @@ async def clean_dataset(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在")
 
     # M21：读-改-写竞态防护——清洗整体持数据集级锁，防并发覆盖丢数据
+    df = item["数据"]
     with _数据集操作锁:
         result = 清洗数据集(
-            df=item["数据"],
+            df=df,
             deduplicate=deduplicate,
             fill_missing=fill_missing,
             fill_strategy=fill_strategy,
