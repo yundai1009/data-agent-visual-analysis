@@ -65,7 +65,8 @@ function cspPlugin() {
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
-    "frame-ancestors 'none'",
+    // 注意：frame-ancestors 只能通过 HTTP 响应头生效，meta CSP 中会被浏览器忽略
+    // 并打警告——如需防点击劫持，应在部署层（nginx/uvicorn 头）配置。
   ].join('; ');
   return {
     name: 'csp-inject',
