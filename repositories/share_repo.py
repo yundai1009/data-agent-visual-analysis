@@ -49,6 +49,9 @@ def 初始化分享表() -> None:
         # 阶段 31：协作者白名单（JSON 数组：允许访问的 username 列表；空 = 公开/仅密码）
         if "collaborators" not in cols:
             conn.execute("ALTER TABLE share_links ADD COLUMN collaborators TEXT DEFAULT '[]'")
+        # 优化⑥：浏览次数统计（公开访问成功即 +1，分享者可感知链接热度）
+        if "view_count" not in cols:
+            conn.execute("ALTER TABLE share_links ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0")
 
 
 def _密码哈希(password: str) -> str:
@@ -125,14 +128,27 @@ def 按报表列出(user_id: str, report_id: str) -> List[Dict[str, Any]]:
     初始化分享表()
     with _get_conn() as conn:
         rows = conn.execute(
-            "SELECT share_id, expires_at, created_at FROM share_links "
+            "SELECT share_id, expires_at, created_at, view_count FROM share_links "
             "WHERE user_id = ? AND report_id = ? ORDER BY created_at DESC",
             (user_id, report_id),
         ).fetchall()
     return [
-        {"链接ID": row["share_id"], "过期时间": row["expires_at"], "创建时间": row["created_at"]}
+        {
+            "链接ID": row["share_id"], "过期时间": row["expires_at"], "创建时间": row["created_at"],
+            "浏览次数": int(row["view_count"] or 0),
+        }
         for row in rows
     ]
+
+
+def 增加浏览次数(share_id: str) -> None:
+    """优化⑥：分享链接成功访问 +1 次（分享者可见热度）。"""
+    初始化分享表()
+    with _write_lock, _get_conn() as conn:
+        conn.execute(
+            "UPDATE share_links SET view_count = view_count + 1 WHERE share_id = ?",
+            (share_id,),
+        )
 
 
 def 撤销分享(user_id: str, share_id: str) -> bool:

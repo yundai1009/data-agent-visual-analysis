@@ -13,8 +13,8 @@
  * ============================================================================= */
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Download, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, Copy, Check, Clock, Link2, X, RotateCcw, GitBranch, Filter, Star, Search } from 'lucide-react';
-import { listReports, getReport, deleteReport, exportReport, exportFullReport, createShare, listShares, revokeShare, replayReport, toggleFavorite } from '../api';
+import { Download, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, Copy, Check, Clock, Eye, Link2, X, RotateCcw, GitBranch, Filter, Star, Search } from 'lucide-react';
+import { listReports, getReport, deleteReport, exportReport, exportFullReport, createShare, listShares, revokeShare, replayReport, toggleFavorite, createDashboard } from '../api';
 import EChartsChart from '../components/EChartsChart';
 
 // Report 报表历史页主组件
@@ -25,6 +25,10 @@ export default function Report() {
   const { reportId } = useParams();
   // 历史列表（元数据索引）：从后端 GET /reports/ 获取，包含所有报表的 ID + 标题 + 类型
   const [reportMeta, setReportMeta] = useState([]); // [{报表ID, 标题, 图表类型}]
+  // 优化⑤：历史报表多选 → 一键对比（创建看板）
+  const [showHist, setShowHist] = useState(false);
+  const [cmpSel, setCmpSel] = useState(new Set());
+  const [comparing, setComparing] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
   // 当前展示的完整报表对象（含 图表配置 / 结论 / 推荐说明 / Agent Trace / 导出数据）
   const [localReport, setLocalReport] = useState(null);
@@ -146,6 +150,22 @@ export default function Report() {
     } finally {
       if (loadMoreSeqRef.current === seq) setLoadingMore(false);
     }
+  };
+
+  // 优化⑤：把所选报表一键创建为对比看板
+  const handleCompare = async () => {
+    const ids = Array.from(cmpSel);
+    if (ids.length < 2) return;
+    setComparing(true);
+    try {
+      await createDashboard(`对比（${ids.length} 份报表）`, ids);
+      setCmpSel(new Set());
+      setShowHist(false);
+      navigate('/dashboard');
+    } catch (e) {
+      setLoadError('创建对比看板失败：' + (e.message || e));
+    }
+    setComparing(false);
   };
 
   // 清空历史：逐条删除后端报表；删除失败项保留（不误清 UI），带确认框防误操作
@@ -328,6 +348,18 @@ export default function Report() {
   const fmtExpire = (iso) => {
     try { return new Date(iso).toLocaleString('zh-CN', { hour12: false }); } catch { return iso; }
   };
+  // 优化⑩：剩余有效期（不足 24h 高亮提醒）
+  const fmtRemain = (iso) => {
+    try {
+      const ms = new Date(iso).getTime() - Date.now();
+      if (Number.isNaN(ms)) return '';
+      if (ms <= 0) return '（已过期）';
+      const hours = Math.floor(ms / 3600000);
+      if (hours >= 48) return `（剩余 ${Math.floor(hours / 24)} 天）`;
+      if (hours >= 1) return `（剩余 ${hours} 小时）`;
+      return `（剩余 ${Math.max(0, Math.floor(ms / 60000))} 分钟）`;
+    } catch { return ''; }
+  };
 
   // 历史重放：用原报表参数重新执行分析（复现过程 → 生成全新报表并跳转过去）
   const handleReplay = async () => {
@@ -460,6 +492,44 @@ export default function Report() {
                   {loadingMore ? '加载中…' : '加载更多'}
                 </button>
               )}
+              {/* 优化⑤：历史报表多选 → 一键对比（创建看板） */}
+              <button
+                onClick={() => setShowHist(!showHist)}
+                className="ml-2 flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded text-gray-500 hover:text-accent transition-colors"
+                title="勾选多份报表生成对比看板"
+              >
+                <GitBranch className="w-3 h-3" /> 对比
+              </button>
+            </div>
+          )}
+          {showHist && (
+            <div className="mt-2 w-full max-w-md bg-white border border-gray-200 rounded-xl shadow-lg p-3">
+              <p className="text-[11px] font-semibold text-gray-700 mb-1.5">选择报表生成对比看板（至少 2 份）</p>
+              <div className="space-y-1 max-h-52 overflow-y-auto">
+                {reportMeta.map((r) => (
+                  <label key={r.报表ID} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-50 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="accent-accent shrink-0"
+                      checked={cmpSel.has(r.报表ID)}
+                      onChange={(e) => {
+                        const next = new Set(cmpSel);
+                        if (e.target.checked) next.add(r.报表ID); else next.delete(r.报表ID);
+                        setCmpSel(next);
+                      }}
+                    />
+                    <span className="text-xs text-gray-700 truncate">{r.标题 || r.报表ID?.slice(0, 8)}</span>
+                    {r.图表类型 && <span className="ml-auto text-[10px] text-gray-400">{r.图表类型}</span>}
+                  </label>
+                ))}
+              </div>
+              <button
+                onClick={handleCompare}
+                disabled={cmpSel.size < 2 || comparing}
+                className="mt-2 w-full py-1.5 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-deep transition-all disabled:opacity-50"
+              >
+                {comparing ? '创建中…' : `对比所选（${cmpSel.size} 份）`}
+              </button>
             </div>
           )}
           <span className="flex items-center gap-1 px-2.5 py-1 rounded text-xs bg-accent-soft text-accent border border-accent/20">
@@ -745,8 +815,20 @@ export default function Report() {
                     <div key={s.链接ID} className="flex items-center gap-2 bg-surface rounded-lg px-3 py-2">
                       <div className="flex-1 min-w-0">
                         <p className="text-[11px] text-gray-700 font-mono truncate">{link}</p>
-                        <p className="text-[10px] text-gray-400 flex items-center gap-1 mt-0.5">
+                        <p className="text-[10px] text-gray-400 flex items-center gap-2 mt-0.5">
                           <Clock className="w-3 h-3" /> 有效期至 {fmtExpire(s.过期时间)}
+                          {(() => {
+                            const remain = fmtRemain(s.过期时间);
+                            const expired = remain === '（已过期）';
+                            return remain ? (
+                              <span className={expired ? 'text-red-400 font-medium' : 'text-amber-500'}>{remain}</span>
+                            ) : null;
+                          })()}
+                          {typeof s.浏览次数 === 'number' && (
+                            <span className="flex items-center gap-1" title="浏览次数">
+                              <Eye className="w-3 h-3" /> {s.浏览次数} 次访问
+                            </span>
+                          )}
                         </p>
                       </div>
                       <button

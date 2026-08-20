@@ -66,6 +66,9 @@ async def upload_dataset(
     成功列表: List[Dict[str, Any]] = []
     失败列表: List[Dict[str, Any]] = []
 
+    if not file:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="未选择任何文件")
+
     for f in file:
         try:
             result = await _处理单个上传(f, user["user_id"], _MAX_UPLOAD_BYTES)
@@ -147,6 +150,61 @@ async def _处理单个上传(
     }
 
 
+@router.post("/merge")
+async def merge_datasets(payload: dict, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
+    """优化③：合并多个数据集为一份（列对齐 union + 行追加），返回新数据集。
+
+    body: {"数据集ID列表": [...], "文件名": "可选新名称"}
+    列对齐：各数据集列取并集，缺失列填 NaN；行上限 50 万（防画像/存储膨胀）。
+    """
+    import pandas as pd
+    ids = payload.get("数据集ID列表") or []
+    新文件名 = (payload.get("文件名") or "").strip()
+    if not isinstance(ids, list) or len(ids) < 2:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="至少选择 2 个数据集进行合并")
+    if len(ids) > 20:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="一次最多合并 20 个数据集")
+    if len(新文件名) > 120:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="文件名过长（最多 120 字符）")
+
+    dfs: List[pd.DataFrame] = []
+    for _id in ids:
+        item = _仓储.读取(user["user_id"], str(_id))
+        if not item:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"数据集不存在或无权访问")
+        dfs.append(item["数据"])
+
+    merged = pd.concat(dfs, ignore_index=True, sort=False)
+    _MAX_MERGE_ROWS = 500_000
+    if len(merged) > _MAX_MERGE_ROWS:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"合并后共 {len(merged)} 行，超过上限 {_MAX_MERGE_ROWS} 行",
+        )
+    if merged.empty or len(merged.columns) == 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="合并结果为空，请检查所选数据集")
+
+    新文件名 = 新文件名 or f"合并数据集（{len(ids)} 个）"
+    画像 = 生成数据画像(merged)
+    dataset_id = uuid4().hex
+    _仓储.保存(
+        user_id=user["user_id"],
+        dataset_id=dataset_id,
+        文件名=新文件名,
+        存储路径="",
+        df=merged,
+        画像=画像,
+    )
+    return {
+        "数据集ID": dataset_id,
+        "文件名": 新文件名,
+        "行数": 画像["行数"],
+        "列数": 画像["列数"],
+        "字段列表": 画像["字段列表"],
+        "数据画像": 画像,
+    }
+
+
 @router.get("/{dataset_id}", response_model=DatasetPreviewResponse)
 async def get_dataset(dataset_id: str, user: dict = Depends(get_current_user)) -> DatasetPreviewResponse:
     item = _仓储.读取(user["user_id"], dataset_id)
@@ -162,6 +220,30 @@ async def get_dataset(dataset_id: str, user: dict = Depends(get_current_user)) -
         预览数据=df.head(20).to_dict(orient="records"),
         数据画像=画像,
     )
+
+
+@router.get("/{dataset_id}/rows")
+async def get_dataset_rows(
+    dataset_id: str,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=200),
+    user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """优化⑨：数据集原始数据分页预览（避免一次返回全量撑爆前端）。"""
+    item = _仓储.读取(user["user_id"], dataset_id)
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在")
+    df = item["数据"]
+    total = int(len(df))
+    rows = df.iloc[offset:offset + limit]
+    return {
+        "数据集ID": dataset_id,
+        "文件名": item["文件名"],
+        "总行数": total,
+        "偏移": offset,
+        "返回行数": int(len(rows)),
+        "数据": rows.to_dict(orient="records"),
+    }
 
 
 @router.get("/", response_model=Dict[str, Any])

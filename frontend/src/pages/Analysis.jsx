@@ -868,7 +868,7 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
                 <span className="flex-1 text-xs text-gray-700 truncate" title={job.cron}>
                   cron <code className="text-accent">{job.cron}</code>
                   {job.下次执行 && <span className="text-gray-400 ml-2">下次：{new Date(job.下次执行).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
-                  {job.上次状态 && <span className={`ml-2 ${job.上次状态 === '成功' ? 'text-emerald-500' : 'text-red-400'}`}>{job.上次状态 === '成功' ? '上次执行成功' : job.上次状态}</span>}
+                  {job.上次状态 && <span className={`ml-2 ${job.上次状态 === '成功' ? 'text-emerald-500' : 'text-red-400'}`} title={job.上次状态}>{job.上次状态 === '成功' ? '上次执行成功' : `上次失败：${String(job.上次状态).slice(0, 40)}${String(job.上次状态).length > 40 ? '…' : ''}`}</span>}
                 </span>
                 <button className="text-[11px] text-red-400 hover:text-red-600 hover:underline" onClick={() => handleDeleteSchedule(job)}>删除</button>
               </div>

@@ -189,6 +189,48 @@ export async function uploadFile(files) {
   }
 }
 
+// 优化②：带上传进度的多文件上传（XMLHttpRequest 支持 upload.onprogress；
+// fetch 无进度事件）。onProgress(percent 0-100) 回调；返回与 uploadFile 相同的 JSON。
+export async function uploadFileWithProgress(files, onProgress) {
+  const form = new FormData();
+  const fileArr = files instanceof File ? [files] : Array.from(files);
+  for (const f of fileArr) {
+    form.append('file', f);
+  }
+  const llmHeaders = getLLMHeaders();
+  const authHeaders = getAuthHeaders();
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${BASE}/datasets/upload`);
+    // 注入认证/LLM 请求头
+    Object.entries({ ...authHeaders, ...llmHeaders }).forEach(([k, v]) => xhr.setRequestHeader(k, v));
+    if (onProgress) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+      };
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try { resolve(JSON.parse(xhr.responseText)); } catch { reject(new Error('响应解析失败')); }
+      } else {
+        if (xhr.status === 401) handleAuthExpired('/datasets/upload');
+        let message = `上传失败（HTTP ${xhr.status}）`;
+        try {
+          const body = JSON.parse(xhr.responseText);
+          if (body && body.message) message = body.message;
+        } catch { /* 非 JSON */ }
+        const err = new Error(message);
+        err.status = xhr.status;
+        reject(err);
+      }
+    };
+    xhr.onerror = () => reject(new Error('上传中断，请检查网络后重试'));
+    xhr.ontimeout = () => reject(new Error('上传超时，请重试'));
+    xhr.timeout = UPLOAD_TIMEOUT_MS;
+    xhr.send(form);
+  });
+}
+
 // ---- 认证 ----
 
 export async function login(username, password) {
@@ -292,6 +334,11 @@ export async function getDataset(id) {
   return request(`/datasets/${id}`);
 }
 
+// 优化⑨：数据集原始数据分页预览
+export async function getDatasetRows(id, offset = 0, limit = 20) {
+  return request(`/datasets/${id}/rows?offset=${offset}&limit=${limit}`);
+}
+
 export async function listDatasets(limit = 200, q = '', sort = 'created_at_desc') {
   const p = new URLSearchParams({ limit: String(limit) });
   if (q) p.set('q', q);
@@ -307,6 +354,14 @@ export async function renameDataset(id, 文件名) {
   return request(`/datasets/${id}`, {
     method: 'PATCH',
     body: JSON.stringify({ 文件名 }),
+  });
+}
+
+// 优化③：合并多个数据集为一份（列对齐 + 行追加），返回新数据集
+export async function mergeDatasets(ids, 文件名 = '') {
+  return request('/datasets/merge', {
+    method: 'POST',
+    body: JSON.stringify({ 数据集ID列表: ids, 文件名 }),
   });
 }
 
@@ -638,6 +693,25 @@ export async function fetchStatistics() {
 
 export async function fetchAdminUsers() {
   return request('/admin/users');
+}
+
+// 优化⑦：管理后台——审计日志 / 平台用量 / 监控指标 / 预测事件导出
+export async function fetchAuditLog(limit = 50, offset = 0, userId = '') {
+  const p = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (userId) p.set('user_id', userId);
+  return request(`/admin/audit?${p.toString()}`);
+}
+
+export async function fetchUsage(days = 7) {
+  return request(`/admin/usage?days=${days}`);
+}
+
+export async function fetchMetrics() {
+  return request('/admin/metrics');
+}
+
+export async function exportEvents() {
+  return request('/admin/export-events');
 }
 
 export async function healthCheck() {

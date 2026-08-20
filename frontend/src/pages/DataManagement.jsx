@@ -13,7 +13,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Upload, Download, FileDown, Database, FileText, AlertTriangle, Search, Sparkles, Loader2, BarChart3, LineChart, Pencil, Trash2, Lightbulb } from 'lucide-react';
-import { uploadFile, loadExample, cleanDataset, healthCheck, listDatasets, deleteDataset, renameDataset, getDataset, exportUserData } from '../api';
+import { uploadFileWithProgress, loadExample, cleanDataset, healthCheck, listDatasets, deleteDataset, renameDataset, mergeDatasets, getDataset, getDatasetRows, exportUserData } from '../api';
 import { useApp } from '../AppContext';
 
 // 演示模式（vite --mode demo 构建）：打开页面自动加载示例数据，零基础用户无需上传即可体验
@@ -39,8 +39,23 @@ export default function DataManagement() {
   const [dataset, setDataset] = useState(globalDataset);
   const [profile, setProfile] = useState(globalDataset?.数据画像 || null);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadNotice, setUploadNotice] = useState(''); // 黄色提示：部分成功
+  const failedFilesRef = useRef([]); // 失败文件引用（供"重试失败文件"）
   const [backendOk, setBackendOk] = useState(true);
   const [error, setError] = useState('');
+  // 优化③：数据集多选合并
+  const [mergeSel, setMergeSel] = useState(new Set());
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergeName, setMergeName] = useState('');
+  const [merging, setMerging] = useState(false);
+  // 优化⑨：数据预览分页
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewRows, setPreviewRows] = useState([]);
+  const [previewOffset, setPreviewOffset] = useState(0);
+  const [previewTotal, setPreviewTotal] = useState(0);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const PREVIEW_PAGE = 20;
   const [dsList, setDsList] = useState([]);          // 我的数据集列表
   const [dsOpen, setDsOpen] = useState(false);       // 数据集管理面板
   // 阶段 31：数据集管理增强——文件名搜索 + 排序 + 概览统计
@@ -135,14 +150,29 @@ export default function DataManagement() {
     } catch (e) { setError(e.message || '重命名失败'); }
   };
 
-  async function handleUpload(files) {
+  async function handleUpload(files, retryOnly = false) {
+    let targets = files;
+    if (retryOnly) {
+      targets = failedFilesRef.current;
+      failedFilesRef.current = [];
+      if (targets.length === 0) { setUploading(false); return; }
+    }
     setError('');
+    setUploadNotice('');
     setUploading(true);
+    setUploadProgress(0);
     try {
-      // uploadFile 支持单文件（File）与多文件（FileList / File[]）
-      const res = await uploadFile(files);
+      // uploadFileWithProgress 支持单文件（File）与多文件（FileList / File[]），并回报上传进度
+      const res = await uploadFileWithProgress(targets, setUploadProgress);
       const 成功列表 = res.上传成功 || [];
       const 失败列表 = res.上传失败 || [];
+      // 保留失败文件的 File 引用（按文件名匹配），供"重试失败文件"复用
+      failedFilesRef.current = [];
+      if (失败列表.length > 0) {
+        const failNames = new Set(失败列表.map(f => f.文件名));
+        const targetArr = targets instanceof File ? [targets] : Array.from(targets);
+        failedFilesRef.current = targetArr.filter(f => failNames.has(f.name));
+      }
       // 设置当前数据集为最后一个成功的文件
       if (成功列表.length > 0) {
         const last = 成功列表[成功列表.length - 1];
@@ -150,13 +180,14 @@ export default function DataManagement() {
         setProfile(last.数据画像);
         setAppDataset({ 数据集ID: last.数据集ID, 文件名: last.文件名, 行数: last.行数, 数据画像: last.数据画像 });
       }
-      // 展示成功/失败信息
+      // 部分成功 → 黄色提示（不走红色错误条）；全部失败 → 红色错误
       if (成功列表.length > 0 && 失败列表.length > 0) {
-        setError(`成功上传 ${成功列表.length} 个文件，失败 ${失败列表.length} 个：${失败列表.map(f => f.文件名 + '（' + f.错误 + '）').join('；')}`);
+        setUploadNotice(`成功上传 ${成功列表.length} 个文件，失败 ${失败列表.length} 个：${失败列表.map(f => f.文件名 + '（' + f.错误 + '）').join('；')}`);
       } else if (失败列表.length > 0 && 成功列表.length === 0) {
         setError(`全部上传失败：${失败列表.map(f => f.文件名 + '（' + f.错误 + '）').join('；')}`);
       }
       setUploading(false);
+      setUploadProgress(100);
     } catch (e) {
       setError(e.message);
       setUploading(false);
@@ -236,6 +267,44 @@ export default function DataManagement() {
     navigate('/analysis');
   }
 
+  // 优化③：合并所选数据集（列对齐 + 行追加），成功后选中新数据集
+  const handleMerge = async () => {
+    const ids = Array.from(mergeSel);
+    if (ids.length < 2) return;
+    setMerging(true);
+    setError('');
+    try {
+      const res = await mergeDatasets(ids, mergeName.trim());
+      setDataset(res);
+      setProfile(res.数据画像);
+      setAppDataset({ 数据集ID: res.数据集ID, 文件名: res.文件名, 行数: res.行数, 数据画像: res.数据画像 });
+      setMergeSel(new Set());
+      setMergeOpen(false);
+      setMergeName('');
+      listDatasets(200, dsQ, dsSort).then(r2 => { setDsList(r2?.数据集列表 || []); setDsStats(r2?.统计 || {}); }).catch(() => {});
+    } catch (e) {
+      setError(e.message || '合并失败');
+    }
+    setMerging(false);
+  };
+
+  // 优化⑨：打开/翻页数据预览
+  const handlePreview = async (offset = 0) => {
+    if (!dataset?.数据集ID) return;
+    setPreviewLoading(true);
+    setError('');
+    try {
+      const res = await getDatasetRows(dataset.数据集ID, offset, PREVIEW_PAGE);
+      setPreviewRows(res.数据 || []);
+      setPreviewTotal(res.总行数 || 0);
+      setPreviewOffset(res.偏移 || 0);
+      setPreviewOpen(true);
+    } catch (e) {
+      setError('预览加载失败：' + (e.message || e));
+    }
+    setPreviewLoading(false);
+  };
+
   function handleNewAnalysis() {
     if (!dataset) return;
     navigate('/analysis');
@@ -289,6 +358,18 @@ export default function DataManagement() {
                     <div className="space-y-1 max-h-64 overflow-y-auto">
                       {dsList.map(d => (
                         <div key={d.数据集ID} className="flex items-center gap-2 px-2.5 py-2 rounded-lg hover:bg-gray-50 transition-colors">
+                          {/* 优化③：多选以合并 */}
+                          <input
+                            type="checkbox"
+                            checked={mergeSel.has(d.数据集ID)}
+                            onChange={(e) => {
+                              const next = new Set(mergeSel);
+                              if (e.target.checked) next.add(d.数据集ID); else next.delete(d.数据集ID);
+                              setMergeSel(next);
+                            }}
+                            title="勾选后可合并"
+                            className="accent-accent shrink-0"
+                          />
                           {renaming === d.数据集ID ? (
                             <div className="flex-1 flex gap-1.5">
                               <input className="flex-1 border border-gray-200 rounded-md px-2 py-1 text-xs focus:outline-none focus:border-accent" value={newName} onChange={(e) => setNewName(e.target.value)} autoFocus />
@@ -311,6 +392,39 @@ export default function DataManagement() {
                         </div>
                       ))}
                     </div>
+                  )}
+                  {/* 优化③：合并所选按钮 */}
+                  {mergeSel.size >= 2 && (
+                    <button
+                      onClick={() => setMergeOpen(true)}
+                      className="mt-2 w-full py-1.5 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-deep transition-all"
+                    >合并所选（{mergeSel.size} 个数据集）</button>
+                  )}
+                  {/* 优化③：合并命名弹窗 */}
+                  {mergeOpen && (
+                    <>
+                      <div className="fixed inset-0 z-20" onClick={() => { if (!merging) setMergeOpen(false); }} />
+                      <div className="absolute right-0 top-full mt-2 z-30 w-80 bg-white border border-gray-200 rounded-xl shadow-xl p-4">
+                        <p className="text-xs font-semibold text-gray-700 mb-2">合并 {mergeSel.size} 个数据集</p>
+                        <p className="text-[11px] text-gray-400 mb-2">列自动对齐（并集），行追加合并；缺失列填空。</p>
+                        <input
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-gray-50 focus:outline-none focus:border-accent mb-3"
+                          placeholder="新数据集名称（留空自动命名）"
+                          value={mergeName}
+                          onChange={(e) => setMergeName(e.target.value)}
+                          maxLength={120}
+                          autoFocus
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            className="flex-1 py-2 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-deep transition-all"
+                            onClick={handleMerge}
+                            disabled={merging}
+                          >{merging ? '合并中…' : '确认合并'}</button>
+                          <button className="px-3 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50" onClick={() => setMergeOpen(false)}>取消</button>
+                        </div>
+                      </div>
+                    </>
                   )}
                 </div>
               </>
@@ -339,10 +453,14 @@ export default function DataManagement() {
       >
         <input id="file-input" type="file" accept=".csv,.xlsx,.xls" multiple className="hidden" onChange={(e) => { if (e.target.files.length > 0) handleUpload(e.target.files); e.target.value = ''; }} />
         {uploading ? (
-          <div className="max-w-sm mx-auto">
+          <div className="max-w-sm mx-auto w-full">
             <div className="flex items-center gap-3">
               <svg className="w-5 h-5 text-accent animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
-              <span className="text-sm text-gray-500">正在解析文件结构，请稍候...</span>
+              <span className="text-sm text-gray-500">正在上传解析 {uploadProgress < 100 ? `${uploadProgress}%` : '完成'}</span>
+            </div>
+            {/* 优化②：上传进度条 */}
+            <div className="mt-3 h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
+              <div className="h-full bg-accent transition-all duration-200" style={{ width: `${Math.max(4, uploadProgress)}%` }} />
             </div>
           </div>
         ) : dataset ? (
@@ -352,6 +470,7 @@ export default function DataManagement() {
               <span className="text-sm text-gray-700">已加载数据集：{dataset.文件名}（{profile?.行数} 行）</span>
             </div>
             <div className="flex gap-2">
+              <button className="text-xs px-2.5 py-1 rounded border border-gray-200 text-gray-500 hover:bg-white" onClick={(e) => { e.stopPropagation(); handlePreview(0); }} title="查看原始数据">数据预览</button>
               <button className="text-xs px-2.5 py-1 rounded border border-gray-200 text-gray-500 hover:bg-white" onClick={(e) => { e.stopPropagation(); setDataset(null); setProfile(null); setAppDataset(null); }}>重新上传</button>
             </div>
           </div>
@@ -363,6 +482,73 @@ export default function DataManagement() {
           </>
         )}
         {error && <p className="text-xs text-red-500 mt-2">{error}</p>}
+      {/* 优化②：部分成功的黄色提示 + 失败文件重试 */}
+      {uploadNotice && (
+        <div className="mt-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-700 flex items-center gap-2">
+          <span className="flex-1">{uploadNotice}</span>
+          {failedFilesRef.current.length > 0 && (
+            <button
+              className="px-2 py-1 rounded border border-amber-300 text-amber-700 hover:bg-amber-100 transition-all whitespace-nowrap"
+              onClick={(e) => { e.stopPropagation(); handleUpload(null, true); }}
+            >重试失败文件（{failedFilesRef.current.length}）</button>
+          )}
+          <button className="text-amber-400 hover:text-amber-600" onClick={() => setUploadNotice('')}>✕</button>
+        </div>
+      )}
+      {/* 优化⑨：数据预览分页表格 */}
+      {previewOpen && (
+        <div className="mt-4 bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+            <p className="text-xs font-semibold text-gray-700">数据预览（共 {previewTotal.toLocaleString()} 行）</p>
+            <button className="text-gray-400 hover:text-gray-600 text-sm leading-none" onClick={() => setPreviewOpen(false)}>✕</button>
+          </div>
+          {previewLoading ? (
+            <p className="text-center text-xs text-gray-400 py-8">加载中…</p>
+          ) : previewRows.length === 0 ? (
+            <p className="text-center text-xs text-gray-400 py-8">暂无数据</p>
+          ) : (
+            <>
+              <div className="overflow-x-auto max-h-80 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-gray-50">
+                    <tr className="text-gray-400 border-b border-gray-100">
+                      <th className="text-left px-4 py-2 font-medium">#</th>
+                      {Object.keys(previewRows[0]).map((k) => (
+                        <th key={k} className="text-left px-3 py-2 font-medium whitespace-nowrap">{k}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {previewRows.map((row, i) => (
+                      <tr key={previewOffset + i} className="hover:bg-gray-50/60">
+                        <td className="px-4 py-2 text-gray-400">{previewOffset + i + 1}</td>
+                        {Object.values(row).map((v, j) => (
+                          <td key={j} className="px-3 py-2 text-gray-600 font-mono max-w-[240px] truncate">{String(v ?? '')}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="px-5 py-2.5 border-t border-gray-100 flex items-center justify-between">
+                <span className="text-[11px] text-gray-400">第 {previewOffset + 1}-{Math.min(previewOffset + PREVIEW_PAGE, previewTotal)} 行 / 共 {previewTotal} 行</span>
+                <div className="flex gap-2">
+                  <button
+                    className="text-xs px-2.5 py-1 rounded border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
+                    disabled={previewOffset === 0 || previewLoading}
+                    onClick={() => handlePreview(Math.max(0, previewOffset - PREVIEW_PAGE))}
+                  >上一页</button>
+                  <button
+                    className="text-xs px-2.5 py-1 rounded border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
+                    disabled={previewOffset + PREVIEW_PAGE >= previewTotal || previewLoading}
+                    onClick={() => handlePreview(previewOffset + PREVIEW_PAGE)}
+                  >下一页</button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
       </div>
 
       {/* Stats：主次分明（质量卡放大 + 藏青强调，去千篇一律 border+shadow） */}

@@ -98,6 +98,8 @@ def 公开查看报表(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报表已不存在")
 
     report = item["报表"]
+    # 优化⑥：成功访问计一次浏览次数（分享者可见热度）
+    share_repo.增加浏览次数(share_id)
     view = {k: report.get(k) for k in _公开字段 if k in report}
     view["标题"] = item["标题"]
     # M17：公开分享不再暴露内部 user_id（此前直接透传，可被用于跨账号枚举）——
