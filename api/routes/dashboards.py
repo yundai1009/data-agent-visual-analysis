@@ -129,7 +129,11 @@ def 分享看板(
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="看板不存在")
 
-    hours = int(request.query_params.get("有效小时数") or 24)
+    # security review：非数字 hours 参数 → 400 而非 500
+    try:
+        hours = int(request.query_params.get("有效小时数") or 24)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="有效小时数必须是数字")
     password = (request.query_params.get("密码") or "").strip()
     协作者 = [c.strip() for c in (request.query_params.get("协作者") or "").split(",") if c.strip()]
     if hours < 1 or hours > 720:
