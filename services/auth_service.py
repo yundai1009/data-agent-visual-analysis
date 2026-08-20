@@ -40,8 +40,12 @@ import secrets
 import time
 from typing import Any, Dict, Optional
 
-# PBKDF2 迭代次数：OWASP 建议 SHA-256 至少 60 万次，此处取 10 万次平衡速度与安全
-_PBKDF2_ITERATIONS = 100_000
+# PBKDF2 迭代次数：OWASP 建议 SHA-256 至少 60 万次（2023 版推荐 60 万），
+# 本项目从 10 万提升至 60 万（优化④：慢哈希安全水位对齐 OWASP）。
+_PBKDF2_ITERATIONS = 600_000
+# 迭代参数上限：verify 时拒绝超出该值的哈希（防恶意篡改 stored_hash 指定
+# 天文数字迭代次数造成 CPU DoS；2 倍于当前值留足升级余量）。
+_PBKDF2_MAX_ITERATIONS = 2_000_000
 # 盐长度 16 字节 = 128 bit：与哈希输出等长，足以让彩虹表/碰撞攻击失效
 _SALT_BYTES = 16
 
@@ -117,6 +121,9 @@ def verify_password(password: str, stored_hash: str) -> bool:
         if scheme != "pbkdf2":
             return False
         iterations = int(iterations_str)
+        # 优化④：迭代次数上限（防恶意哈希参数 DoS）——同时防御 int() 溢出
+        if iterations > _PBKDF2_MAX_ITERATIONS:
+            return False
         salt = base64.b64decode(salt_b64)
         expected = base64.b64decode(hash_b64)
     except (ValueError, TypeError):

@@ -15,7 +15,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Onboarding from './components/Onboarding';
 import ErrorBoundary from './components/ErrorBoundary';
-import { fetchMe } from './api';
+import { fetchMe, fetchFailedSchedules } from './api';
 import { AppProvider, useApp } from './AppContext';
 
 // 页面级懒加载：每个页面独立 chunk，首屏只下载当前页面代码（阶段 27 bundle 优化）
@@ -99,6 +99,18 @@ function AppRouter() {
     try { if (!localStorage.getItem('onboard_done')) setShowOnboard(true); } catch { /* ignore */ }
   }, [isAuthed]);
 
+  // 优化①：定时任务失败全局通知条（登录后拉取，可关闭；不阻塞页面）
+  const [failedJobs, setFailedJobs] = useState([]);
+  const [dismissFailed, setDismissFailed] = useState(false);
+  useEffect(() => {
+    if (!isAuthed) return;
+    let cancelled = false;
+    fetchFailedSchedules().then((res) => {
+      if (!cancelled) setFailedJobs(res?.失败任务 || []);
+    }).catch(() => { /* 静默：通知条失败不影响主流程 */ });
+    return () => { cancelled = true; };
+  }, [isAuthed]);
+
   return (
     <BrowserRouter>
         <Routes>
@@ -118,6 +130,16 @@ function AppRouter() {
                 </a>
                 <Sidebar collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
                 <main id="main-content" className="flex-1 overflow-auto">
+                  {/* 优化①：定时任务失败通知条 */}
+                  {isAuthed && !dismissFailed && failedJobs.length > 0 && (
+                    <div className="mx-4 mt-4 px-4 py-2.5 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 flex items-center gap-2">
+                      <span className="flex-1">
+                        ⚠ {failedJobs.length} 个定时任务最近执行失败
+                        {failedJobs[0]?.cron && <span className="text-red-400 ml-1">（cron {failedJobs[0].cron}：{String(failedJobs[0].失败原因 || '').slice(0, 40)}…）</span>}
+                      </span>
+                      <button className="text-red-400 hover:text-red-600 whitespace-nowrap" onClick={() => setDismissFailed(true)}>知道了</button>
+                    </div>
+                  )}
                   <ErrorBoundary>
                     {/* 懒加载 Suspense 仅覆盖内容区：页面代码未就绪时侧边栏布局常驻 */}
                     <Suspense fallback={<PageFallback />}>

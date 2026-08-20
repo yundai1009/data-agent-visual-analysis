@@ -22,6 +22,13 @@ from services.scheduler import cron合法, 下次执行时间
 router = APIRouter(prefix="/schedules", tags=["schedules"])
 
 
+@router.get("/failed", response_model=Dict[str, Any])
+def 查询失败任务(user: dict = Depends(get_current_user)) -> Dict[str, Any]:
+    """优化①：最近执行失败/异常的定时任务（登录后全局通知条用）。"""
+    from repositories import schedule_repo
+    return {"失败任务": schedule_repo.查询最近失败任务(user["user_id"], limit=5)}
+
+
 @router.post("", response_model=Dict[str, Any])
 def 创建定时任务(body: 定时任务请求, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     """创建定时任务：校验 cron 表达式合法 + 模板归属。"""

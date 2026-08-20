@@ -92,6 +92,21 @@ def 读取模板(user_id: str, template_id: str) -> Optional[Dict[str, Any]]:
     }
 
 
+def 搜索模板名称(user_id: str, q: str, limit: int = 5) -> List[Dict[str, Any]]:
+    """优化⑧：按名称模糊搜索模板（供全局搜索）。"""
+    初始化模板表()
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT template_id, name, dataset_id, updated_at "
+            "FROM report_templates WHERE user_id = ? AND name LIKE ? ORDER BY updated_at DESC LIMIT ?",
+            (user_id, f"%{q}%", limit),
+        ).fetchall()
+    return [
+        {"模板ID": row["template_id"], "名称": row["name"], "数据集ID": row["dataset_id"], "更新时间": row["updated_at"]}
+        for row in rows
+    ]
+
+
 def 列出模板(user_id: str) -> List[Dict[str, Any]]:
     """列出某用户的全部模板（按更新时间倒序）。"""
     初始化模板表()

@@ -717,7 +717,7 @@ export default function Report() {
         ];
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowDl(false)}>
-            <div className="bg-white rounded-2xl shadow-[var(--shadow-card-lg)] w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-white popup-surface rounded-2xl shadow-[var(--shadow-card-lg)] w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
                   <Download className="w-4 h-4 text-accent" /> 导出报表
@@ -757,7 +757,7 @@ export default function Report() {
       {/* 分享弹窗：生成带权限的只读链接 + 管理已有链接 */}
       {showShare && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowShare(false)}>
-          <div className="bg-white rounded-2xl shadow-[var(--shadow-card-lg)] w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white popup-surface rounded-2xl shadow-[var(--shadow-card-lg)] w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
                 <Share2 className="w-4 h-4 text-emerald-600" /> 分享报表

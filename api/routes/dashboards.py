@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from api.contracts import DashboardRequest
 from api.dependencies import get_current_user
@@ -21,8 +21,11 @@ router = APIRouter(prefix="/dashboards", tags=["dashboards"])
 
 
 def _校验报表归属(user_id: str, report_ids: List[str]) -> None:
-    """逐份校验报表存在且归属该用户；任一不满足 → 400。"""
-    missing = [rid for rid in report_ids if not report_repo.读取报表(user_id, rid)]
+    """优化⑨：批量校验报表存在且归属该用户（单次 IN 查询，替代逐份读取 N+1）。"""
+    if not report_ids:
+        return
+    found = report_repo.批量读取报表(user_id, report_ids)
+    missing = [rid for rid in report_ids if rid not in found]
     if missing:
         shown = "、".join(missing[:3]) + ("…" if len(missing) > 3 else "")
         raise HTTPException(
@@ -109,3 +112,31 @@ def 删除看板(
     from repositories import audit_repo
     audit_repo.记录(user["user_id"], "删除看板", target_type="dashboard", target_id=dashboard_id)
     return {"看板ID": dashboard_id, "status": "deleted"}
+
+
+@router.post("/{dashboard_id}/share")
+def 分享看板(
+    dashboard_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """优化⑦：生成看板只读分享链接（复用 share_links 体系，target_type=dashboard）。
+
+    query 参数：有效小时数（默认 24）、密码（可选）、协作者（可选，逗号分隔）。
+    """
+    from repositories import dashboard_repo, share_repo
+    item = dashboard_repo.读取看板(user["user_id"], dashboard_id)
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="看板不存在")
+
+    hours = int(request.query_params.get("有效小时数") or 24)
+    password = (request.query_params.get("密码") or "").strip()
+    协作者 = [c.strip() for c in (request.query_params.get("协作者") or "").split(",") if c.strip()]
+    if hours < 1 or hours > 720:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="有效小时数需在 1-720 之间")
+
+    result = share_repo.创建分享(
+        user["user_id"], dashboard_id, hours=hours, password=password,
+        collaborators=协作者, target_type="dashboard",
+    )
+    return {**result, "类型": "dashboard"}

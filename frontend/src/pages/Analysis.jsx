@@ -854,6 +854,17 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
             onChange={(e) => setScheduleCron(e.target.value)}
             title="5 字段 cron：分 时 日 月 周（0=周日）。示例：0 9 * * 1 = 每周一 09:00；*/30 * * * * = 每 30 分钟"
           />
+          {/* 优化⑭：cron 快捷模板（非程序员友好） */}
+          <div className="flex gap-1">
+            {[['每天 09:00', '0 9 * * *'], ['每 30 分钟', '*/30 * * * *'], ['每周一 09:00', '0 9 * * 1'], ['每月 1 日 09:00', '0 9 1 * *']].map(([label, expr]) => (
+              <button
+                key={expr}
+                className={`px-2 py-1 rounded text-[10px] transition-all ${scheduleCron === expr ? 'bg-accent text-white' : 'bg-gray-100 text-gray-500 hover:bg-accent-soft hover:text-accent'}`}
+                onClick={() => setScheduleCron(expr)}
+                title={`填入 ${expr}`}
+              >{label}</button>
+            ))}
+          </div>
           <button
             onClick={handleCreateSchedule}
             className="px-3 py-1.5 rounded-lg text-xs bg-accent text-white hover:opacity-90 transition-all shrink-0"

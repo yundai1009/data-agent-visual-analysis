@@ -25,7 +25,8 @@ import math
 import os
 import queue
 import threading
-from typing import Any, Callable, Dict, Optional, Tuple
+from contextlib import contextmanager
+from typing import Any, Callable, Dict, Iterator, Optional, Tuple
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -59,6 +60,20 @@ except Exception:  # noqa: BLE001
 _STREAM_SEMAPHORE = threading.BoundedSemaphore(4)
 # SSE 事件队列上限：trace 单请求最多 ~20 条 + done/error/sentinel，64 足够且防堆积
 _STREAM_QUEUE_MAX = 64
+
+
+@contextmanager
+def _流式并发配额(detail: str = "分析任务繁忙，请稍后重试") -> Iterator[None]:
+    """优化⑮：并发名额 contextmanager——acquire 失败抛 503，退出保证 release。
+
+    替代此前多处手写 acquire/release（漏 finally 释放会永久 503）。
+    """
+    if not _STREAM_SEMAPHORE.acquire(blocking=False):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
+    try:
+        yield
+    finally:
+        _STREAM_SEMAPHORE.release()
 
 
 def _json_safe(obj: Any) -> Any:
@@ -321,12 +336,7 @@ async def generate_report(
     user: dict = Depends(get_current_user),
 ) -> ReportGenerateResponse:
     # P0 加固：与流式共享并发信号量，超出立即 503（非流式端点曾不受限，可并发刷爆）
-    if not _STREAM_SEMAPHORE.acquire(blocking=False):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="当前分析任务已满（并发上限 4），请稍后重试",
-        )
-    try:
+    with _流式并发配额("当前分析任务已满（并发上限 4），请稍后重试"):
         df, llm_config = _准备上下文(payload, request, user)
         try:
             from services.tracking import 推断发起入口
@@ -340,8 +350,6 @@ async def generate_report(
                 detail=str(exc),
             ) from exc
         return _构建响应(payload, report, report_id)
-    finally:
-        _STREAM_SEMAPHORE.release()
 
 
 @router.post("/generate-stream")
@@ -785,20 +793,13 @@ def 重放报表(
     )
 
     # P0 加固：与流式共享并发信号量（replay 同样消耗 LLM/线程资源）
-    if not _STREAM_SEMAPHORE.acquire(blocking=False):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="当前分析任务已满（并发上限 4），请稍后重试",
-        )
-    try:
+    with _流式并发配额("当前分析任务已满（并发上限 4），请稍后重试"):
         df, llm_config = _准备上下文(payload, request, user)
         try:
             new_id, new_report = _生成报表流式(payload, df, llm_config, user)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
         return _构建响应(payload, new_report, new_id)
-    finally:
-        _STREAM_SEMAPHORE.release()
 
 
 # ── 生成 ──────────────────────────────────────────────────────────────────────

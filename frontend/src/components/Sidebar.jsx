@@ -15,9 +15,9 @@
 import { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
-import { Database, Zap, BarChart3, LayoutDashboard, Shield, ChevronLeft, ChevronRight, LogOut, X, UserRoundPen, MessageSquareHeart, Moon, Sun } from 'lucide-react';
+import { Database, Zap, BarChart3, LayoutDashboard, Shield, ChevronLeft, ChevronRight, LogOut, X, UserRoundPen, MessageSquareHeart, Moon, Sun, Search } from 'lucide-react';
 import { useApp } from '../AppContext';
-import { submitFeedback } from '../api';
+import { submitFeedback, globalSearch } from '../api';
 
 const navItems = [
   { to: '/data', icon: Database, label: '数据管理' },
@@ -49,6 +49,18 @@ export default function Sidebar({ collapsed, onToggle }) {
   const [fbText, setFbText] = useState('');
   const [fbMsg, setFbMsg] = useState('');
   const [fbBusy, setFbBusy] = useState(false);
+
+  // 优化⑧：全局搜索（数据集/报表/模板）
+  const [searchQ, setSearchQ] = useState('');
+  const [searchRes, setSearchRes] = useState(null);
+  const [searching, setSearching] = useState(false);
+  const handleSearch = async (q) => {
+    setSearchQ(q);
+    if (!q.trim()) { setSearchRes(null); return; }
+    setSearching(true);
+    try { setSearchRes(await globalSearch(q.trim())); } catch { setSearchRes(null); }
+    setSearching(false);
+  };
 
   // 提交反馈：调用后端 /feedback 接口，成功后 1.2 秒自动关闭弹窗（让用户看清提示）
   const handleSubmitFeedback = async () => {
@@ -97,6 +109,49 @@ export default function Sidebar({ collapsed, onToggle }) {
           <p className="text-xs text-slate-400 leading-tight -mt-0.5 whitespace-nowrap">自助分析平台</p>
         </div>
       </div>
+
+      {/* 优化⑧：全局搜索（折叠时不显示） */}
+      {!collapsed && (
+        <div className="px-2 pt-2 relative">
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <input
+              className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg bg-white/[0.06] border border-white/10 text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-accent/60"
+              placeholder="搜索数据集/报表/模板…"
+              value={searchQ}
+              onChange={(e) => handleSearch(e.target.value)}
+            />
+          </div>
+          {searchRes && (
+            <div className="absolute left-2 right-2 top-full mt-1 z-40 bg-white rounded-lg shadow-xl border border-gray-100 py-1 max-h-64 overflow-y-auto">
+              {[['数据集', searchRes.数据集 || []], ['报表', searchRes.报表 || []], ['模板', searchRes.模板 || []]].map(([label, items]) => (
+                <div key={label}>
+                  {items.length > 0 && (
+                    <>
+                      <p className="px-3 pt-1.5 pb-0.5 text-[10px] text-gray-400">{label}</p>
+                      {items.map((it, i) => (
+                        <button
+                          key={`${label}-${i}`}
+                          className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 truncate"
+                          onClick={() => {
+                            const target = label === '数据集' ? '/data' : label === '报表' ? `/report/${it.报表ID}` : '/analysis';
+                            setSearchRes(null); setSearchQ('');
+                            navigate(target);
+                          }}
+                        >{it.文件名 || it.标题 || it.名称}</button>
+                      ))}
+                    </>
+                  )}
+                </div>
+              ))}
+              {(!searchRes.数据集?.length && !searchRes.报表?.length && !searchRes.模板?.length) && (
+                <p className="px-3 py-2 text-[11px] text-gray-400">无匹配结果</p>
+              )}
+            </div>
+          )}
+          {searching && <p className="absolute left-2 right-2 top-full mt-1 z-40 bg-white rounded-lg shadow-xl px-3 py-2 text-[11px] text-gray-400">搜索中…</p>}
+        </div>
+      )}
 
       {/* Nav */}
       {/* 导航项渲染：navItems + 管理员入口（条件拼接）*/}

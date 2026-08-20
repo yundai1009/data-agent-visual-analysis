@@ -70,6 +70,9 @@ export default function DataManagement() {
   const [showMissing, setShowMissing] = useState(false);
   const [cleaning, setCleaning] = useState(false);
   const [cleanResult, setCleanResult] = useState(null);
+  // 优化②：清洗另存为新数据集
+  const [cleanAsNew, setCleanAsNew] = useState(false);
+  const [cleanNewName, setCleanNewName] = useState('');
   // 清洗选项（阶段 7：可配置）
   const [cleanOps] = useState({
     deduplicate: true,
@@ -114,8 +117,8 @@ export default function DataManagement() {
     try {
       const res = await getDataset(id);
       if (switchSeqRef.current !== seq) return; // 已有更新的切换，丢弃旧响应
-      setDataset({ 数据集ID: id, 文件名: res.文件名, 数据画像: res.数据画像 });
-      setAppDataset({ 数据集ID: id, 文件名: res.文件名, 数据画像: res.数据画像 });
+      setDataset({ 数据集ID: id, 文件名: res.文件名, 数据画像: res.数据画像, 来源数据集ID: res.来源数据集ID });
+      setAppDataset({ 数据集ID: id, 文件名: res.文件名, 数据画像: res.数据画像, 来源数据集ID: res.来源数据集ID });
       setProfile(res.数据画像);
       setDsOpen(false);
     } catch (e) {
@@ -249,12 +252,22 @@ export default function DataManagement() {
         fill_missing: cleanOps.fill_missing,
         fill_strategy: cleanOps.fill_strategy,
         drop_empty_rows: cleanOps.drop_empty_rows,
+        // 优化②：另存为新数据集（保留原始数据对照）
+        新文件名: cleanAsNew ? (cleanNewName.trim() || `${dataset.文件名}-已清洗`) : '',
       });
       setCleanResult(res);
-      setProfile(res.数据画像);
-      setDataset(prev => ({ ...prev, 行数: res.清洗后行数, 数据画像: res.数据画像 }));
-      // 同步 AppContext，让分析页使用清洗后数据
-      setAppDataset(prev => prev ? { ...prev, 行数: res.清洗后行数, 数据画像: res.数据画像 } : prev);
+      // 另存时：选中新数据集 + 刷新列表；覆盖时：原地更新画像
+      if (cleanAsNew) {
+        setDataset(prev => ({ ...prev, 数据集ID: res.数据集ID, 文件名: res.文件名 || prev?.文件名, 数据画像: res.数据画像 }));
+        setProfile(res.数据画像);
+        setAppDataset(prev => ({ ...prev, 数据集ID: res.数据集ID, 文件名: res.文件名 || prev?.文件名, 数据画像: res.数据画像 }));
+        listDatasets(200, dsQ, dsSort).then(r2 => { setDsList(r2?.数据集列表 || []); setDsStats(r2?.统计 || {}); }).catch(() => {});
+      } else {
+        setProfile(res.数据画像);
+        setDataset(prev => ({ ...prev, 行数: res.清洗后行数, 数据画像: res.数据画像 }));
+        // 同步 AppContext，让分析页使用清洗后数据
+        setAppDataset(prev => prev ? { ...prev, 行数: res.清洗后行数, 数据画像: res.数据画像 } : prev);
+      }
     } catch (e) {
       setError('清洗失败: ' + e.message);
     }
@@ -285,6 +298,26 @@ export default function DataManagement() {
     } catch (e) {
       setError(e.message || '合并失败');
     }
+    setMerging(false);
+  };
+
+  // 优化③：批量删除所选数据集（复用多选 checkbox）
+  const handleDeleteSelected = async () => {
+    const ids = Array.from(mergeSel);
+    if (ids.length === 0) return;
+    if (!window.confirm(`确定删除所选 ${ids.length} 个数据集？此操作不可恢复。`)) return;
+    setMerging(true);
+    setError('');
+    const failed = [];
+    for (const id of ids) {
+      try { await deleteDataset(id); } catch { failed.push(id); }
+    }
+    setMergeSel(new Set());
+    if (failed.length > 0) setError(`有 ${failed.length} 个数据集删除失败，已保留`);
+    if (dataset && ids.includes(dataset.数据集ID)) {
+      setDataset(null); setProfile(null); setAppDataset(null);
+    }
+    listDatasets(200, dsQ, dsSort).then(r2 => { setDsList(r2?.数据集列表 || []); setDsStats(r2?.统计 || {}); }).catch(() => {});
     setMerging(false);
   };
 
@@ -331,7 +364,7 @@ export default function DataManagement() {
             {dsOpen && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setDsOpen(false)} />
-                <div className="absolute right-0 top-full mt-2 z-20 w-80 bg-white border border-gray-200 rounded-xl shadow-xl p-3">
+                <div className="absolute right-0 top-full mt-2 z-20 w-80 popup-surface bg-white border border-gray-200 rounded-xl shadow-xl p-3">
                   <p className="text-xs font-semibold text-gray-700 mb-1">我的数据集</p>
                   {/* 阶段 31：概览统计 + 文件名搜索 + 排序 */}
                   <p className="text-[11px] text-gray-400 mb-2">共 {dsStats.总数} 个数据集 · 总行数 {dsStats.总行数.toLocaleString()} 行</p>
@@ -399,6 +432,14 @@ export default function DataManagement() {
                       onClick={() => setMergeOpen(true)}
                       className="mt-2 w-full py-1.5 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-deep transition-all"
                     >合并所选（{mergeSel.size} 个数据集）</button>
+                  )}
+                  {/* 优化③：批量删除所选 */}
+                  {mergeSel.size >= 1 && (
+                    <button
+                      onClick={handleDeleteSelected}
+                      disabled={merging}
+                      className="mt-1.5 w-full py-1.5 rounded-lg border border-red-200 text-red-500 text-xs font-medium hover:bg-red-50 transition-all disabled:opacity-50"
+                    >删除所选（{mergeSel.size} 个）</button>
                   )}
                   {/* 优化③：合并命名弹窗 */}
                   {mergeOpen && (
@@ -468,6 +509,7 @@ export default function DataManagement() {
             <div className="flex items-center gap-3">
               <FileText className="w-5 h-5 text-emerald-500" />
               <span className="text-sm text-gray-700">已加载数据集：{dataset.文件名}（{profile?.行数} 行）</span>
+              {dataset.来源数据集ID && <span className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">源自清洗/合并</span>}
             </div>
             <div className="flex gap-2">
               <button className="text-xs px-2.5 py-1 rounded border border-gray-200 text-gray-500 hover:bg-white" onClick={(e) => { e.stopPropagation(); handlePreview(0); }} title="查看原始数据">数据预览</button>
@@ -662,7 +704,7 @@ export default function DataManagement() {
       {/* Field detail modal */}
       {detailField && (
         <div className="fixed inset-0 bg-black/20 z-50 flex items-center justify-center" onClick={() => setDetailField(null)}>
-          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full mx-4 overflow-hidden animate-in" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white popup-surface rounded-xl shadow-xl max-w-lg w-full mx-4 overflow-hidden animate-in" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
               <span className="text-sm font-semibold text-gray-900">字段详情：{detailField}</span>
               <button className="text-gray-400 hover:text-gray-600 text-lg leading-none" onClick={() => setDetailField(null)}>✕</button>
@@ -684,7 +726,7 @@ export default function DataManagement() {
       {/* Missing values modal */}
       {showMissing && (
         <div className="fixed inset-0 bg-black/20 z-50 flex items-center justify-center" onClick={() => setShowMissing(false)}>
-          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full mx-4 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white popup-surface rounded-xl shadow-xl max-w-lg w-full mx-4 overflow-hidden" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
               <span className="text-sm font-semibold text-gray-900">缺失值详情</span>
               <button className="text-gray-400 hover:text-gray-600 text-lg leading-none" onClick={() => setShowMissing(false)}>✕</button>
@@ -704,6 +746,20 @@ export default function DataManagement() {
                     <button className="px-4 py-2 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-deep transition-all" onClick={() => { setShowMissing(false); navigate('/analysis'); }}>分析时自动忽略缺失行</button>
                     <button className="px-4 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all" onClick={() => { setShowMissing(false); handleClean(); }}>先进行数据清洗</button>
                   </div>
+                  {/* 优化②：清洗另存为新数据集（保留原始数据） */}
+                  <label className="flex items-center gap-2 mt-3 text-xs text-gray-500 cursor-pointer select-none">
+                    <input type="checkbox" className="accent-accent" checked={cleanAsNew} onChange={(e) => setCleanAsNew(e.target.checked)} />
+                    另存为新数据集（保留原始数据）
+                  </label>
+                  {cleanAsNew && (
+                    <input
+                      className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-gray-50 focus:outline-none focus:border-accent"
+                      placeholder={`新数据集名称（默认：${dataset?.文件名}-已清洗）`}
+                      value={cleanNewName}
+                      onChange={(e) => setCleanNewName(e.target.value)}
+                      maxLength={120}
+                    />
+                  )}
                 </>
               ) : (
                 <p className="text-sm text-gray-500 text-center py-4">暂无缺失值</p>
@@ -716,7 +772,7 @@ export default function DataManagement() {
       {/* 清洗结果弹窗 */}
       {cleanResult && (
         <div className="fixed inset-0 bg-black/20 z-50 flex items-center justify-center" onClick={() => setCleanResult(null)}>
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white popup-surface rounded-xl shadow-xl max-w-md w-full mx-4 overflow-hidden" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
               <span className="text-sm font-semibold text-gray-900">清洗完成</span>
               <button className="text-gray-400 hover:text-gray-600 text-lg leading-none" onClick={() => setCleanResult(null)}>✕</button>

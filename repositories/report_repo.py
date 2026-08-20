@@ -111,6 +111,51 @@ def 列出报表(user_id: str, limit: int = 50, offset: int = 0) -> List[Dict[st
     ]
 
 
+def 批量读取报表(user_id: str, report_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """优化⑨：一次查询读取多份报表（按 report_id 索引）；消除看板校验的 N+1。"""
+    初始化报表表()
+    if not report_ids:
+        return {}
+    placeholders = ",".join("?" * len(report_ids))
+    with _get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT report_id, dataset_id, title, chart_type, report_json, created_at "
+            f"FROM reports WHERE user_id = ? AND report_id IN ({placeholders})",
+            [user_id, *report_ids],
+        ).fetchall()
+    result: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        try:
+            报表_json = json.loads(row["report_json"])
+        except (ValueError, TypeError):
+            报表_json = {}
+        result[row["report_id"]] = {
+            "报表ID": row["report_id"],
+            "数据集ID": row["dataset_id"],
+            "标题": row["title"],
+            "图表类型": row["chart_type"],
+            "报表": 报表_json,
+            "创建时间": row["created_at"],
+        }
+    return result
+
+
+def 搜索报表标题(user_id: str, q: str, limit: int = 5) -> List[Dict[str, Any]]:
+    """优化⑧：按标题模糊搜索报表（供全局搜索）。"""
+    初始化报表表()
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT report_id, dataset_id, title, chart_type, created_at "
+            "FROM reports WHERE user_id = ? AND title LIKE ? ORDER BY created_at DESC LIMIT ?",
+            (user_id, f"%{q}%", limit),
+        ).fetchall()
+    return [
+        {"报表ID": row["report_id"], "数据集ID": row["dataset_id"], "标题": row["title"],
+         "图表类型": row["chart_type"], "创建时间": row["created_at"]}
+        for row in rows
+    ]
+
+
 def 删除报表(user_id: str, report_id: str) -> bool:
     """删除一份报表（仅限归属用户）。"""
     初始化报表表()

@@ -163,7 +163,7 @@ export default function LLMConfig() {
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-full mt-2 z-20 w-[22rem] bg-white border border-gray-200 rounded-xl shadow-xl p-0 overflow-hidden">
+          <div className="absolute left-0 top-full mt-2 z-20 w-[22rem] popup-surface bg-white border border-gray-200 rounded-xl shadow-xl p-0 overflow-hidden">
             {/* 标签页：推荐预设 / 自定义供应商 */}
             <div className="flex border-b border-gray-100">
               {[['preset', '推荐预设'], ['custom', '自定义供应商']].map(([id, label]) => (

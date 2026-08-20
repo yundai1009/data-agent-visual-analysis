@@ -129,6 +129,28 @@ def 记录执行结果(user_id: str, job_id: str, status: str) -> None:
         )
 
 
+def 查询最近失败任务(user_id: str, limit: int = 5) -> List[Dict[str, Any]]:
+    """优化①：最近执行失败/异常的定时任务（登录后全局通知用）。"""
+    初始化任务表()
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT job_id, template_id, cron_expr, last_run_at, last_status "
+            "FROM scheduled_jobs WHERE user_id = ? AND last_status IS NOT NULL "
+            "AND last_status != '成功' ORDER BY last_run_at DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+    return [
+        {
+            "任务ID": row["job_id"],
+            "模板ID": row["template_id"],
+            "cron": row["cron_expr"],
+            "上次执行": row["last_run_at"],
+            "失败原因": row["last_status"],
+        }
+        for row in rows
+    ]
+
+
 def 查启用的任务() -> List[Dict[str, Any]]:
     """调度线程用：全部启用中的任务（跨用户）。"""
     初始化任务表()

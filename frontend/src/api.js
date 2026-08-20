@@ -371,6 +371,8 @@ export async function cleanDataset(id, ops) {
   if (ops.fill_missing) params.set('fill_missing', 'true');
   if (ops.fill_strategy) params.set('fill_strategy', ops.fill_strategy);
   if (ops.drop_empty_rows) params.set('drop_empty_rows', 'true');
+  // 优化②：另存为新数据集（保留原始数据）
+  if (ops.新文件名) params.set('新文件名', ops.新文件名);
   return request(`/datasets/${id}/clean?${params}`, { method: 'POST' });
 }
 
@@ -503,6 +505,16 @@ export async function createSchedule(templateId, cron) {
 
 export async function deleteSchedule(jobId) {
   return request(`/schedules/${jobId}`, { method: 'DELETE' });
+}
+
+// 优化①：最近失败的定时任务（全局通知条）
+// 优化⑧：全局搜索（数据集/报表/模板）
+export async function globalSearch(q) {
+  return request(`/search?q=${encodeURIComponent(q)}`);
+}
+
+export async function fetchFailedSchedules() {
+  return request('/schedules/failed');
 }
 
 // ---- 报表历史（阶段 6：后端持久化）----
@@ -683,6 +695,13 @@ export async function updateDashboard(dashboardId, name, reportIds) {
 
 export async function deleteDashboard(dashboardId) {
   return request(`/dashboards/${dashboardId}`, { method: 'DELETE' });
+}
+
+// 优化⑦：看板分享（创建只读分享链接）
+export async function shareDashboard(dashboardId, hours = 24, password = '') {
+  const q = new URLSearchParams({ 有效小时数: String(hours) });
+  if (password) q.set('密码', password);
+  return request(`/dashboards/${dashboardId}/share?${q.toString()}`, { method: 'POST' });
 }
 
 // ---- 管理后台（管理员专用）----

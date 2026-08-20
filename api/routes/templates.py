@@ -21,7 +21,7 @@ from pydantic import ValidationError
 from api.contracts import ReportGenerateRequest, ReportGenerateResponse, 模板请求
 from api.dependencies import get_current_user
 from api.routes.reports import (
-    _STREAM_SEMAPHORE,
+    _流式并发配额,
     _构建响应,
     _准备上下文,
     _生成报表流式,
@@ -92,17 +92,10 @@ def 执行模板(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="模板不存在")
 
     payload = ReportGenerateRequest(**item["payload"])
-    if not _STREAM_SEMAPHORE.acquire(blocking=False):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="当前分析任务已满（并发上限 4），请稍后重试",
-        )
-    try:
+    with _流式并发配额("当前分析任务已满（并发上限 4），请稍后重试"):
         df, llm_config = _准备上下文(payload, request, user)
         try:
             new_id, new_report = _生成报表流式(payload, df, llm_config, user)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
         return _构建响应(payload, new_report, new_id)
-    finally:
-        _STREAM_SEMAPHORE.release()

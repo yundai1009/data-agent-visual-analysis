@@ -29,6 +29,21 @@
 .dark .hover\:bg-gray-100:hover { background-color: #1e2c46 !important; }
 /* App 主布局背景是内联 radial-gradient，深色下强制覆盖 */
 .dark .min-h-\[100dvh\] { background: #0b1220 !important; }
+/* 优化⑤：弹层/浮层在深色模式下保持浅色——深色 !important 规则按类名全量覆盖
+   会把弹层也染黑；弹层显式加 popup-surface 类即可绕开 */
+.dark .popup-surface {
+  background-color: #ffffff !important;
+  color: #1e293b !important;
+  border-color: #e5e7eb !important;
+  box-shadow: 0 12px 24px -8px rgba(15, 76, 129, 0.18) !important;
+}
+.dark .popup-surface input,
+.dark .popup-surface select,
+.dark .popup-surface textarea {
+  background-color: #f8fafc !important;
+  color: #1e293b !important;
+  border-color: #e5e7eb !important;
+}
 
 /* ============================================================
    设计令牌（阶段 13 · 重设计）

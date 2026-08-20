@@ -93,6 +93,23 @@ def 公开查看报表(
             )
 
     # 报表可能已被创建者删除：分享随之失效（不暴露内部信息）
+    # 优化⑦：target_type=dashboard 时返回看板只读元数据（名称 + 报表标题列表）
+    if share.get("目标类型") == "dashboard":
+        from repositories import dashboard_repo
+        看板 = dashboard_repo.读取看板(share["user_id"], share["report_id"])
+        if not 看板:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="看板已不存在")
+        # 优化⑦：成功访问计一次浏览次数
+        share_repo.增加浏览次数(share_id)
+        report_ids = 看板.get("报表ID列表") or []
+        items = report_repo.批量读取报表(share["user_id"], report_ids)
+        return {
+            "类型": "dashboard",
+            "名称": 看板.get("名称", "未命名看板"),
+            "报表列表": [{"报表ID": rid, "标题": items[rid].get("标题", "未命名") if rid in items else "（已删除）"} for rid in report_ids],
+            "过期时间": share["过期时间"],
+        }
+
     item = report_repo.读取报表(share["user_id"], share["report_id"])
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报表已不存在")

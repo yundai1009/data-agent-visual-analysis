@@ -135,6 +135,10 @@ def 初始化数据库() -> None:
         )
         # 迁移：旧表没有 user_id 列时，补列并将旧数据归到 demo 用户
         _迁移_datasets_user_id(conn)
+        # 优化⑬：parent_id 列（数据集版本链：清洗/合并后记录来源数据集）
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(datasets)").fetchall()}
+        if "parent_id" not in cols:
+            conn.execute("ALTER TABLE datasets ADD COLUMN parent_id TEXT")
         # 用户表（阶段 3 认证体系）
         conn.execute(
             """
@@ -198,8 +202,12 @@ def 保存数据集(
     存储路径: str,
     df: pd.DataFrame,
     画像: Dict[str, Any],
+    parent_id: Optional[str] = None,
 ) -> None:
-    """新增或覆盖保存一个数据集（归属指定用户）。"""
+    """新增或覆盖保存一个数据集（归属指定用户）。
+
+    优化⑬：parent_id 记录来源数据集（清洗另存/合并产物的版本链来源）。
+    """
     df_json = _df_to_json(df)
     profile_json = json.dumps(画像, ensure_ascii=False, default=str)
     rows_count = int(len(df))
@@ -212,8 +220,8 @@ def 保存数据集(
             """
             INSERT INTO datasets
                 (dataset_id, user_id, file_name, stored_path, rows_count, cols_count,
-                 df_json, profile_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 df_json, profile_json, created_at, updated_at, parent_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(dataset_id) DO UPDATE SET
                 user_id       = excluded.user_id,
                 file_name     = excluded.file_name,
@@ -225,7 +233,7 @@ def 保存数据集(
                 updated_at    = excluded.updated_at
             """,
             (dataset_id, user_id, 文件名, 存储路径, rows_count, cols_count,
-             df_json, profile_json, now, now),
+             df_json, profile_json, now, now, parent_id),
         )
     logger.info("保存数据集 %s（用户 %s, %s, %d 行）", dataset_id, user_id, 文件名, rows_count)
 
@@ -235,7 +243,7 @@ def 读取数据集(user_id: str, dataset_id: str) -> Optional[Dict[str, Any]]:
     with _get_conn() as conn:
         row = conn.execute(
             "SELECT dataset_id, user_id, file_name, stored_path, rows_count, cols_count, "
-            "df_json, profile_json, created_at, updated_at "
+            "df_json, profile_json, created_at, updated_at, parent_id "
             "FROM datasets WHERE dataset_id = ? AND user_id = ?",
             (dataset_id, user_id),
         ).fetchone()
@@ -254,6 +262,7 @@ def 读取数据集(user_id: str, dataset_id: str) -> Optional[Dict[str, Any]]:
         "数据画像": json.loads(row["profile_json"]),
         "创建时间": row["created_at"],
         "更新时间": row["updated_at"],
+        "来源数据集ID": row["parent_id"] or None,  # 优化⑬：版本链来源
     }
 
 
@@ -366,8 +375,8 @@ class 数据集仓储:
         初始化数据库()
 
     def 保存(self, user_id: str, dataset_id: str, 文件名: str, 存储路径: str,
-            df: pd.DataFrame, 画像: Dict[str, Any]) -> None:
-        保存数据集(user_id, dataset_id, 文件名, 存储路径, df, 画像)
+            df: pd.DataFrame, 画像: Dict[str, Any], parent_id: Optional[str] = None) -> None:
+        保存数据集(user_id, dataset_id, 文件名, 存储路径, df, 画像, parent_id=parent_id)
 
     def 读取(self, user_id: str, dataset_id: str) -> Optional[Dict[str, Any]]:
         return 读取数据集(user_id, dataset_id)

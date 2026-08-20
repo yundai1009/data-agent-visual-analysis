@@ -52,6 +52,9 @@ def 初始化分享表() -> None:
         # 优化⑥：浏览次数统计（公开访问成功即 +1，分享者可感知链接热度）
         if "view_count" not in cols:
             conn.execute("ALTER TABLE share_links ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0")
+        # 优化⑦：分享目标类型（report=单报表，dashboard=看板）
+        if "target_type" not in cols:
+            conn.execute("ALTER TABLE share_links ADD COLUMN target_type TEXT NOT NULL DEFAULT 'report'")
 
 
 def _密码哈希(password: str) -> str:
@@ -62,10 +65,11 @@ def _密码哈希(password: str) -> str:
     return _hmac.new(EnvConfig.JWT_SECRET_KEY.encode(), password.encode(), hashlib.sha256).hexdigest()
 
 
-def 创建分享(user_id: str, report_id: str, hours: int = 24, password: str = "", collaborators: Optional[List[str]] = None) -> Dict[str, Any]:
-    """为指定报表创建分享链接，可设访问密码（password 非空时访问需凭密码，落库仅存哈希）。
+def 创建分享(user_id: str, report_id: str, hours: int = 24, password: str = "", collaborators: Optional[List[str]] = None, target_type: str = "report") -> Dict[str, Any]:
+    """为指定报表/看板创建分享链接，可设访问密码（password 非空时访问需凭密码，落库仅存哈希）。
 
     阶段 31：collaborators 为协作者 username 白名单（空 = 公开链接 / 仅密码保护）。
+    优化⑦：target_type = report（默认，单报表）| dashboard（看板）。
     """
     初始化分享表()
     share_id = uuid.uuid4().hex
@@ -76,10 +80,10 @@ def 创建分享(user_id: str, report_id: str, hours: int = 24, password: str = 
     with _write_lock, _get_conn() as conn:
         conn.execute(
             """
-            INSERT INTO share_links (share_id, user_id, report_id, expires_at, created_at, password, collaborators)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO share_links (share_id, user_id, report_id, expires_at, created_at, password, collaborators, target_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (share_id, user_id, report_id, expires, now, password_hash, collaborators_json),
+            (share_id, user_id, report_id, expires, now, password_hash, collaborators_json, target_type),
         )
     logger.info("创建分享 %s → 报表 %s（%dh%s%s）", share_id, report_id, hours,
                "，带密码" if password else "",
@@ -96,7 +100,7 @@ def 读取有效分享(share_id: str) -> Optional[Dict[str, Any]]:
     now = _now_iso()
     with _get_conn() as conn:
         row = conn.execute(
-            "SELECT share_id, user_id, report_id, expires_at, created_at, password, collaborators "
+            "SELECT share_id, user_id, report_id, expires_at, created_at, password, collaborators, target_type "
             "FROM share_links WHERE share_id = ? AND expires_at > ?",
             (share_id, now),
         ).fetchone()
@@ -112,6 +116,8 @@ def 读取有效分享(share_id: str) -> Optional[Dict[str, Any]]:
         "需密码": bool(row["password"]),
         # 阶段 31：协作者白名单（JSON 列解析；非法 JSON 视为空白名单）
         "协作者": _解析协作者(row["collaborators"]),
+        # 优化⑦：目标类型（report / dashboard）
+        "目标类型": row["target_type"] or "report",
     }
 
 

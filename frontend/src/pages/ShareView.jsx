@@ -10,7 +10,7 @@
 // 删除它会怎样：分享链接全部失效（后端接口仍在，无前端展示）。
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Share2, AlertTriangle, ShieldCheck, Lock } from 'lucide-react';
+import { Share2, AlertTriangle, ShieldCheck, Lock, LayoutDashboard, BarChart3 } from 'lucide-react';
 import { getSharedReport } from '../api';
 import EChartsChart from '../components/EChartsChart';
 
@@ -45,7 +45,7 @@ export default function ShareView() {
   if (!loading && needsPassword) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center p-8">
-        <div className="bg-white rounded-2xl border border-gray-200 p-8 text-center max-w-sm w-full">
+        <div className="bg-white popup-surface rounded-2xl border border-gray-200 p-8 text-center max-w-sm w-full">
           <Lock className="w-9 h-9 text-gray-300 mx-auto mb-3" />
           <p className="text-sm text-gray-700 font-medium mb-1">此分享已设置访问密码</p>
           <p className="text-xs text-gray-400 mb-4">请输入分享者提供的密码后查看</p>
@@ -88,6 +88,30 @@ export default function ShareView() {
           <AlertTriangle className="w-10 h-10 text-gray-300 mx-auto mb-3" />
           <p className="text-sm text-gray-600 font-medium">{error || '分享内容不存在'}</p>
           <p className="text-xs text-gray-400 mt-1.5">链接可能已过期、被撤销，或报表已被删除</p>
+        </div>
+      </div>
+    );
+  }
+
+  // 优化⑦：看板分享的只读视图（名称 + 报表标题列表）
+  if (report.类型 === 'dashboard') {
+    return (
+      <div className="min-h-[70vh] flex items-center justify-center p-8">
+        <div className="bg-white popup-surface rounded-2xl border border-gray-200 p-8 max-w-md w-full">
+          <LayoutDashboard className="w-9 h-9 text-accent mx-auto mb-3" />
+          <h2 className="text-base font-semibold text-gray-900 text-center mb-1">{report.名称 || '共享看板'}</h2>
+          <p className="text-xs text-gray-400 text-center mb-5">
+            共享者公开分享的看板（{report.报表列表?.length || 0} 份报表）
+            {report.过期时间 && <span className="block mt-1">有效期至 {new Date(report.过期时间).toLocaleString('zh-CN', { hour12: false })}</span>}
+          </p>
+          <div className="space-y-1.5">
+            {(report.报表列表 || []).map((it, i) => (
+              <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 text-xs text-gray-700">
+                <BarChart3 className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                <span className="truncate">{it.标题}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     );

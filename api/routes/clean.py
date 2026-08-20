@@ -35,9 +35,11 @@ async def clean_dataset(
     fill_strategy: str = Query("auto", description="填充策略: auto/mean/median/mode/zero"),
     drop_empty_rows: bool = Query(False, description="是否删除全空行"),
     drop_empty_columns: bool = Query(False, description="是否删除全空列"),
+    # 优化②：非空时保存为「新数据集」而非覆盖原数据集（保留原始数据对照）
+    新文件名: str = Query("", max_length=120, description="可选：另存为新数据集的文件名"),
     user: dict = Depends(get_current_user),
 ) -> CleanDatasetResponse:
-    """对数据集执行清洗操作，保存清洗后版本并返回摘要。"""
+    """对数据集执行清洗操作；默认覆盖保存，传 新文件名 时另存为新数据集。"""
     # M13：非法填充策略 → 400（此前非法值透传 → 500）
     if fill_strategy not in _FILL_STRATEGIES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不支持的填充策略")
@@ -59,23 +61,27 @@ async def clean_dataset(
         cleaned_df = result["清洗后数据"]
         摘要 = result["操作摘要"]
 
-        # 保存清洗版本（用同一 dataset_id 覆盖；如需保留原始数据可换新 id）
+        # 保存清洗版本：传 新文件名 时另存为新数据集（保留原始数据对照），否则覆盖
         from 后端_核心.数据画像 import 生成数据画像
-        from 后端_核心.文件数据服务 import 读取上传表格
         import io
+        import uuid
 
         new_profile = 生成数据画像(cleaned_df)
+        dst_id = dataset_id
+        if 新文件名:
+            dst_id = uuid.uuid4().hex
         _仓储.保存(
             user_id=user["user_id"],
-            dataset_id=dataset_id,
-            文件名=item["文件名"] + "（已清洗）",
+            dataset_id=dst_id,
+            文件名=新文件名 or (item["文件名"] + "（已清洗）"),
             存储路径=item.get("路径", ""),  # B11 修复：仓储返回键为"路径"（原"存储路径"取不到 → 溯源元数据被清空）
             df=cleaned_df,
             画像=new_profile,
+            parent_id=dataset_id if 新文件名 else None,  # 优化⑬：记录来源（另存时保留版本链）
         )
 
     return CleanDatasetResponse(
-        数据集ID=dataset_id,
+        数据集ID=dst_id,
         原行数=len(df),
         清洗后行数=len(cleaned_df),
         清洗前列数=len(df.columns),
