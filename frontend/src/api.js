@@ -733,6 +733,17 @@ export async function exportEvents() {
   return request('/admin/export-events');
 }
 
+export async function banUser(userId, reason = '') {
+  return request(`/admin/users/${userId}/ban`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function unbanUser(userId) {
+  return request(`/admin/users/${userId}/unban`, { method: 'POST' });
+}
+
 export async function healthCheck() {
   return request('/health');
 }

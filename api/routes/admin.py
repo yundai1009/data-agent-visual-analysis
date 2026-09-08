@@ -63,6 +63,48 @@ def list_users(user: dict = Depends(require_admin)) -> Dict[str, Any]:
     return {"用户列表": admin_repo.用户用量列表()}
 
 
+@router.post("/users/{user_id}/ban")
+def ban_user(user_id: str, payload: dict, user: dict = Depends(require_admin)) -> Dict[str, Any]:
+    """封禁用户：status → banned，吊销其全部会话（token_version +1）。
+
+    安全约束：
+    - 不能封禁自己（管理员自杀式操作，锁死管理入口）
+    - 不能封禁 admin 角色（防止一个管理员封掉全部管理员导致无人能解封）
+    """
+    from repositories import user_repo
+    target = user_repo.按用户ID查询(user_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在")
+    if target["user_id"] == user["user_id"]:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不能封禁自己")
+    if target["role"] == "admin":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不能封禁管理员账号")
+    reason = str(payload.get("reason") or "").strip()[:200]
+    try:
+        user_repo.封禁用户(user_id, reason=reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    from repositories import audit_repo
+    audit_repo.记录(user["user_id"], "封禁用户", username=user.get("username", ""), target_type="user", target_id=user_id, detail=reason)
+    return {"message": f"已封禁用户 {target['username']}", "用户ID": user_id, "状态": "banned"}
+
+
+@router.post("/users/{user_id}/unban")
+def unban_user(user_id: str, user: dict = Depends(require_admin)) -> Dict[str, Any]:
+    """解封用户：status → active，恢复登录。"""
+    from repositories import user_repo
+    target = user_repo.按用户ID查询(user_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在")
+    try:
+        user_repo.解封用户(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    from repositories import audit_repo
+    audit_repo.记录(user["user_id"], "解封用户", username=user.get("username", ""), target_type="user", target_id=user_id, detail="")
+    return {"message": f"已解封用户 {target['username']}", "用户ID": user_id, "状态": "active"}
+
+
 @router.get("/usage")
 def get_llm_usage(
     days: int = Query(7, ge=1, le=90),

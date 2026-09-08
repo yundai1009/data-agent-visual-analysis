@@ -22,8 +22,23 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _ensure_status_column() -> None:
+    """幂等确保 users 表含 status 列（active/banned）。"""
+    from 后端_核心.存储.sqlite_repo import _get_conn as _conn
+    with _conn() as conn:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+        if "status" not in columns:
+            try:
+                conn.execute("ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
+            except Exception as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
+            logger.info("users 表已迁移：新增 status 列")
+
+
 def 初始化用户表() -> None:
     """幂等创建 users 表，并对旧库做 email 列幂等迁移。"""
+    _ensure_status_column()
     with _get_conn() as conn:
         conn.execute(
             """
@@ -34,16 +49,13 @@ def 初始化用户表() -> None:
                 role          TEXT NOT NULL,
                 email         TEXT,
                 created_at    TEXT NOT NULL,
-                updated_at    TEXT NOT NULL
+                updated_at    TEXT NOT NULL,
+                status        TEXT NOT NULL DEFAULT 'active'
             )
             """
         )
-        # 旧库幂等迁移：缺 email 列则补列（SQLite 的 ALTER TABLE ADD COLUMN
-        # 不允许带 UNIQUE 约束，因此用唯一索引实现邮箱唯一；多个 NULL 不冲突）
+        # 旧库幂等迁移：缺 email 列则补列
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
-        # M9：ALTER 迁移加 try/except——冷启动多进程/多测试 client 并发执行
-        # 迁移时，两个连接同时通过列检查后先后 ALTER，后者报 duplicate column；
-        # 捕获该异常视为"列已存在"（幂等迁移语义）。
         if "email" not in columns:
             try:
                 conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
@@ -295,6 +307,46 @@ def 按用户ID查询(user_id: str) -> Optional[Dict[str, Any]]:
         "email": row["email"],
         "created_at": row["created_at"],
     }
+
+
+def 读取账号状态(user_id: str) -> str:
+    """读取用户账号状态：'active'（正常）/ 'banned'（已封禁）。"""
+    初始化用户表()
+    with _get_conn() as conn:
+        row = conn.execute("SELECT status FROM users WHERE user_id = ?", (user_id,)).fetchone()
+    return (row["status"] if row else "active") or "active"
+
+
+def 封禁用户(user_id: str, reason: str = "") -> None:
+    """封禁用户：status → 'banned'，并吊销全部旧 token（token_version +1）。
+
+    用户不存在抛 ValueError（防假成功）；被封用户下一次请求即被认证拦截。
+    """
+    初始化用户表()
+    with _write_lock, _get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE users SET status = 'banned', token_version = token_version + 1, updated_at = ? WHERE user_id = ?",
+            (_now_iso(), user_id),
+        )
+    if cur.rowcount == 0:
+        raise ValueError("用户不存在，无法封禁")
+    if reason:
+        logger.info("已封禁用户 %s，原因：%s", user_id, reason)
+    else:
+        logger.info("已封禁用户 %s", user_id)
+
+
+def 解封用户(user_id: str) -> None:
+    """解封用户：status → 'active'。用户不存在抛 ValueError（防假成功）。"""
+    初始化用户表()
+    with _write_lock, _get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE users SET status = 'active', updated_at = ? WHERE user_id = ?",
+            (_now_iso(), user_id),
+        )
+    if cur.rowcount == 0:
+        raise ValueError("用户不存在，无法解封")
+    logger.info("已解封用户 %s", user_id)
 
 
 def 更新密码(user_id: str, new_hash: str) -> None:

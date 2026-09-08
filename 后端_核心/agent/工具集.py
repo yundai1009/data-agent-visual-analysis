@@ -251,6 +251,19 @@ def execute_tool(name: str, arguments: Dict[str, Any], context: Dict[str, Any]) 
 # ---- 私有校验小函数 ----------------------------------------------------------
 
 
+def 归一化字段(field: Any) -> Optional[str]:
+    """LLM 返回字段归一化：list → 取首元素 str；str 直接返回；其他 → None。
+
+    GLM 等模型常把单值字段参数返回为数组，参与 set 判断会抛 unhashable。
+    此函数在编排器 / 执行器注册 / 校验链路中统一使用，避免重复实现。
+    """
+    if isinstance(field, str):
+        return field
+    if isinstance(field, list) and field and isinstance(field[0], str):
+        return field[0]
+    return None
+
+
 def validate_intent_against_profile(
     intent: Dict[str, Any],
     画像: Dict[str, Any],

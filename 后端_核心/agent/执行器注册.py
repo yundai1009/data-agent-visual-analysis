@@ -103,12 +103,10 @@ def _归一化字段(field: Any) -> Optional[str]:
     阶段 34 修复（Bug2 补全）：x轴/分组字段 已归一化，但 y轴列表 元素与
     筛选条件.字段 若仍是 list，参与 set 成员判断会抛 unhashable type。
     list→取首个元素（须为 str），其他形态返回 None。
+    B：合并重复实现——代理到 工具集.归一化字段（保持本模块调用点不变）。
     """
-    if isinstance(field, str):
-        return field
-    if isinstance(field, list) and field and isinstance(field[0], str):
-        return field[0]
-    return None
+    from 后端_核心.agent.工具集 import 归一化字段
+    return 归一化字段(field)
 
 
 def _聚合分析_executor(arguments: Dict[str, Any], context: Dict[str, Any]) -> Optional[Dict[str, Any]]:

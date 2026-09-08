@@ -24,9 +24,11 @@ def _确保表存在() -> None:
     from 后端_核心.存储.sqlite_repo import 初始化数据库  # noqa: E402
     from repositories.dashboard_repo import 初始化看板表
     from repositories.report_repo import 初始化报表表
+    from repositories.user_repo import 初始化用户表
     初始化数据库()
     初始化看板表()
     初始化报表表()
+    初始化用户表()  # 含 status 列幂等迁移（旧库缺列时 SELECT u.status 会 500）
 
 
 def 总览统计() -> Dict[str, Any]:
@@ -51,7 +53,7 @@ def 用户用量列表() -> List[Dict[str, Any]]:
     with _get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT u.user_id, u.username, u.email, u.role, u.created_at,
+            SELECT u.user_id, u.username, u.email, u.role, u.created_at, u.status,
                    (SELECT COUNT(*) FROM datasets d WHERE d.user_id = u.user_id) AS dataset_count,
                    (SELECT COUNT(*) FROM reports r  WHERE r.user_id = u.user_id) AS report_count,
                    (SELECT MAX(r.created_at) FROM reports r WHERE r.user_id = u.user_id) AS last_report_at
@@ -65,6 +67,7 @@ def 用户用量列表() -> List[Dict[str, Any]]:
             "用户名": row["username"],
             "邮箱": row["email"] or "",
             "角色": row["role"],
+            "状态": row["status"] or "active",
             "注册时间": row["created_at"],
             "数据集数": int(row["dataset_count"]),
             "报表数": int(row["report_count"]),

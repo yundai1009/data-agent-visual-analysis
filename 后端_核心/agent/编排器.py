@@ -300,13 +300,38 @@ def 编排Agent(
                     # 从多轮消息中提取最终意图
                     intent_override = _从消息提取意图(messages, 画像)
                     if intent_override:
-                        # LLM 字段兜底：不满足图表语义时用规则选择器修正（如词云必须用文本字段）
+                        # D：LLM 字段校验不过回退自动选字段（覆盖全部图表类型，原仅词云）
                         from 后端_核心.上传报表生成器 import 自动选字段  # 延迟导入避免循环
                         chart_type = intent_override.get("图表类型")
-                        if chart_type == "词云图":
-                            文本字段 = 画像.get("文本字段") or []
-                            if intent_override.get("x轴") not in 文本字段:
-                                intent_override["x轴"] = 自动选字段(画像, "词云图").get("x轴")
+
+                        def _需回退() -> bool:
+                            if not chart_type or chart_type in ("自动推荐", "表格"):
+                                return False
+                            分类 = set(画像.get("分类字段") or [])
+                            数值 = set(画像.get("数值字段") or [])
+                            日期 = set(画像.get("日期字段") or [])
+                            文本 = set(画像.get("文本字段") or [])
+                            x = intent_override.get("x轴")
+                            ys = intent_override.get("y轴") or []
+                            g = intent_override.get("分组字段")
+                            if chart_type == "词云图":
+                                return x not in 文本
+                            if chart_type == "散点图":
+                                return (x not in 数值) or (len(ys) == 0 or ys[0] not in 数值)
+                            if chart_type in ("箱线图", "K线图"):
+                                return (not x) or (len(ys) == 0) or (x == (ys[0] if ys else None))
+                            if chart_type in ("热力图", "堆积柱状图", "桑基图", "旭日图"):
+                                # 分组类图表需要至少两个分类字段；分组字段不在分类则回退
+                                return (x not in 分类 and x not in 日期) or (g and g not in 分类)
+                            if chart_type == "雷达图":
+                                return (x not in 分类 and x not in 日期) or len(ys) < 1
+                            # 柱状/折线/面积/饼/环形/漏斗/瀑布/直方图 等
+                            return False
+
+                        if _需回退():
+                            rule_selected = 自动选字段(画像, chart_type)
+                            for k in ("x轴", "y轴", "分组字段", "聚合方式"):
+                                intent_override[k] = rule_selected.get(k)
                         intent_source = "LLM"
                         trace.记录观察(轮次=3, 说明="多轮 ReAct 完成", 状态="成功")
                         # 保存到长期记忆
@@ -591,20 +616,16 @@ def _从消息提取意图(messages: List[Dict[str, Any]], 画像: Dict[str, Any
 
     # 阶段 34 修复（Bug2 补全）：LLM 返回的字段参数可能是数组（GLM 风格），
     # list 参与 set 判断抛 unhashable——x轴/分组/y轴元素/筛选字段统一归一化。
-    def _归一化(field: Any) -> Optional[str]:
-        if isinstance(field, str):
-            return field
-        if isinstance(field, list) and field and isinstance(field[0], str):
-            return field[0]
-        return None
+    # B：合并重复实现——统一走 工具集.归一化字段（编排器/执行器注册 共用）
+    from 后端_核心.agent.工具集 import 归一化字段 as _归一化字段
 
-    x_axis = _归一化(x_axis)
+    x_axis = _归一化字段(x_axis)
     if x_axis and x_axis not in 可用字段:
         x_axis = None
     if isinstance(y_axis_list, str):
         y_axis_list = [y_axis_list]
-    y_axis_list = [f for f in (_归一化(f) for f in y_axis_list) if f and f in 可用字段]
-    group_field = _归一化(group_field)
+    y_axis_list = [f for f in (_归一化字段(f) for f in y_axis_list) if f and f in 可用字段]
+    group_field = _归一化字段(group_field)
     if group_field and group_field not in 可用字段:
         group_field = None
     # 阶段 29：筛选条件字段必须来自画像字段列表（白名单校验）
@@ -612,7 +633,7 @@ def _从消息提取意图(messages: List[Dict[str, Any]], 画像: Dict[str, Any
     for f in filter_list:
         if not isinstance(f, dict):
             continue
-        f_field = _归一化(f.get("字段"))
+        f_field = _归一化字段(f.get("字段"))
         if f_field in 可用字段:
             valid_filters.append({"字段": f_field, "操作": f.get("操作", "等于"), "值": f.get("值")})
     if top_n is not None:

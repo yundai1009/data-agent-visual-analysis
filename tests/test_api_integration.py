@@ -1269,3 +1269,92 @@ def test_generate_stream_生成失败走error事件(client):
     events = _parse_sse(r.text)
     assert events[-1]["type"] == "error"
     assert events[-1]["message"]
+
+
+# ============================================================================
+# E：18 图表 × 自然语言关键词全矩阵回归（阶段 39）
+# ============================================================================
+
+# 18 图表矩阵：关键词 → 期望图表类型 → 字段语义断言（x/y/分组 是否非空）
+_18图表矩阵 = [
+    # (关键词, 期望图表类型, 期望x轴, 期望y轴含字段, 期望分组字段)
+    ("生成柱状图", "柱状图", "地区", "销售额", None),
+    ("折线图看趋势", "折线图", "日期", "销售额", None),
+    ("面积图", "面积图", "日期", "销售额", None),
+    ("饼图占比", "饼图", "地区", None, None),
+    ("环形图", "环形图", "地区", None, None),
+    ("直方图看分布", "直方图", "销售额", "销售额", None),
+    ("散点图看关系", "散点图", "销售额", "订单数", None),
+    ("箱线图看异常", "箱线图", None, "销售额", None),
+    ("K线图看行情", "K线图", "日期", "销售额", None),
+    ("雷达图", "雷达图", "地区", "销售额", None),
+    ("热力图看交叉", "热力图", "地区", "销售额", "渠道"),
+    ("堆积柱状图", "堆积柱状图", "地区", "销售额", "渠道"),
+    ("漏斗图看转化", "漏斗图", "地区", "销售额", None),
+    ("瀑布图", "瀑布图", "地区", "销售额", None),
+    ("桑基图看流向", "桑基图", "地区", None, "渠道"),
+    ("旭日图", "旭日图", "地区", None, "渠道"),
+    ("生成词云图", "词云图", "评论", None, None),
+]
+
+
+def test_E_18图表全矩阵自然语言回归(client):
+    """18 种图表 × 自然语言关键词 → 全部 200 且字段语义正确（零手动）。"""
+    tok = _register(client, "e18matrix")
+    content = (
+        "地区,渠道,销售额,订单数,日期,评论\n"
+        "华东,线上,100,10,2024-01-01,这个产品非常好用强烈推荐\n"
+        "华东,线下,200,20,2024-01-02,产品性价比很高很好用\n"
+        "华南,线上,300,30,2024-01-03,推荐给朋友都说好\n"
+        "华南,线下,150,15,2024-01-04,包装很精美质量很好\n"
+        "华北,线上,80,8,2024-01-05,客服态度很好解决问题快\n"
+    )
+    r = _upload(client, tok, filename="matrix.csv", content=content)
+    assert r.status_code == 200, r.text
+    profile = r.json()["上传成功"][0]["数据画像"]
+    assert "评论" in profile.get("文本字段", []), profile.get("文本字段")
+    did = _did(r.json())
+
+    passed, failures = 0, []
+    for keyword, expected_ct, exp_x, exp_y, exp_group in _18图表矩阵:
+        r = client.post("/reports/generate", json={
+            "数据集ID": did, "分析需求": keyword, "图表类型": "自动推荐",
+            "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
+        }, headers={"Authorization": f"Bearer {tok}"})
+        if r.status_code != 200:
+            failures.append(f"{keyword}: HTTP {r.status_code} {r.text[:120]}")
+            continue
+        body = r.json()
+        ct = body["图表类型"]
+        if ct != expected_ct:
+            failures.append(f"{keyword}: 图表类型 {ct} != {expected_ct}")
+            continue
+        cfg = body.get("图表配置") or {}
+        x = cfg.get("X轴")
+        y_list = cfg.get("Y轴") or []
+        group = cfg.get("分组字段")
+        if exp_x and x != exp_x:
+            failures.append(f"{keyword}: X轴 {x} != {exp_x}")
+        if exp_y and exp_y not in y_list:
+            failures.append(f"{keyword}: Y轴 {y_list} 不含 {exp_y}")
+        if exp_group and group != exp_group:
+            failures.append(f"{keyword}: 分组 {group} != {exp_group}")
+        passed += 1
+
+    assert not failures, "E 全矩阵回归失败:\n" + "\n".join(failures)
+    assert passed == len(_18图表矩阵), f"仅通过 {passed}/{len(_18图表矩阵)}"
+
+
+def test_E_词云无文本字段400带建议(client):
+    """词云 + 无文本字段：400 且带换图建议（不白屏/500）。"""
+    tok = _register(client, "e40")
+    content = "销售额,订单数\n100,10\n200,20\n300,30\n"
+    r = _upload(client, tok, filename="one.csv", content=content)
+    assert r.status_code == 200, r.text
+    did = _did(r.json())
+    r = client.post("/reports/generate", json={
+        "数据集ID": did, "分析需求": "生成词云图", "图表类型": "自动推荐",
+        "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "计数", "agent_mode": "single",
+    }, headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 400, r.text[:200]
+    assert "文本字段" in r.json()["message"]

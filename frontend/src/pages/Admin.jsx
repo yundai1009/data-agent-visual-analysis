@@ -12,8 +12,8 @@
 //     直接喂给 EChartsChart 组件，不另造一套渲染逻辑。
 // 删除它会怎样：管理员失去运营监控入口（接口仍在，仅前端无入口）。
 import { useEffect, useMemo, useState } from 'react';
-import { Shield, Users, Database, FileBarChart2, LayoutDashboard, RefreshCw, ShieldAlert, ScrollText, Gauge, Coins, FileDown } from 'lucide-react';
-import { fetchStatistics, fetchAdminUsers, fetchAuditLog, fetchUsage, fetchMetrics, exportEvents } from '../api';
+import { Shield, Users, Database, FileBarChart2, LayoutDashboard, RefreshCw, ShieldAlert, ScrollText, Gauge, Coins, FileDown, Ban, CheckCircle } from 'lucide-react';
+import { fetchStatistics, fetchAdminUsers, fetchAuditLog, fetchUsage, fetchMetrics, exportEvents, banUser, unbanUser } from '../api';
 import { useApp } from '../AppContext';
 import EChartsChart from '../components/EChartsChart';
 
@@ -58,7 +58,7 @@ export default function Admin() {
       setError('');
       const [s, u] = await Promise.all([fetchStatistics(), fetchAdminUsers()]);
       setStats(s);
-      setUsers(u?.用户列表 || []);
+      setUsers(Array.isArray(u?.用户列表) ? u?.用户列表 : []);
       // 各 tab 数据按需加载
       const tasks = [];
       if (tab === 'audit') tasks.push(fetchAuditLog().then(setAudit));
@@ -70,6 +70,26 @@ export default function Admin() {
       setError('加载失败：' + (e.message || e));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleBan = async (u) => {
+    if (!confirm(`确认封禁用户「${u.用户名}」？封禁后该用户将无法登录。`)) return;
+    try {
+      await banUser(u.用户ID, '管理员手动封禁');
+      load();
+    } catch (e) {
+      alert('封禁失败：' + (e.message || e));
+    }
+  };
+
+  const handleUnban = async (u) => {
+    if (!confirm(`确认解封用户「${u.用户名}」？`)) return;
+    try {
+      await unbanUser(u.用户ID);
+      load();
+    } catch (e) {
+      alert('解封失败：' + (e.message || e));
     }
   };
 
@@ -172,10 +192,12 @@ export default function Admin() {
                 <th className="text-left px-5 py-3 font-medium">用户名</th>
                 <th className="text-left px-4 py-3 font-medium">邮箱</th>
                 <th className="text-left px-4 py-3 font-medium">角色</th>
+                <th className="text-left px-4 py-3 font-medium">状态</th>
                 <th className="text-left px-4 py-3 font-medium">注册时间</th>
                 <th className="text-right px-4 py-3 font-medium">数据集</th>
                 <th className="text-right px-4 py-3 font-medium">报表</th>
                 <th className="text-left px-5 py-3 font-medium">最近报表</th>
+                <th className="text-left px-4 py-3 font-medium">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -190,14 +212,40 @@ export default function Admin() {
                       {u.角色 === 'admin' ? '管理员' : '分析师'}
                     </span>
                   </td>
+                  <td className="px-4 py-3">
+                    <span className={`text-[10px] px-2 py-0.5 rounded-md font-medium ${
+                      u.状态 === 'banned' ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'
+                    }`}>
+                      {u.状态 === 'banned' ? '已封禁' : '正常'}
+                    </span>
+                  </td>
                   <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{fmtTime(u.注册时间)}</td>
                   <td className="px-4 py-3 text-right text-sm text-gray-700">{u.数据集数}</td>
                   <td className="px-4 py-3 text-right text-sm text-gray-700">{u.报表数}</td>
                   <td className="px-5 py-3 text-xs text-gray-500 whitespace-nowrap">{fmtTime(u.最近报表时间)}</td>
+                  <td className="px-4 py-3">
+                    {u.角色 !== 'admin' && u.用户ID !== user?.user_id && (
+                      u.状态 === 'banned' ? (
+                        <button
+                          className="flex items-center gap-1 text-[11px] text-emerald-600 hover:text-emerald-700"
+                          onClick={() => handleUnban(u)}
+                        >
+                          <CheckCircle className="w-3.5 h-3.5" /> 解封
+                        </button>
+                      ) : (
+                        <button
+                          className="flex items-center gap-1 text-[11px] text-red-500 hover:text-red-600"
+                          onClick={() => handleBan(u)}
+                        >
+                          <Ban className="w-3.5 h-3.5" /> 封禁
+                        </button>
+                      )
+                    )}
+                  </td>
                 </tr>
               ))}
               {users.length === 0 && (
-                <tr><td colSpan={7} className="text-center py-8 text-xs text-gray-400">暂无用户</td></tr>
+                <tr><td colSpan={9} className="text-center py-8 text-xs text-gray-400">暂无用户</td></tr>
               )}
             </tbody>
           </table>

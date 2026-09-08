@@ -120,6 +120,15 @@ def get_current_user(
             detail="认证令牌已失效，请重新登录",
         )
 
+    # ---- 第 5 关：封禁拦截（管理后台超级权限）----
+    # 管理后台可封禁违规账号；被封用户任何请求都 403，且封禁即吊销旧 token
+    # （封禁时 token_version +1，配合上一关对账拦截，已登录会话也立即失效）。
+    if _repo.读取账号状态(payload.get("sub", "")) == "banned":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="账号已被封禁，请联系管理员",
+        )
+
     # 组装路由层统一使用的用户字典：roles 用列表形式，便于 require_admin 做成员判断
     return {
         "user_id": payload.get("sub", ""),
