@@ -51,10 +51,13 @@ def _窗口限流(
     capacity: int = 5000,
 ) -> bool:
     """通用固定窗口限流：返回 True=应拦截。容量上限防内存无限增长。"""
-    if len(store) >= capacity:
-        store.clear()
     now = time.time()
     with lock:
+        # 【Bug26 修复】容量清理移入锁内——旧实现在 with lock 之前 clear，
+        # 多线程同时到达时可能各自清空 store，丢掉其他线程刚写入的合法限流
+        # 条目（限流被绕过）。
+        if len(store) >= capacity:
+            store.clear()
         window_start, count = store.get(key, (now, 0))
         if now - window_start > window_sec:
             store[key] = (now, 1)

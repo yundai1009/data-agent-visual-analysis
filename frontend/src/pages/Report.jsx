@@ -72,15 +72,19 @@ export default function Report() {
   // 挂载时从后端加载报表列表与详情：reportId（路由参数）优先展示指定报表，否则展示最新一张
   // 设计：列表与详情分两次请求（列表只含元数据），避免单次返回过大
   useEffect(() => {
+    // 【Bug13 修复】cancelled 提升到 effect 作用域：旧实现在 setTimeout 回调内定义
+    // cancelled，effect cleanup 只 clearTimeout(timer)——当 timer 已触发（请求在途）
+    // 后依赖（favOnly/searchQ/reportId）变化，旧请求的 cancelled 仍是 false，
+    // 旧响应会覆盖新筛选结果。现在 cleanup 同时置 cancelled=true 终止在途请求。
+    let cancelled = false;
     // F-M4：搜索防抖 300ms——输入时不立即请求，停止输入后才刷新列表
     const timer = setTimeout(() => {
-      let cancelled = false;
       setLoading(true);
       (async () => {
         try {
           const res = await listReports(PAGE_SIZE, 0, { favorites: favOnly ? 1 : 0, q: searchQ });
-          const items = res?.报表列表 || [];
           if (cancelled) return;
+          const items = res?.报表列表 || [];
           setReportMeta(items);
           setHasMore(items.length >= PAGE_SIZE);
           const targetId = reportId || items[0]?.报表ID;
@@ -97,13 +101,16 @@ export default function Report() {
             }
           }
         } catch (e) {
+          if (cancelled) return;
           console.error('报表列表加载失败:', e);
           setLoadError('报表加载失败，请检查后端服务是否可用');
         } finally { if (!cancelled) setLoading(false); }
       })();
-      return () => { cancelled = true; };
     }, 300);
-    return () => clearTimeout(timer); // F-M4：防抖清理
+    return () => {
+      clearTimeout(timer); // F-M4：防抖清理
+      cancelled = true;    // 【Bug13 修复】终止在途请求的回调
+    };
   }, [reportId, favOnly, searchQ]);
 
   // 翻页（上一张/下一张）：从后端拉对应报表的详情
@@ -231,11 +238,19 @@ export default function Report() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  // 【Bug5 修复】导出弹窗打开时记录当时的报表 ID（组件顶层声明，不能放函数内）
+  const dlReportIdRef = useRef('');
   // 统一导出入口：按弹窗选择的格式生成 blob，再统一走 saveWithPicker 保存
   // 入参 fmt：'xlsx'/'csv'/'pdf'/'png'/'trace'/'html'/'json'
   // 设计：7 种格式共用一套下载/保存链路，格式差异只体现在 blob 生成这一段
+  // 【Bug5 修复】弹窗打开期间翻页切到另一份报表后，导出会因报表不符被拦截。
   const handleExportFormat = async (fmt) => {
     try {
+      if (dlReportIdRef.current && currentReportId && dlReportIdRef.current !== currentReportId) {
+        alert('报表已切换，导出已取消，请重新选择报表后操作');
+        setShowDl(false);
+        return;
+      }
       let blob, filename;
       if (fmt === 'xlsx' || fmt === 'csv') {
         // 走后端导出端点：带 token 下载，返回 { blob, filename }（文件名由后端 Content-Disposition 给出）
@@ -267,10 +282,14 @@ export default function Report() {
         filename = `Agent决策记录-${(report.标题 || '报表').replace(/[\\/:*?"<>|]/g, '_')}.md`;
       } else if (fmt === 'html') {
         // HTML 报告：直接用后端导出数据里预生成的 HTML 字符串
+        // 【Bug4 修复】旧报表/异常报表可能没有 HTML 导出数据，直接 new Blob([undefined]) 会导出空文件
+        if (!exportData.HTML) { alert('该报表未生成 HTML 导出数据，请换用其他格式'); return; }
         blob = new Blob([exportData.HTML], { type: 'text/html' });
         filename = 'report.html';
       } else if (fmt === 'json') {
         // JSON 数据：后端导出的结构化 JSON 字符串
+        // 【Bug4 修复】同上：无 JSON 数据时给出明确提示而非空文件
+        if (!exportData.JSON) { alert('该报表未生成 JSON 导出数据，请换用其他格式'); return; }
         blob = new Blob([exportData.JSON], { type: 'application/json' });
         filename = 'report.json';
       }
@@ -580,7 +599,7 @@ export default function Report() {
             表格类数据请在下方「数据表」Tab 中查看
           </div>
         ) : (
-          <EChartsChart key={report._historyId || currentIndex} chartType={chartTypeKey} chartConfig={chartConfig} height={360} />
+          <EChartsChart key={viewingReportId || currentIndex} chartType={chartTypeKey} chartConfig={chartConfig} height={360} />
         )}
       </div>
 
@@ -691,7 +710,7 @@ export default function Report() {
       <div className="flex flex-wrap gap-2 justify-end mt-4 items-center">
         <button
           className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all"
-          onClick={() => { setDlFmt('xlsx'); setShowDl(true); }}
+          onClick={() => { setDlFmt('xlsx'); dlReportIdRef.current = currentReportId; setShowDl(true); }}
         >
           <Download className="w-3.5 h-3.5" /> 导出
         </button>

@@ -8,7 +8,7 @@
 //   - 只读：页面无任何编辑/导出入口，从入口上保证"分享出去的
 //     报表不能被篡改"。
 // 删除它会怎样：分享链接全部失效（后端接口仍在，无前端展示）。
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { Share2, AlertTriangle, ShieldCheck, Lock, LayoutDashboard, BarChart3 } from 'lucide-react';
 import { getSharedReport } from '../api';
@@ -25,18 +25,22 @@ export default function ShareView() {
   const [needsPassword, setNeedsPassword] = useState(false);
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
+  // 【Bug12 修复】序号守卫：shareId 变化/快速切换时，旧请求的 then 不覆盖新报表。
+  const loadSeqRef = useRef(0);
 
   const load = (pwd) => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     setAuthError('');
     setError('');  // B16：重试成功后清除残留错误页
     getSharedReport(shareId, pwd)
-      .then((data) => { setReport(data); setNeedsPassword(false); })
+      .then((data) => { if (loadSeqRef.current !== seq) return; setReport(data); setNeedsPassword(false); })
       .catch((e) => {
+        if (loadSeqRef.current !== seq) return;
         if (e.status === 401) { setNeedsPassword(true); setAuthError('密码不正确，请重试'); }
         else setError(e.message || '分享内容加载失败');
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (loadSeqRef.current === seq) setLoading(false); });
   };
 
   useEffect(() => { load(''); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [shareId]);

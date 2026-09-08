@@ -33,6 +33,8 @@ export default function EChartsChart({ chartType, chartConfig, height = 320 }) {
     (async () => {
       try {
         const mod = await import('echarts');
+        // 【Bug14 修复】第一个 await 后就检查卸载标记（早退，省一次 wordcloud 导入）
+        if (cancelled) return;
         // 词云插件需在 echarts 注册后导入（side-effect 自动注册）
         await import('echarts-wordcloud');
         if (cancelled) return;

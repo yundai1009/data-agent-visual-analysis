@@ -11,7 +11,7 @@
 //   - 趋势数据复用报表图表的数据结构（标题/X轴/Y轴/数据），
 //     直接喂给 EChartsChart 组件，不另造一套渲染逻辑。
 // 删除它会怎样：管理员失去运营监控入口（接口仍在，仅前端无入口）。
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { Shield, Users, Database, FileBarChart2, LayoutDashboard, RefreshCw, ShieldAlert, ScrollText, Gauge, Coins, FileDown, Ban, CheckCircle } from 'lucide-react';
 import { fetchStatistics, fetchAdminUsers, fetchAuditLog, fetchUsage, fetchMetrics, exportEvents, banUser, unbanUser } from '../api';
 import { useApp } from '../AppContext';
@@ -49,27 +49,41 @@ export default function Admin() {
   const [usage, setUsage] = useState(null);
   const [metrics, setMetrics] = useState(null);
   const [events, setEvents] = useState(null);
+  // 【Bug11 修复】序号守卫：快速切换 tab 时旧响应不覆盖新 tab 数据；
+  // 且各 tab 数据按需加载（原实现每次切 tab 都重复拉统计+用户）。
+  const loadSeqRef = useRef(0);
+  // 事件导出是"触发服务端写文件"的操作，切回来不应重复导出
+  const eventsLoadedRef = useRef(false);
 
   const isAdmin = (user?.role === 'admin' || user?.roles?.includes?.('admin'));
 
   const load = async () => {
+    const seq = ++loadSeqRef.current;
     try {
       setLoading(true);
       setError('');
-      const [s, u] = await Promise.all([fetchStatistics(), fetchAdminUsers()]);
-      setStats(s);
-      setUsers(Array.isArray(u?.用户列表) ? u?.用户列表 : []);
-      // 各 tab 数据按需加载
       const tasks = [];
-      if (tab === 'audit') tasks.push(fetchAuditLog().then(setAudit));
-      if (tab === 'usage') tasks.push(fetchUsage().then(setUsage));
-      if (tab === 'metrics') tasks.push(fetchMetrics().then(setMetrics));
-      if (tab === 'events') tasks.push(exportEvents().then(setEvents));
+      if (tab === 'overview') {
+        tasks.push(fetchStatistics().then(setStats));
+        tasks.push(fetchAdminUsers().then(u => setUsers(Array.isArray(u?.用户列表) ? u?.用户列表 : [])));
+      }
+      if (tab === 'audit') {
+        // 【修复】后端 GET /admin/audit 返回 {"审计列表": [...]}（对象包裹数组），
+        // 直接 setAudit(整个对象) 会让 audit 变成对象 → 渲染处 audit.map 抛
+        // "E.map is not a function"（真实运行时崩溃）。必须解包取数组。
+        tasks.push(fetchAuditLog().then(res => setAudit(Array.isArray(res?.审计列表) ? res.审计列表 : [])));
+      }
+      if (tab === 'usage') tasks.push(fetchUsage().then(res => setUsage(res && typeof res === 'object' ? res : null)));
+      if (tab === 'metrics') tasks.push(fetchMetrics().then(res => setMetrics(res && typeof res === 'object' ? res : null)));
+      if (tab === 'events' && !eventsLoadedRef.current) {
+        eventsLoadedRef.current = true;
+        tasks.push(exportEvents().then(res => setEvents(res && typeof res === 'object' ? res : null)));
+      }
       await Promise.all(tasks);
     } catch (e) {
-      setError('加载失败：' + (e.message || e));
+      if (loadSeqRef.current === seq) setError('加载失败：' + (e.message || e));
     } finally {
-      setLoading(false);
+      if (loadSeqRef.current === seq) setLoading(false);
     }
   };
 

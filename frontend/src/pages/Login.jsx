@@ -33,6 +33,10 @@ export default function Login() {
   const [sending, setSending] = useState(false);
   const [cooldown, setCooldown] = useState(0); // 获取验证码倒计时（秒）
   const cooldownRef = useRef(null);
+  // 【Bug9 修复】组件卸载守卫：异步回调（发送验证码/登录提交）在 await 完成后
+  // 检查是否仍挂载，避免 setState 更新已卸载组件。
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   // 验证码倒计时
   useEffect(() => {
@@ -56,11 +60,14 @@ export default function Login() {
     setSending(true);
     try {
       await (mode === 'reset' ? sendResetCode(target) : sendCode(target));
+      // 【Bug9 修复】await 后检查挂载位，避免 setState 更新已卸载组件
+      if (!mountedRef.current) return;
       setCooldown(60);
     } catch (err) {
+      if (!mountedRef.current) return;
       setError(err.message || '验证码发送失败');
     }
-    setSending(false);
+    if (mountedRef.current) setSending(false);
   };
 
   const handleSubmit = async (e) => {
@@ -85,6 +92,7 @@ export default function Login() {
         // 密码重置：成功后回到登录模式提示用新密码登录
         setInfo('');
         await resetPassword(email.trim(), code.trim(), password);
+        if (!mountedRef.current) return; // 【Bug9 修复】
         setPassword('');
         setCode('');
         setMode('login');
@@ -94,12 +102,14 @@ export default function Login() {
       } else {
         res = await login(username.trim(), password);
       }
+      if (!mountedRef.current) return; // 【Bug9 修复】await 后组件可能已卸载
       setAuth(res.access_token, res.user);
       navigate('/data');
     } catch (err) {
+      if (!mountedRef.current) return; // 【Bug9 修复】
       setError(err.message || '操作失败');
     }
-    setLoading(false);
+    if (mountedRef.current) setLoading(false);
   };
 
   const inputCls = "w-full border border-white/15 rounded-xl px-3.5 py-2.5 text-sm bg-white/[0.07] text-white placeholder:text-slate-400/70 focus:outline-none focus:border-white/40 focus:bg-white/[0.11] transition-all";

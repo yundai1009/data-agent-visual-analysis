@@ -11,7 +11,7 @@
 //   - ProtectedRoute 做路由级守卫：未登录访问受保护页自动跳登录。
 // 删除它会怎样：应用没有任何页面可渲染，等于空白。
 import { useState, useEffect, Suspense, lazy } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Onboarding from './components/Onboarding';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -62,8 +62,11 @@ function AuthBootstrap() {
       })
       .catch(() => { /* 401 已由 handleAuthExpired 登出；网络错误保持现状 */ });
     return () => { cancelled = true; };
+    // 【Bug10 修复】依赖数组补 isAuthed——空依赖时，未登录打开页面（isAuthed=false 短路返回）
+    // → 登录后 isAuthed 变 true，effect 不会重新执行，user_cache 用旧值（侧边栏用户名/角色/管理员
+    // 入口全部滞后）。依赖 isAuthed 后登录完成即刷新，且 401 登出（isAuthed→false）自动短路。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isAuthed]);
   return null;
 }
 
@@ -74,6 +77,14 @@ function ProtectedRoute({ children }) {
     return <Navigate to="/login" replace />;
   }
   return children;
+}
+
+// 【Bug16 修复】路由感知的 ErrorBoundary 包装：useLocation 必须在 BrowserRouter
+// 内部调用（AppRouter 整体在 Router 内渲染），把当前 pathname 作为 resetKeys 传给
+// ErrorBoundary——路由切换时自动重置错误态，无需手动刷新。
+function ErrorBoundaryWithRouter({ children }) {
+  const location = useLocation();
+  return <ErrorBoundary resetKeys={location.pathname}>{children}</ErrorBoundary>;
 }
 
 export default function App() {
@@ -140,7 +151,7 @@ function AppRouter() {
                       <button className="text-red-400 hover:text-red-600 whitespace-nowrap" onClick={() => setDismissFailed(true)}>知道了</button>
                     </div>
                   )}
-                  <ErrorBoundary>
+                  <ErrorBoundaryWithRouter>
                     {/* 懒加载 Suspense 仅覆盖内容区：页面代码未就绪时侧边栏布局常驻 */}
                     <Suspense fallback={<PageFallback />}>
                       <Routes>
@@ -154,7 +165,7 @@ function AppRouter() {
                         <Route path="*" element={<ProtectedRoute><NotFound /></ProtectedRoute>} />
                       </Routes>
                     </Suspense>
-                  </ErrorBoundary>
+                  </ErrorBoundaryWithRouter>
                 </main>
                 {showOnboard && <Onboarding onDone={() => setShowOnboard(false)} />}
               </div>

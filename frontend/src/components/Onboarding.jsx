@@ -31,7 +31,7 @@ const STEPS = [
     icon: BarChart3,
     title: '③ 查看与分享报表',
     desc: '报表自动保存到历史，可导出图文 PDF、收藏星标、生成分享链接。',
-    route: '/reports',
+    route: '/report', // P1 修复（Bug1）：原为 '/reports'，路由实际是 /report，拼错会跳到 NotFound
     btn: '去看报表',
   },
 ];

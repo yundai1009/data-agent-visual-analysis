@@ -42,6 +42,9 @@ export default function DataManagement() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadNotice, setUploadNotice] = useState(''); // 黄色提示：部分成功
   const failedFilesRef = useRef([]); // 失败文件引用（供"重试失败文件"）
+  // 【Bug18 修复】当前上传的 abort 句柄：组件卸载时取消上传，防止 onProgress
+  // 更新已卸载组件 + 后台继续消耗带宽。
+  const uploadAbortRef = useRef(null);
   const [backendOk, setBackendOk] = useState(true);
   const [error, setError] = useState('');
   // 优化③：数据集多选合并
@@ -95,6 +98,12 @@ export default function DataManagement() {
     healthCheck().then(() => { if (!cancelled) setBackendOk(true); })
       .catch(() => { if (!cancelled) setBackendOk(false); });
     return () => { cancelled = true; };
+  }, []);
+
+  // 【Bug18 修复】组件卸载时取消进行中的上传——避免 onProgress 更新已卸载组件、
+  // 以及 XHR 在后台继续消耗带宽。
+  useEffect(() => {
+    return () => { uploadAbortRef.current?.abort(); uploadAbortRef.current = null; };
   }, []);
 
   // 加载我的数据集列表（阶段 31：带搜索/排序，返回概览统计）
@@ -166,7 +175,11 @@ export default function DataManagement() {
     setUploadProgress(0);
     try {
       // uploadFileWithProgress 支持单文件（File）与多文件（FileList / File[]），并回报上传进度
-      const res = await uploadFileWithProgress(targets, setUploadProgress);
+      // 【Bug18 修复】返回 { promise, abort }——保存 abort 句柄供卸载时取消
+      const { promise, abort } = uploadFileWithProgress(targets, setUploadProgress);
+      uploadAbortRef.current = abort;
+      const res = await promise;
+      uploadAbortRef.current = null;
       const 成功列表 = res.上传成功 || [];
       const 失败列表 = res.上传失败 || [];
       // 保留失败文件的 File 引用（按文件名匹配），供"重试失败文件"复用
@@ -192,7 +205,9 @@ export default function DataManagement() {
       setUploading(false);
       setUploadProgress(100);
     } catch (e) {
-      setError(e.message);
+      uploadAbortRef.current = null;
+      // 用户主动取消（组件卸载）时 e.message 是"上传已取消"，不必展示错误
+      if (e.message !== '上传已取消') setError(e.message);
       setUploading(false);
     }
   }
@@ -218,7 +233,10 @@ export default function DataManagement() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url; a.download = filename; a.click();
-      URL.revokeObjectURL(url);
+      // 【Bug6 修复】延迟回收：click() 触发的下载是异步的，
+      // 立即 revokeObjectURL 会导致 Firefox/Safari 下载 0KB 或失败。
+      // 1 秒延迟与 Report.jsx saveWithPicker 对齐。
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (e) {
       setError('导出失败：' + (e.message || e));
     }
@@ -322,20 +340,26 @@ export default function DataManagement() {
   };
 
   // 优化⑨：打开/翻页数据预览
+  // 【Bug15 修复】previewSeqRef 序号守卫：快速翻页/切换数据集时旧响应不覆盖新预览，
+  // 且组件卸载后的异步 setState 被丢弃。
+  const previewSeqRef = useRef(0);
   const handlePreview = async (offset = 0) => {
     if (!dataset?.数据集ID) return;
+    const seq = ++previewSeqRef.current;
     setPreviewLoading(true);
     setError('');
     try {
       const res = await getDatasetRows(dataset.数据集ID, offset, PREVIEW_PAGE);
+      if (previewSeqRef.current !== seq) return; // 已有更新的预览请求，丢弃旧结果
       setPreviewRows(res.数据 || []);
       setPreviewTotal(res.总行数 || 0);
       setPreviewOffset(res.偏移 || 0);
       setPreviewOpen(true);
     } catch (e) {
+      if (previewSeqRef.current !== seq) return; // 旧请求的错误不覆盖新状态
       setError('预览加载失败：' + (e.message || e));
     }
-    setPreviewLoading(false);
+    if (previewSeqRef.current === seq) setPreviewLoading(false);
   };
 
   function handleNewAnalysis() {

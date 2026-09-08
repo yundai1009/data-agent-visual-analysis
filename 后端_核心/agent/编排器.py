@@ -427,6 +427,10 @@ def _执行一轮(
         resp = chat_completion(messages=messages, tools=tools, tool_choice="auto", llm_config=llm_config)
     token_usage = 提取token(resp)
     tc = extract_tool_call(resp)
+    # 【Bug19 修复】prompt_summary 提前固定下来——重试时 messages 会被 pop 恢复，
+    # 若在 trace 记录时才取 messages[-1] 会指向错误的轮次内容（上一轮 tool_call
+    # 或已移除的临时提示），导致审计记录错位。
+    prompt_summary = messages[-1].get("content", "")[:200]
 
     # 阶段 34：GLM 等模型偶发在中间轮（聚合/推荐图表）只返回文字不调工具
     #（"很抱歉/分析如下…"），导致该轮字段丢失而降级。重试一次并明确要求
@@ -441,9 +445,10 @@ def _执行一轮(
                 tc = tc_retry
                 resp = resp_retry
                 token_usage = 提取token(resp_retry)
+                prompt_summary = "请调用工具完成本步骤的分析（重试）"
 
     if not tc or not tc.get("name"):
-        trace.记录LLM调用(轮次=轮次, prompt_summary=messages[-1].get("content", "")[:200],
+        trace.记录LLM调用(轮次=轮次, prompt_summary=prompt_summary,
                           耗时_ms=timer.elapsed_ms, token=token_usage,
                           状态="失败", 理由="未返回合法工具调用")
         return False

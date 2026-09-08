@@ -233,6 +233,9 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
   // 取消按钮：abort 当前 SSE 请求 + 重置直播状态
   const handleCancel = () => {
     abortRef.current?.abort();
+    generatingRef.current = false; // P0 修复（Bug3）：取消必须同步释放并发守卫——
+    // 否则旧请求的 finally 因 generateSeqRef 已被新请求 ++ 而跳过重置，
+    // generatingRef 永久为 true，之后任何"开始分析"都被守卫拦截（按钮假死）。
     setGenerating(false);
     setLiveSteps([]);
     setLiveError('');
@@ -242,17 +245,20 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
 
   // 生成报表主函数
   // 入参：isFollowUp = true 时进入「追问模式」——清空上一轮字段，携带 lastReportId 传给后端
+  //       chartTypeOverride = 可选显式图表类型键（如 'pie'/'bar'），用于「切换图表类型重新生成」——
+  //       此时 setChartType 是异步 state 更新，闭包里的 chartType 还是旧值，必须显式传入。
   // 业务定位：整个分析流程的入口，串联 payload 构造 → SSE 发起 → 事件驱动 UI
-  async function handleGenerate(isFollowUp = false) {
+  async function handleGenerate(isFollowUp = false, chartTypeOverride = null) {
     // F-S4：并发守卫——生成中直接忽略再次触发（双击/图表切换），
     // 防止并发两个 SSE 生成（双倍 LLM 成本 + 状态互相覆盖）。
-    if (generatingRef.current) return;
+    // 【Bug31 修复】提前拦截统一返回 false，供 handleFollowUp 判断"是否真正发起"
+    if (generatingRef.current) return false;
     generatingRef.current = true;
     if (!dataset) {
       generatingRef.current = false;
       setError('请先在数据管理页面上传数据');
       navigate('/data');
-      return;
+      return false;
     }
     // F-M3：重新生成时重置图表切换提示，防残留
     setShowChartSwitch(false);
@@ -264,9 +270,10 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
       // 2. "建议"级文案（如"饼图建议选择分类字段"）被当硬错误拦截生成。
       // 现改为：需要 Y 轴的类型（散点/箱线/K线/瀑布）即使 y 为空也执行校验并报硬错误；
       // 其余类型只要有任一字段就校验；全空走智能推荐不校验。
-      const needsY = ['scatter', 'boxplot', 'candlestick', 'waterfall'].includes(chartType);
+      const activeChartType = chartTypeOverride || chartType;
+      const needsY = ['scatter', 'boxplot', 'candlestick', 'waterfall'].includes(activeChartType);
       const validationError = (needsY || xAxis || yAxis)
-        ? validateChartFields(chartType, xAxis || '', yAxis || '', groupField, profile)
+        ? validateChartFields(activeChartType, xAxis || '', yAxis || '', groupField, profile)
         : null;
       if (validationError) {
         if (validationError.includes('建议')) {
@@ -275,7 +282,7 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
         } else {
           generatingRef.current = false;
           setError(validationError);
-          return;
+          return false; // 【Bug31 修复】校验失败：返回 false 让调用方知道未发起
         }
       } else {
         setAdvice('');
@@ -286,6 +293,9 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
     setLiveDone(null);
     setLiveSteps([]);
     setElapsed(0);
+    // 【Bug2 修复】图表切换提示条显式传 chartTypeOverride 时，同步更新选中高亮，
+    // 保证 UI 视觉与本次请求的图表类型一致（不依赖 setChartType 的异步渲染）
+    if (chartTypeOverride) setChartType(chartTypeOverride);
     setGenerating(true);
 
     // 构造分析请求 payload（字段全中文键名，与后端契约一致）
@@ -301,7 +311,9 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
       // 追问时优先用追问输入（followUp），为空退回主输入框内容
       分析需求: isFollowUp ? (followUp.trim() || nlInput) : nlInput,
       // 追问固定走“自动推荐”：新问题不一定适配上一张图的类型，让后端重新决策
-      图表类型: isFollowUp ? '自动推荐' : (chartMap[chartType] || '自动推荐'),
+      // 【Bug2 修复】普通生成用 chartTypeOverride（切换图表提示条显式传入）优先，
+      // 否则 fallback 到 state 里的 chartType——避免 setTimeout/同步调用的闭包过期。
+      图表类型: isFollowUp ? '自动推荐' : (chartMap[chartTypeOverride || chartType] || '自动推荐'),
       // '无' 是 UI 里“不分组”的占位值，转成 null 才是后端契约的“不分组”
       // F-M2：空串 '' 同样转 null——旧实现把空串直传后端，语义歧义
       x轴: isFollowUp ? null : ((!xAxis || xAxis === '无') ? null : xAxis),
@@ -389,6 +401,8 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
         generatingRef.current = false; // F-S4：释放并发守卫
       }
     }
+    // 【Bug31 修复】正常走完请求链路返回 true（供 handleFollowUp 判断后清空追问框）
+    return true;
   }
 
   // ── 阶段 30：报表模板 ──
@@ -504,9 +518,11 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
       setError('还没有可追问的分析结果，请先完成一次分析');
       return;
     }
-    setNlInput(q);          // 主输入框同步展示（便于观察本轮需求）
-    await handleGenerate(true);
-    setFollowUp('');
+    setNlInput(q); // 主输入框同步展示（便于观察本轮需求）
+    // 【Bug31 修复】仅当 handleGenerate 真正发起了请求（true）才清空追问输入框——
+    // 校验失败/并发拦截（false）时保留用户输入，避免误清空。
+    const started = await handleGenerate(true);
+    if (started) setFollowUp('');
   };
 
   // 图表类型字段适配校验（逻辑抽到 validators/chartFields.js 便于单测，handleGenerate 内调用）
@@ -744,11 +760,11 @@ const 删除筛选 = (i) => setFilters(prev => prev.filter((_, idx) => idx !== i
       {showChartSwitch && !generating && (
         <div className="mt-2 px-3 py-2.5 rounded-lg bg-amber-50 border border-amber-200/60 flex items-center gap-2 text-xs text-amber-700">
           <span>已使用当前图表生成，如需查看各分类占比可一键切换：</span>
-          <button onClick={() => { setChartType('pie'); setTimeout(() => handleGenerate(), 0); }}
+          <button onClick={() => { if (!generatingRef.current) handleGenerate(false, 'pie'); }}
             className="px-2 py-1 rounded-md bg-white border border-amber-200 text-amber-600 hover:bg-amber-100 font-medium transition-all">
             饼图
           </button>
-          <button onClick={() => { setChartType('bar'); setTimeout(() => handleGenerate(), 0); }}
+          <button onClick={() => { if (!generatingRef.current) handleGenerate(false, 'bar'); }}
             className="px-2 py-1 rounded-md bg-white border border-amber-200 text-amber-600 hover:bg-amber-100 font-medium transition-all">
             柱状图
           </button>

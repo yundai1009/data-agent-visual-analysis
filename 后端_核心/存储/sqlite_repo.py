@@ -92,19 +92,19 @@ def _get_conn() -> Iterator[sqlite3.Connection]:
         conn.execute("PRAGMA journal_mode = WAL")
         yield conn
     except Exception:
+        # 【Bug25 修复】异常路径：回滚后由 else/finally 结构保证不再误 commit
         conn.rollback()
         raise
-    finally:
-        # S9 修复：DEFERRED 显式事务下，with 块结束前必须显式提交。
-        # _get_conn 是 @contextmanager 上下文，本身不执行 commit；旧
-        # isolation_level=None（autocommit）模式下 execute 即提交，把这个缺陷掩盖了。
-        # 现改 DEFERRED 后，若只依靠 conn.close()，未提交事务会被隐式回滚——
-        # 导致验证码/用户/数据集/事件全部写入对其它连接不可见（注册查不到码、admin 种子
-        # 查不到、sqlite_repo round-trip 失败）。finally 提交；异常分支已 rollback。
+    else:
+        # 【Bug25 修复】仅正常路径才 commit：旧实现把 commit 放 finally，
+        # 异常分支已 rollback 后 finally 又执行一次 commit（SQLite 中为无害空
+        # 操作，但在 rollback 失败/锁竞争的极端场景会掩盖真实错误语义）。
         try:
             conn.commit()
         except Exception:
             conn.rollback()
+            raise
+    finally:
         conn.close()
 
 

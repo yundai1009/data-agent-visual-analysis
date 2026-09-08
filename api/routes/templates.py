@@ -91,7 +91,15 @@ def 执行模板(
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="模板不存在")
 
-    payload = ReportGenerateRequest(**item["payload"])
+    # 【Bug27 修复】模板 payload 可能因历史保存时格式不同或手动损坏，非法字段
+    # 类型会导致 ValidationError（500），需要转成 400 友好提示。
+    try:
+        payload = ReportGenerateRequest(**item["payload"])
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"模板配置已损坏：{exc.errors()[0]['msg'] if exc.errors() else '字段类型不合法'}",
+        )
     with _流式并发配额("当前分析任务已满（并发上限 4），请稍后重试"):
         df, llm_config = _准备上下文(payload, request, user)
         try:

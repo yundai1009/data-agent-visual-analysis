@@ -80,8 +80,9 @@ async function request(url, options = {}) {
   const llmHeaders = getLLMHeaders();
   const authHeaders = getAuthHeaders();
   const controller = new AbortController();
-  // 超时兜底：LLM 分析链路可能挂起，30s 强制中止，避免按钮永远 loading
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  // 超时兜底：LLM 分析链路可能挂起，默认 30s 强制中止，避免按钮永远 loading；
+  // 【Bug29 修复】支持 options._customTimeout 覆盖（模板执行等长分析场景传更长超时）
+  const timer = setTimeout(() => controller.abort(), options._customTimeout || REQUEST_TIMEOUT_MS);
   try {
     // 【关键行】fetch 时把 token 注入 Authorization 头 —— 后端唯一身份凭证。
     // 为什么：接口鉴权靠 header 而非 cookie，因为本项目是前后端分离部署，
@@ -191,7 +192,7 @@ export async function uploadFile(files) {
 
 // 优化②：带上传进度的多文件上传（XMLHttpRequest 支持 upload.onprogress；
 // fetch 无进度事件）。onProgress(percent 0-100) 回调；返回与 uploadFile 相同的 JSON。
-export async function uploadFileWithProgress(files, onProgress) {
+export function uploadFileWithProgress(files, onProgress) {
   const form = new FormData();
   const fileArr = files instanceof File ? [files] : Array.from(files);
   for (const f of fileArr) {
@@ -199,17 +200,28 @@ export async function uploadFileWithProgress(files, onProgress) {
   }
   const llmHeaders = getLLMHeaders();
   const authHeaders = getAuthHeaders();
-  return new Promise((resolve, reject) => {
+  // 【Bug18 修复】返回 { promise, abort } 结构——调用方（DataManagement）可在
+  // 组件卸载/切换页面时调用 abort() 中途取消上传，避免后台继续消耗带宽、
+  // 以及 onProgress 回调更新已卸载组件。
+  const controller = { aborted: false, xhr: null };
+  const abort = () => {
+    controller.aborted = true;
+    if (controller.xhr) controller.xhr.abort();
+  };
+  const promise = new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    controller.xhr = xhr;
     xhr.open('POST', `${BASE}/datasets/upload`);
     // 注入认证/LLM 请求头
     Object.entries({ ...authHeaders, ...llmHeaders }).forEach(([k, v]) => xhr.setRequestHeader(k, v));
     if (onProgress) {
       xhr.upload.onprogress = (e) => {
+        if (controller.aborted) return;
         if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
       };
     }
     xhr.onload = () => {
+      if (controller.aborted) return; // 已取消：忽略结果
       if (xhr.status >= 200 && xhr.status < 300) {
         try { resolve(JSON.parse(xhr.responseText)); } catch { reject(new Error('响应解析失败')); }
       } else {
@@ -224,11 +236,13 @@ export async function uploadFileWithProgress(files, onProgress) {
         reject(err);
       }
     };
-    xhr.onerror = () => reject(new Error('上传中断，请检查网络后重试'));
-    xhr.ontimeout = () => reject(new Error('上传超时，请重试'));
+    xhr.onerror = () => { if (!controller.aborted) reject(new Error('上传中断，请检查网络后重试')); };
+    xhr.ontimeout = () => { if (!controller.aborted) reject(new Error('上传超时，请重试')); };
+    xhr.onabort = () => reject(new Error('上传已取消')); // abort() 触发
     xhr.timeout = UPLOAD_TIMEOUT_MS;
     xhr.send(form);
   });
+  return { promise, abort };
 }
 
 // ---- 认证 ----
@@ -425,7 +439,26 @@ export async function generateReportStream(payload, { onEvent, signal } = {}) {
   try {
   for (;;) {
     const { done, value } = await reader.read();
-    if (done) break; // 服务端关闭连接，所有数据已推送完毕
+    if (done) {
+      // P0 修复（Bug32）：流结束时处理 buf 中残留的最后一段未以 \n\n 结尾的帧。
+      // 网络分包可能把最后一帧的结束符切到后续（已被消费的）chunk 里，或
+      // 服务端直接关闭连接（EOF）而 buf 仍留有未消费的数据——此时若直接
+      // break，残留的 done/error 事件永远不被解析，前端停在“分析中…”。
+      if (buf.trim()) {
+        for (const raw of buf.split('\n')) {
+          if (raw.startsWith('data: ')) {
+            try {
+              const ev = JSON.parse(raw.slice(6));
+              if (onEvent && onEvent(ev) === 'stop') {
+                try { await reader.cancel(); } catch { /* ignore */ }
+                return;
+              }
+            } catch { /* 畸形尾帧：忽略 */ }
+          }
+        }
+      }
+      break; // 服务端关闭连接，所有数据已推送完毕
+    }
     buf += decoder.decode(value, { stream: true }); // stream: true 允许分段解码多字节字符（中文）
     let idx;
     // 【关键行】按 SSE 协议用双换行 \n\n 切分完整帧（\n\n 之前是一个事件的完整载荷）。
@@ -485,8 +518,13 @@ export async function deleteTemplate(templateId) {
 }
 
 // 立即用模板配置生成报表（返回 ReportGenerateResponse，前端跳转到新报表）
+// 【Bug29 修复】模板执行走完整 LLM Agent 链路（多轮推理+工具调用），30s 默认超时
+// 很容易被掐断导致"模板执行失败：请求超时"——显式传 180s 超时覆盖。
 export async function runTemplate(templateId) {
-  return request(`/templates/${templateId}/run`, { method: 'POST' });
+  return request(`/templates/${templateId}/run`, {
+    method: 'POST',
+    _customTimeout: 180000, // 3 分钟：与 SSE 分析超时对齐
+  });
 }
 
 // ---- 定时任务（阶段 30：模板 + cron 自动生成）----
@@ -509,8 +547,9 @@ export async function deleteSchedule(jobId) {
 
 // 优化①：最近失败的定时任务（全局通知条）
 // 优化⑧：全局搜索（数据集/报表/模板）
-export async function globalSearch(q) {
-  return request(`/search?q=${encodeURIComponent(q)}`);
+export async function globalSearch(q, options) {
+  // 【Bug8 修复】支持 AbortController signal（Sidebar 搜索取消）
+  return request(`/search?q=${encodeURIComponent(q)}`, options);
 }
 
 export async function fetchFailedSchedules() {

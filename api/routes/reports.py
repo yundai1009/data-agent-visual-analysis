@@ -390,17 +390,30 @@ def generate_report_stream(
                 # S7 修复：结束哨兵必须送达——队列满（客户端断开、无人消费）
                 # 时清空积压腾位再放哨兵，否则 event_stream 永远等不到 None 而
                 # 挂死，流式线程与 SSE 连接永久泄漏。
-                # 注意：仅在“真的满”时才清空，正常排队中的 done/error 等合法
-                # 事件不得被提前丢弃（旧实现无条件清空导致 done 丢失）。
+                # P0 修复（Bug21）：放弃无条件清空——先把队列中最后一个
+                # done/error 事件取出保留（它可能已推送但尚未被消费），清空
+                # 积压后放回，再放哨兵，避免 done 事件随清空一起丢失导致
+                # 前端收不到报表ID而停留在“分析中…”直到超时。
+                last_important = None
                 try:
                     while True:
-                        event_q.get_nowait()
+                        item = event_q.get_nowait()
+                        if isinstance(item, dict) and item.get("type") in ("done", "error"):
+                            last_important = item  # 保留最后一个（done 优先）
                 except queue.Empty:
                     pass
-                try:
-                    event_q.put_nowait(ev)
-                except queue.Full:
-                    pass
+                for candidate in (last_important, ev):
+                    if candidate is None:
+                        continue
+                    try:
+                        event_q.put_nowait(candidate)
+                    except queue.Full:
+                        # 极端情况：连保留的事件都塞不进（队列瞬间又被塞满、
+                        # 客户端超时未消费）。哨兵必须优先送达以终结 event_stream，
+                        # 放弃保留事件并仅打印日志。
+                        if isinstance(candidate, dict) and candidate.get("type") == "done":
+                            logger.warning("SSE 队列已满，done 事件被丢弃（客户端可能已断开）")
+                        break
 
     def worker() -> None:
         try:

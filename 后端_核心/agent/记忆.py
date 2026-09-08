@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -47,29 +48,29 @@ _COLLECTION_NAME = "agent_memories"
 # 客户端单例
 _client: Optional[chromadb.Client] = None
 _collection: Optional[chromadb.Collection] = None
+# P0 修复（Bug23）：加锁防并发初始化——多线程同时进入创建分支
+# 会导致 chromadb 文件锁冲突（AlreadyExists），记忆写入丢失。
+_记忆锁 = threading.Lock()
 
 
 def _get_collection() -> chromadb.Collection:
-    """获取或创建 chromadb collection（惰性初始化）。
+    """获取或创建 chromadb collection（惰性初始化，线程安全）。"""
 
-    作用：首次调用时创建持久化客户端并建立 collection，之后直接复用单例。
-
-    入参：无
-    返回：chromadb.Collection 对象（agent_memories 集合）
-    业务定位：记忆模块的"数据库连接"——所有读写都经由这个集合对象。
-    """
     global _client, _collection
     if _collection is not None:
         return _collection
-    _client = chromadb.PersistentClient(
-        path=_CHROMA_DIR,
-        settings=Settings(anonymized_telemetry=False),
-    )
-    try:
-        _collection = _client.get_collection(_COLLECTION_NAME)
-    except ValueError:
-        _collection = _client.create_collection(_COLLECTION_NAME)
-    logger.info("记忆模块已初始化（%s）", _CHROMA_DIR)
+    with _记忆锁:
+        if _collection is not None:
+            return _collection
+        _client = chromadb.PersistentClient(
+            path=_CHROMA_DIR,
+            settings=Settings(anonymized_telemetry=False),
+        )
+        try:
+            _collection = _client.get_collection(_COLLECTION_NAME)
+        except ValueError:
+            _collection = _client.create_collection(_COLLECTION_NAME)
+        logger.info("记忆模块已初始化（%s）", _CHROMA_DIR)
     return _collection
 
 

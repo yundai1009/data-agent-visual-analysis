@@ -262,6 +262,11 @@ async def spa_fallback(full_path: str, request: Request):
     """
     if request.method != "GET":
         raise HTTPException(status_code=404, detail="Not Found")
+    # 【Bug33 修复】路径带 /api/ 前缀或显式 API 风格路径时，不走 SPA 回退——
+    # 旧实现把所有未命中 GET 都返回 index.html，前端拼错的 API 路径（如
+    # /reports/xxx 实际不存在）拿到 200+HTML，res.json() 解析失败产生误导性报错。
+    if full_path.startswith("api/") or full_path.startswith("auth/") or full_path.startswith("datasets/"):
+        raise HTTPException(status_code=404, detail="接口不存在")
     dist = Path(FRONTEND_DIST).resolve()
     if not dist.is_dir():
         raise HTTPException(status_code=404, detail="前端构建产物不存在，请先运行构建")

@@ -12,7 +12,7 @@
  *   - api.js submitFeedback() —— 提交反馈到后端 /feedback
  *   - react-router-dom NavLink + useNavigate —— 导航高亮与路由跳转
  * ============================================================================= */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { Database, Zap, BarChart3, LayoutDashboard, Shield, ChevronLeft, ChevronRight, LogOut, X, UserRoundPen, MessageSquareHeart, Moon, Sun, Search } from 'lucide-react';
@@ -35,6 +35,9 @@ const adminNav = { to: '/admin', icon: Shield, label: '管理后台' };
 export default function Sidebar({ collapsed, onToggle }) {
   const navigate = useNavigate();
   const { user, logout } = useApp();
+  // 【Bug8 修复】搜索防抖 + 取消——快速输入时只请求最后一次，避免旧结果覆盖。
+  const searchAbortRef = useRef(null);
+  const debounceTimerRef = useRef(null);
   // 阶段 32：深色模式开关（localStorage 记忆 + html.dark class）
   const [dark, setDark] = useState(() => {
     try { return localStorage.getItem('daa_dark') === '1'; } catch { return false; }
@@ -55,11 +58,25 @@ export default function Sidebar({ collapsed, onToggle }) {
   const [searchRes, setSearchRes] = useState(null);
   const [searching, setSearching] = useState(false);
   const handleSearch = async (q) => {
+    // 【Bug8 修复】每次输入先取消上一次未完成的请求（防止旧响应覆盖新结果），
+    // 再用 300ms 防抖：停止输入后才真正发请求。
+    searchAbortRef.current?.abort();
     setSearchQ(q);
     if (!q.trim()) { setSearchRes(null); return; }
-    setSearching(true);
-    try { setSearchRes(await globalSearch(q.trim())); } catch { setSearchRes(null); }
-    setSearching(false);
+    clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(async () => {
+      const controller = new AbortController();
+      searchAbortRef.current = controller;
+      setSearching(true);
+      try {
+        const res = await globalSearch(q.trim(), { signal: controller.signal });
+        if (!controller.signal.aborted) setSearchRes(res);
+      } catch {
+        if (!controller.signal.aborted) setSearchRes(null);
+      } finally {
+        if (!controller.signal.aborted) setSearching(false);
+      }
+    }, 300);
   };
 
   // 提交反馈：调用后端 /feedback 接口，成功后 1.2 秒自动关闭弹窗（让用户看清提示）

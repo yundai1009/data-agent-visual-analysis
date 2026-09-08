@@ -37,6 +37,8 @@ _scheduler_thread: Optional[threading.Thread] = None
 _in_flight: set = set()
 _in_flight_lock = threading.Lock()
 _MAX_CONCURRENT_JOBS = 5
+# P0 修复（Bug28）：单作业超时保护（秒）——LLM 分析卡住时强制释放 in_flight
+_JOB_TIMEOUT_SEC = 300  # 5 分钟：覆盖绝大多数分析任务；超时后作业后台丢弃
 
 
 # ═══ 1. cron 解析（5 字段：分 时 日 月 周）═══
@@ -81,7 +83,7 @@ def cron匹配(表达式: str, dt: Optional[datetime] = None) -> bool:
     """判断 dt（默认当前时间）是否命中 cron 表达式。
 
     支持模式：* 任意、5 固定值、1,3,5 列表、1-5 范围、*/15 步进。
-    周字段 0=周日（与标准 cron 一致）。
+    周字段 0=周日，6=周六（标准 cron）。7 也视为周日（兼容标准 cron）。
     """
     if dt is None:
         dt = datetime.now()
@@ -90,12 +92,13 @@ def cron匹配(表达式: str, dt: Optional[datetime] = None) -> bool:
         return False
     分, 时, 日, 月, 周 = parts
     # Python weekday(): 0=周一…6=周日；标准 cron 周字段：0=周日…6=周六 → (weekday+1)%7
+    _周值 = (dt.weekday() + 1) % 7
     return (
         _字段匹配(分, dt.minute)
         and _字段匹配(时, dt.hour)
         and _字段匹配(日, dt.day)
         and _字段匹配(月, dt.month)
-        and _字段匹配(周, (dt.weekday() + 1) % 7)
+        and _匹配周字段(周, _周值)
     )
 
 
@@ -128,6 +131,30 @@ def _字段匹配(模式: str, 值: int) -> bool:
             except ValueError:
                 continue
     return False
+
+
+def _匹配周字段(模式: str, 值: int) -> bool:
+    """周字段匹配：兼容标准 cron 的 7=周日（与 0 同义）。
+
+    Python weekday 映射把周日记为 0，标准 cron 允许 0 或 7 表示周日；
+    旧实现只认 0，用户写 ``0 9 * * 7`` 时任务永不触发（静默失效）。
+    这里对周日（值=0）额外识别模式中出现的独立 ``7`` 或范围端点含 7/0。
+    """
+    if 值 == 0:
+        for part in 模式.split(","):
+            part = part.strip()
+            if part in ("0", "7"):
+                return True
+            if "-" in part and not part.startswith("-"):
+                try:
+                    lo, hi = part.split("-", 1)
+                    lo_n, hi_n = int(lo), int(hi)
+                except ValueError:
+                    continue
+                # 范围端点含 0 或 7 都覆盖周日（如 1-7 表示周一到周日）
+                if lo_n <= 0 <= hi_n or lo_n <= 7 <= hi_n:
+                    return True
+    return _字段匹配(模式, 值)
 
 
 def 下次执行时间(表达式: str, 起点: Optional[datetime] = None, 窗口分钟: int = 7 * 24 * 60) -> Optional[str]:
@@ -172,9 +199,20 @@ def 执行作业(任务: Dict[str, Any]) -> str:
             return "数据集不存在或已删除"
         df = item["数据"]
 
-        # LLM 配置：用户账号 key 优先，兜底 EnvConfig 全局（provider 默认 deepseek）
+        # LLM 配置：用户账号 key 优先，兜底 EnvConfig 全局
         api_key = user_repo.读取LLMKey(user_id) or EnvConfig.LLM_API_KEY or ""
-        provider = "deepseek"
+        # 【Bug34 修复】原 provider 硬编码 "deepseek"，导致用户选 GPT-4o/自定义供应商后
+        # 定时任务仍走 deepseek（静默走错 provider）。改为从模板 payload.model 匹配 provider：
+        # payload.model 存在且在 LLM_PROVIDERS 某 provider 的 models 列表中 → 用该 provider；
+        # 否则 fallback EnvConfig.LLM_MODEL 匹配，最终兜底 "deepseek"。
+        _saved_model = payload.model or EnvConfig.LLM_MODEL or ""
+        _matched = None
+        for _pname, _pcfg in (getattr(EnvConfig, "LLM_PROVIDERS") or {}).items():
+            _all_models = list(_pcfg.get("models") or []) + [_pcfg.get("default_model", "")]
+            if _saved_model in _all_models:
+                _matched = _pname
+                break
+        provider = _matched or "deepseek"
         provider_conf = getattr(EnvConfig, "LLM_PROVIDERS", {}).get(provider, {})
         llm_config = LLMRequestConfig(
             provider=provider,
@@ -243,12 +281,20 @@ def _tick() -> None:
 
 
 def _执行并释放(任务: Dict[str, Any]) -> None:
-    """S8：执行作业并在 finally 中释放 in_flight 标记（异常也不残留）。"""
-    try:
-        执行作业(任务)
-    finally:
-        with _in_flight_lock:
-            _in_flight.discard(任务["任务ID"])
+    """S8：执行作业并在 finally 中释放 in_flight 标记（异常也不残留）。
+
+    P0 修复（Bug28）：LLM 分析可能长时间挂起（网络/超时重试），若作业线程
+    永不结束，in_flight 标记永久占用，_MAX_CONCURRENT_JOBS 上限被耗尽后
+    所有后续定时任务被跳过。这里用守护线程 + join(timeout) 做超时保护：
+    超时后强制释放标记（线程仍 daemon 后台继续，结果丢弃），保证调度不瘫。
+    """
+    worker = threading.Thread(target=执行作业, args=(任务,), daemon=True, name=f"cron-job-{任务['任务ID'][:8]}")
+    worker.start()
+    worker.join(timeout=_JOB_TIMEOUT_SEC)
+    if worker.is_alive():
+        logger.warning("定时任务 %s 执行超时（%ds 强制释放 in_flight，作业仍在后台）", 任务["任务ID"], _JOB_TIMEOUT_SEC)
+    with _in_flight_lock:
+        _in_flight.discard(任务["任务ID"])
 
 
 def _循环() -> None:
