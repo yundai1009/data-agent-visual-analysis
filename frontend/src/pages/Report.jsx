@@ -13,9 +13,11 @@
  * ============================================================================= */
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Download, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, Copy, Check, Clock, Eye, Link2, X, RotateCcw, GitBranch, Filter, Star, Search } from 'lucide-react';
-import { listReports, getReport, deleteReport, exportReport, exportFullReport, createShare, listShares, revokeShare, replayReport, toggleFavorite, createDashboard } from '../api';
+import { Download, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, RotateCcw, GitBranch, Filter, Star, Search } from 'lucide-react';
+import { listReports, getReport, deleteReport, exportReport, exportFullReport, replayReport, toggleFavorite, createDashboard } from '../api';
 import EChartsChart from '../components/EChartsChart';
+import ExportDialog from '../components/ExportDialog';
+import ShareDialog from '../components/ShareDialog';
 
 // Report 报表历史页主组件
 // 路由参数：reportId（可选）= URL 里指定的报表 ID，无则展示最新一张
@@ -37,25 +39,17 @@ export default function Report() {
   const [loadError, setLoadError] = useState('');
   // 追问溯源：上一份报表标题（展示“追问自：XXX”）
   const [prevTitle, setPrevTitle] = useState('');
-  // 分享弹窗状态
-  // 分享弹窗状态（有效期 + 密码 + 已有链接列表 + 提示信息）
+  // 分享弹窗状态（由 ShareDialog 组件内部管理）
   const [showShare, setShowShare] = useState(false);
   // 阶段 31：收藏 + 历史检索（搜索/只看收藏）
   const [isFav, setIsFav] = useState(false);
   const [favOnly, setFavOnly] = useState(false);
   const [searchQ, setSearchQ] = useState('');
-  const [shareHours, setShareHours] = useState(24);
-  const [sharePassword, setSharePassword] = useState('');
-  const [shareCollaborators, setShareCollaborators] = useState(''); // 阶段31：协作者 username（逗号分隔）
   const chartContainerRef = useRef(null); // 图表容器 DOM 引用：用于导出当前图表为 PNG
-  // 统一下载弹窗状态（格式选择 + loading）
+  // 下载弹窗状态（供 ExportDialog 组件使用）
   const [showDl, setShowDl] = useState(false);
   const [dlFmt, setDlFmt] = useState('xlsx');
   const [dlBusy, setDlBusy] = useState(false);
-  const [shareLinks, setShareLinks] = useState([]);
-  const [shareMsg, setShareMsg] = useState(''); // 成功提示（绿）
-  const [shareErr, setShareErr] = useState(''); // B14：失败提示（红）
-  const [copied, setCopied] = useState(false);
   // 历史重放状态
   const [replaying, setReplaying] = useState(false);
   // B4 修复：当前正在查看的报表 ID（直接访问旧 URL 时列表下标推断会错对象）
@@ -302,84 +296,7 @@ export default function Report() {
 
 
 
-  // 分享：打开弹窗并加载当前报表已有的分享链接列表
-  const openShareModal = async () => {
-    setShowShare(true);
-    setShareMsg('');
-    setShareErr('');
-    setCopied(false);
-    if (!currentReportId) return;
-    try {
-      const res = await listShares(currentReportId);
-      setShareLinks(res?.分享列表 || []);
-    } catch (e) {
-      setShareErr('加载分享列表失败：' + (e.message || e));
-    }
-  };
-  // 刷新分享列表：生成/撤销成功后调用，保证列表与后端一致
-  const reloadShares = async () => {
-    try {
-      const res = await listShares(currentReportId);
-      setShareLinks(res?.分享列表 || []);
-    } catch (e) {
-      // B15 修复：列表刷新失败不影响生成成功的提示（否则误报"生成失败"）
-      setShareErr('分享列表刷新失败：' + (e.message || e));
-    }
-  };
-  // 生成分享链接：有效期 + 可选访问密码 + 阶段31 协作者白名单
-  const handleCreateShare = async () => {
-    if (!currentReportId) return;
-    try {
-      const res = await createShare(currentReportId, shareHours, sharePassword.trim(), shareCollaborators.trim());
-      setShareMsg(`已生成，有效期 ${shareHours} 小时${res.需密码 ? '，需访问密码' : ''}${res.协作者?.length ? `，协作者 ${res.协作者.length} 人` : ''}`);
-      setShareErr('');
-      setSharePassword(''); // 生成完清空密码输入框，下次默认不带密码
-      setShareCollaborators('');
-      await reloadShares();
-    } catch (e) {
-      setShareMsg('');
-      setShareErr('生成失败：' + (e.message || e));
-    }
-  };
-  // 撤销分享链接：确认后调后端 DELETE，链接立即失效
-  const handleRevokeShare = async (shareId) => {
-    if (!window.confirm('撤销后链接立即失效，确定？')) return;
-    try {
-      await revokeShare(currentReportId, shareId);
-      setShareMsg('已撤销');
-      setShareErr('');
-      await reloadShares();
-    } catch (e) {
-      setShareErr('撤销失败：' + (e.message || e));
-    }
-  };
-  // 复制分享链接到剪贴板：拼上站点域名才是完整可访问链接，1.6 秒后恢复图标
-  const handleCopyShare = async (link) => {
-    try {
-      await navigator.clipboard.writeText(window.location.origin + link);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
-    } catch {
-      setShareErr('复制失败，请手动复制链接');
-    }
-  };
-  // 格式化过期时间为本地时间（中文格式，24 小时制）
-  const fmtExpire = (iso) => {
-    try { return new Date(iso).toLocaleString('zh-CN', { hour12: false }); } catch { return iso; }
-  };
-  // 优化⑩：剩余有效期（不足 24h 高亮提醒）
-  const fmtRemain = (iso) => {
-    try {
-      const ms = new Date(iso).getTime() - Date.now();
-      if (Number.isNaN(ms)) return '';
-      if (ms <= 0) return '（已过期）';
-      const hours = Math.floor(ms / 3600000);
-      if (hours >= 48) return `（剩余 ${Math.floor(hours / 24)} 天）`;
-      if (hours >= 1) return `（剩余 ${hours} 小时）`;
-      return `（剩余 ${Math.max(0, Math.floor(ms / 60000))} 分钟）`;
-    } catch { return ''; }
-  };
-
+  const openShareModal = () => setShowShare(true); // 分享弹窗状态由 ShareDialog 组件内部管理
   // 历史重放：用原报表参数重新执行分析（复现过程 → 生成全新报表并跳转过去）
   const handleReplay = async () => {
     if (!currentReportId || replaying) return;
@@ -722,159 +639,21 @@ export default function Report() {
         </button>
       </div>
 
-      {/* 统一下载弹窗：选择格式 → 确认下载（Chrome/Edge 可选保存位置）
-          每种格式带 available 标记，不满足条件（如图表未渲染/无数据）的置灰不可选 */}
-      {showDl && (() => {
-        const dlOptions = [
-          { key: 'xlsx', label: 'Excel 表格', desc: '数据明细（.xlsx）' },
-          { key: 'csv', label: 'CSV 数据', desc: '数据明细（.csv）' },
-          { key: 'pdf', label: 'PDF 报告', desc: '结论 + 数据表（.pdf）' },
-          { key: 'png', label: '图表图片', desc: '当前可视化图表（.png）', available: chartTypeKey !== 'table' },
-          { key: 'trace', label: 'Agent 决策记录', desc: '分析过程（.md）', available: trace.length > 0 },
-          { key: 'html', label: 'HTML 报告', desc: '静态网页（.html）', available: !!exportData?.HTML },
-          { key: 'json', label: 'JSON 数据', desc: '结构化数据（.json）', available: !!exportData?.JSON },
-        ];
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowDl(false)}>
-            <div className="bg-white popup-surface rounded-2xl shadow-[var(--shadow-card-lg)] w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
-                  <Download className="w-4 h-4 text-accent" /> 导出报表
-                </h3>
-                <button onClick={() => setShowDl(false)} className="p-1 rounded hover:bg-gray-100 text-gray-400"><X className="w-4 h-4" /></button>
-              </div>
-              <div className="space-y-1.5 max-h-72 overflow-y-auto">
-                {dlOptions.filter(o => o.available !== false).map((opt) => (
-                  <button
-                    key={opt.key}
-                    onClick={() => setDlFmt(opt.key)}
-                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border text-left transition-all ${dlFmt === opt.key ? 'border-accent bg-accent-soft' : 'border-gray-200 hover:bg-gray-50'}`}
-                  >
-                    <span>
-                      <span className={`block text-sm ${dlFmt === opt.key ? 'text-accent-deep' : 'text-gray-700'}`}>{opt.label}</span>
-                      <span className="block text-[11px] text-gray-400">{opt.desc}</span>
-                    </span>
-                    <span className={`w-3.5 h-3.5 rounded-full border-2 shrink-0 ${dlFmt === opt.key ? 'border-accent bg-accent' : 'border-gray-300'}`} />
-                  </button>
-                ))}
-              </div>
-              <div className="flex gap-2 mt-4">
-                <button onClick={() => setShowDl(false)} className="flex-1 py-2 rounded-lg border border-gray-200 text-sm text-gray-500 hover:bg-gray-50 transition-all">取消</button>
-                <button
-                  onClick={async () => { setDlBusy(true); await handleExportFormat(dlFmt); setDlBusy(false); setShowDl(false); }}
-                  disabled={dlBusy}
-                  className="flex-1 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-deep transition-all disabled:opacity-50"
-                >
-                  {dlBusy ? '下载中…' : '确认下载'}
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {/* 导出弹窗：格式选择 + 另存为（已拆分为 ExportDialog 组件） */}
+      <ExportDialog
+        showDl={showDl}
+        onClose={() => setShowDl(false)}
+        onExport={handleExportFormat}
+        dlFmt={dlFmt}
+        setDlFmt={setDlFmt}
+        dlBusy={dlBusy}
+        chartTypeKey={chartTypeKey}
+        trace={trace}
+        exportData={exportData}
+      />
 
-      {/* 分享弹窗：生成带权限的只读链接 + 管理已有链接 */}
-      {showShare && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowShare(false)}>
-          <div className="bg-white popup-surface rounded-2xl shadow-[var(--shadow-card-lg)] w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
-                <Share2 className="w-4 h-4 text-emerald-600" /> 分享报表
-              </h3>
-              <button onClick={() => setShowShare(false)} className="p-1 rounded hover:bg-gray-100 text-gray-400">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* 生成区 */}
-            <div className="flex items-center gap-2 mb-2">
-              <select
-                value={shareHours}
-                onChange={(e) => setShareHours(Number(e.target.value))}
-                className="border border-gray-200 rounded-lg px-3 py-2 text-xs bg-white focus:outline-none focus:border-accent"
-              >
-                <option value={1}>1 小时</option>
-                <option value={24}>24 小时</option>
-                <option value={72}>3 天</option>
-                <option value={168}>7 天</option>
-              </select>
-              <input
-                value={sharePassword}
-                onChange={(e) => setSharePassword(e.target.value)}
-                placeholder="访问密码（可选，留空无需密码）"
-                className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-xs bg-white focus:outline-none focus:border-accent"
-              />
-              <button
-                onClick={handleCreateShare}
-                className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 transition-all whitespace-nowrap"
-              >
-                <Link2 className="w-3.5 h-3.5" /> 生成分享链接
-              </button>
-            </div>
-            {/* 阶段 31：协作者白名单——填了则只有这些登录用户可看，公开访客 401 */}
-            <input
-              value={shareCollaborators}
-              onChange={(e) => setShareCollaborators(e.target.value)}
-              placeholder="协作者 username（逗号分隔，留空 = 公开链接）"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-white focus:outline-none focus:border-accent mb-3"
-            />
-            <p className="text-[11px] text-gray-400 mb-4">
-              任何人凭链接可查看本报表（只读）；设置密码后需输入密码访问；指定协作者后仅白名单内登录用户可看；到期或撤销后立即失效
-            </p>
-
-            {shareMsg && <p className="text-xs text-emerald-600 mb-3">{shareMsg}</p>}
-            {shareErr && <p className="text-xs text-red-500 mb-3">{shareErr}</p>}
-
-            {/* 已有链接列表 */}
-            {shareLinks.length > 0 && (
-              <div className="space-y-2 max-h-56 overflow-auto">
-                {shareLinks.map((s) => {
-                  const link = `${window.location.origin}/s/${s.链接ID}`;
-                  return (
-                    <div key={s.链接ID} className="flex items-center gap-2 bg-surface rounded-lg px-3 py-2">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[11px] text-gray-700 font-mono truncate">{link}</p>
-                        <p className="text-[10px] text-gray-400 flex items-center gap-2 mt-0.5">
-                          <Clock className="w-3 h-3" /> 有效期至 {fmtExpire(s.过期时间)}
-                          {(() => {
-                            const remain = fmtRemain(s.过期时间);
-                            const expired = remain === '（已过期）';
-                            return remain ? (
-                              <span className={expired ? 'text-red-400 font-medium' : 'text-amber-500'}>{remain}</span>
-                            ) : null;
-                          })()}
-                          {typeof s.浏览次数 === 'number' && (
-                            <span className="flex items-center gap-1" title="浏览次数">
-                              <Eye className="w-3 h-3" /> {s.浏览次数} 次访问
-                            </span>
-                          )}
-                        </p>
-                      </div>
-                      <button
-                        className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-accent transition-colors"
-                        title="复制链接"
-                        onClick={() => handleCopyShare(`/s/${s.链接ID}`)}
-                      >
-                        {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                      </button>
-                      <button
-                        className="p-1.5 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
-                        title="撤销链接"
-                        onClick={() => handleRevokeShare(s.链接ID)}
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {shareLinks.length === 0 && !shareMsg && !shareErr && (
-              <p className="text-xs text-gray-400 text-center py-4">还没有分享链接</p>
-            )}
-          </div>
-        </div>
-      )}
+      {/* 分享弹窗：生成/撤销/复制链接（已拆分为 ShareDialog 组件） */}
+      <ShareDialog showShare={showShare} onClose={() => setShowShare(false)} currentReportId={currentReportId} />
     </div>
   );
 }
