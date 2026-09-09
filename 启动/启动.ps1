@@ -1,5 +1,5 @@
-﻿param([switch]$Stop,[switch]$NoBrowser,[int]$BackendPort=8000,[int]$FrontendPort=5173)
-$r=$PSScriptRoot
+param([switch]$Stop,[switch]$NoBrowser,[int]$BackendPort=8000,[int]$FrontendPort=5173)
+$r=Join-Path $PSScriptRoot ".."
 $pf=Join-Path $r ".reasonix\run\pids.json"
 function s($m){Write-Host "`n[>>] $m" -ForegroundColor Cyan}
 function o($m){Write-Host "[OK] $m" -ForegroundColor Green}
