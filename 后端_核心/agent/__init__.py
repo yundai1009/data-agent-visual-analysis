@@ -10,7 +10,7 @@
 1. LLM 仅输出固定 schema 的 JSON 意图，不生成可执行代码；
 2. 意图里的所有字段名必须出现在数据画像 ``字段列表`` 中，越界即视为失败；
 3. 任何失败（无 key、超时、JSON 不合法、字段越界）必须静默回退到
-   ``后端_核心.上传报表生成器._意图驱动配置`` 的关键词匹配兜底；
+   ``后端_核心.report_generator._意图驱动配置`` 的关键词匹配兜底；
 4. 凭据只从 ``config.settings.EnvConfig`` 读取；
 5. 永远不 exec / 不 eval LLM 输出。
 
@@ -21,6 +21,6 @@
 - ``编排器``     : 解析自然语言需求的对外入口，含 Function Calling ReAct 单轮 + 兜底
 """
 
-from 后端_核心.agent.编排器 import 解析自然语言需求, 编排Agent
+from 后端_核心.agent.orchestrator import 解析自然语言需求, 编排Agent
 
 __all__ = ["解析自然语言需求", "编排Agent"]

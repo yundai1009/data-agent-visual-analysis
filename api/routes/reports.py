@@ -35,8 +35,8 @@ from fastapi.responses import StreamingResponse
 from api.contracts import ReportGenerateRequest, ReportGenerateResponse, 筛选条件模型, 完整报告导出请求
 from api.dependencies import get_current_user
 from api.routes.datasets import _仓储
-from 后端_核心.上传报表生成器 import 生成报表数据
-from 后端_核心.agent.多智能体 import 多智能体分析
+from 后端_核心.report_generator import 生成报表数据
+from 后端_核心.agent.multi_agent import 多智能体分析
 from config.settings import EnvConfig, LLMRequestConfig
 
 logger = logging.getLogger(__name__)
@@ -851,7 +851,7 @@ def _多智能体报表(
     user_id: str = "",
 ) -> Dict[str, Any]:
     """多智能体模式生成报表。"""
-    from 后端_核心.数据画像 import 生成数据画像
+    from 后端_核心.profile import 生成数据画像
     画像 = 生成数据画像(df)
     result = 多智能体分析(画像, payload.分析需求, df, llm_config=llm_config, on_event=on_event)
     if not result:

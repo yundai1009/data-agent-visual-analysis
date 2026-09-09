@@ -261,7 +261,7 @@ def 删除用户及数据(user_id: str) -> None:
     """
     初始化用户表()
     try:
-        from 后端_核心.agent.记忆 import 删除用户记忆
+        from 后端_核心.agent.memory import 删除用户记忆
         删除用户记忆(user_id)  # 记忆向量库按 user 清理
     except Exception as _exc:
         logger.warning("删除记忆失败（不影响主库删除）: %s", _exc)

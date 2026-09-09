@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from api.contracts import CleanDatasetResponse
 from api.dependencies import get_current_user
 from api.routes.datasets import _仓储, _数据集操作锁
-from 后端_核心.数据清洗 import 清洗数据集
+from 后端_核心.data_cleaner import 清洗数据集
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
@@ -62,7 +62,7 @@ async def clean_dataset(
         摘要 = result["操作摘要"]
 
         # 保存清洗版本：传 新文件名 时另存为新数据集（保留原始数据对照），否则覆盖
-        from 后端_核心.数据画像 import 生成数据画像
+        from 后端_核心.profile import 生成数据画像
         import io
         import uuid
 

@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 
 from api.contracts import DatasetPreviewResponse, DatasetUploadResponse
 from api.dependencies import get_current_user
-from 后端_核心.文件数据服务 import 读取上传表格
-from 后端_核心.数据画像 import 生成数据画像
+from 后端_核心.file_services import 读取上传表格
+from 后端_核心.profile import 生成数据画像
 from 后端_核心.存储 import 数据集仓储
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])

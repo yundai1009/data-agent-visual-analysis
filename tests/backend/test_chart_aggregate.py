@@ -20,8 +20,8 @@ PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from 后端_核心 import 上传报表生成器 as generator
-from 后端_核心.agent import 执行器注册
+from 后端_核心 import report_generator as generator
+from 后端_核心.agent import executors
 
 
 @pytest.fixture
@@ -73,7 +73,7 @@ def test_聚合执行器x轴list归一化():
     df = pd.DataFrame({"地区": ["华东", "华南"] * 2, "销售额": [1, 2, 3, 4]})
     ctx = {"df": df, "画像": {"字段列表": ["地区", "销售额"], "数值字段": ["销售额"], "分类字段": ["地区"]}}
     # 修复前：x轴=["地区"] 参与 set 判断抛 unhashable type: 'list'
-    result = 执行器注册._聚合分析_executor({"X轴": ["地区"], "Y轴": ["销售额"], "聚合方式": "求和"}, ctx)
+    result = executors._聚合分析_executor({"X轴": ["地区"], "Y轴": ["销售额"], "聚合方式": "求和"}, ctx)
     assert result is not None
     assert "数据摘要" in result
 
@@ -81,7 +81,7 @@ def test_聚合执行器x轴list归一化():
 def test_聚合执行器分组字段list归一化():
     df = pd.DataFrame({"地区": ["华东", "华南"] * 2, "销售额": [1, 2, 3, 4]})
     ctx = {"df": df, "画像": {"字段列表": ["地区", "销售额"], "数值字段": ["销售额"], "分类字段": ["地区"]}}
-    result = 执行器注册._聚合分析_executor(
+    result = executors._聚合分析_executor(
         {"X轴": "地区", "Y轴": ["销售额"], "分组字段": ["地区"], "聚合方式": "求和"}, ctx
     )
     assert result is not None

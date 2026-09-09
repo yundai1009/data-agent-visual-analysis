@@ -446,7 +446,7 @@ def test_字段模板不误设分组(client):
 
 def test_BYOK用户Key优先于服务端(client):
     """服务端 Key 为占位符时，用户传 X-LLM-API-Key 仍能启用 LLM，且用用户 Key。"""
-    import 后端_核心.agent.编排器 as orc_mod
+    import 后端_核心.agent.orchestrator as orc_mod
     captured = {}
     orig_cc = orc_mod.chat_completion
 
@@ -475,7 +475,7 @@ def test_BYOK用户Key优先于服务端(client):
 
 def test_BYOK不填Key回退服务端(client):
     """不带 X-LLM-API-Key → 用服务端 Key（模拟服务端已配真 Key）。"""
-    import 后端_核心.agent.编排器 as orc_mod
+    import 后端_核心.agent.orchestrator as orc_mod
     from config.settings import EnvConfig
     captured = {}
     orig_cc = orc_mod.chat_completion
@@ -921,7 +921,7 @@ def test_账号key_空值400(client):
 
 def test_账号key_报表生成自动回退(client):
     """无 X-LLM-API-Key 请求头时，报表生成自动使用账号绑定的 key。"""
-    import 后端_核心.agent.编排器 as orc_mod
+    import 后端_核心.agent.orchestrator as orc_mod
     captured = {}
     orig_cc = orc_mod.chat_completion
 
@@ -947,7 +947,7 @@ def test_账号key_报表生成自动回退(client):
 
 def test_账号key_请求头优先于账号(client):
     """显式 X-LLM-API-Key 优先于账号绑定的 key。"""
-    import 后端_核心.agent.编排器 as orc_mod
+    import 后端_核心.agent.orchestrator as orc_mod
     captured = {}
     orig_cc = orc_mod.chat_completion
 
@@ -972,7 +972,7 @@ def test_账号key_请求头优先于账号(client):
 
 def test_账号key_清除与用户隔离(client):
     """DELETE 清除后回退服务端；A 的 key 不影响 B。"""
-    import 后端_核心.agent.编排器 as orc_mod
+    import 后端_核心.agent.orchestrator as orc_mod
     captured = {}
     orig_cc = orc_mod.chat_completion
 
@@ -1019,7 +1019,7 @@ def test_工作时间占比_自动选中时间字段(client):
 def test_数据画像摘要_含字段示例值():
     """治本：喂给 LLM 的画像摘要必须含字段真实示例值（LLM 据此理解字段语义）。"""
     import pandas as pd
-    from 后端_核心.agent.执行器注册 import _可读画像摘要
+    from 后端_核心.agent.executors import _可读画像摘要
     df = pd.DataFrame({"地点": ["武汉", "上海", "北京"], "工作时间": [8, 10, 6], "职位ID": [101, 102, 103]})
     画像 = {
         "行数": 3, "列数": 3,
@@ -1056,8 +1056,8 @@ def test_工作经验占比_优先经验字段而非时间(client):
 
 def test_LLM失败原因_透传到报表(client):
     """LLM 调用失败（如 402 欠费）时，报表响应必须带 LLM失败原因，前端可明示。"""
-    import 后端_核心.agent.llm客户端 as llm_mod
-    import 后端_核心.agent.编排器 as orc_mod
+    import 后端_核心.agent.llm_client as llm_mod
+    import 后端_核心.agent.orchestrator as orc_mod
     orig_cc = orc_mod.chat_completion
 
     def fake_chat(messages, **kw):
@@ -1111,7 +1111,7 @@ def test_自定义供应商_保存列表删除(client):
 
 def test_自定义供应商_生成报表不报400(client):
     """使用自定义供应商生成报表：不再因"不支持的 provider"报 400。"""
-    import 后端_核心.agent.编排器 as orc_mod
+    import 后端_核心.agent.orchestrator as orc_mod
     orig_cc = orc_mod.chat_completion
     orc_mod.chat_completion = lambda messages, **kw: None  # LLM 失败降级规则
     try:

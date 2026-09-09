@@ -182,7 +182,7 @@ def 执行作业(任务: Dict[str, Any]) -> str:
         from api.contracts import ReportGenerateRequest
         from config.settings import EnvConfig, LLMRequestConfig
         from repositories import report_repo, schedule_repo, template_repo, user_repo
-        from 后端_核心.上传报表生成器 import 生成报表数据
+        from 后端_核心.report_generator import 生成报表数据
 
         user_id = 任务["用户ID"]
         tpl = template_repo.读取模板(user_id, 任务["模板ID"])

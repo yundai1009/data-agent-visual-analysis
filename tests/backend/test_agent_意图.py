@@ -29,9 +29,9 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from 后端_核心.agent import llm客户端 as llm客户端_mod
-from 后端_核心.agent import 编排器 as 编排器_mod
-from 后端_核心.agent.工具集 import validate_intent_against_profile
+from 后端_核心.agent import llm_client as llm客户端_mod
+from 后端_核心.agent import orchestrator as 编排器_mod
+from 后端_核心.agent.tools import validate_intent_against_profile
 
 
 # ============================================================================
@@ -320,7 +320,7 @@ def test_解析自然语言需求_编排Agent返回规则意图(画像, monkeypa
 # 7. D：LLM 字段校验不过回退自动选字段（编排器层单元测试）
 # ============================================================================
 
-from 后端_核心.上传报表生成器 import 自动选字段 as _自动选字段
+from 后端_核心.field_selector import 自动选字段 as _自动选字段
 
 
 def test_自动选字段_词云_返回文本字段():
@@ -400,7 +400,7 @@ def test_D_词云_x轴非文本_回退自动选字段(画像, monkeypatch):
     monkeypatch.setattr(编排器_mod, "保存记忆", lambda *a, **kw: None)
 
     # 验证回退结果：x 轴应被修正为文本字段
-    from 后端_核心.上传报表生成器 import 自动选字段
+    from 后端_核心.field_selector import 自动选字段
     expected = 自动选字段(画像, "词云图")
     assert expected["x轴"] == "评论"
 

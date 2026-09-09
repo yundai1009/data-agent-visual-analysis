@@ -31,7 +31,8 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from 后端_核心.上传报表生成器 import _生成对比数据, 生成报表数据, _意图驱动配置
+from 后端_核心.report_generator import _生成对比数据, 生成报表数据
+from 后端_核心.field_selector import _意图驱动配置
 
 _SENT_CODES: dict = {}
 

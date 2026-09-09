@@ -27,7 +27,8 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from 后端_核心.数据筛选 import 应用筛选, 提取TopN, 匹配筛选条件
-from 后端_核心.上传报表生成器 import 生成报表数据, _意图驱动配置
+from 后端_核心.report_generator import 生成报表数据
+from 后端_核心.field_selector import _意图驱动配置
 
 
 @pytest.fixture

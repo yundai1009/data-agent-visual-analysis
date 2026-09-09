@@ -17,8 +17,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from api.contracts import LoadExampleResponse
 from api.dependencies import get_current_user
 from api.routes.datasets import _仓储
-from 后端_核心.文件数据服务 import 读取上传表格
-from 后端_核心.数据画像 import 生成数据画像
+from 后端_核心.file_services import 读取上传表格
+from 后端_核心.profile import 生成数据画像
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
