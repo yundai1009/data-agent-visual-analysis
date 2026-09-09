@@ -301,7 +301,7 @@ def 编排Agent(
                     intent_override = _从消息提取意图(messages, 画像)
                     if intent_override:
                         # D：LLM 字段校验不过回退自动选字段（覆盖全部图表类型，原仅词云）
-                        from 后端_核心.上传报表生成器 import 自动选字段  # 延迟导入避免循环
+                        from 后端_核心.规则意图 import 自动选字段  # 解耦：规则层独立模块（原延迟导入上传报表生成器）
                         chart_type = intent_override.get("图表类型")
 
                         def _需回退() -> bool:
@@ -357,7 +357,7 @@ def 编排Agent(
     # 删除后果：LLM 一挂，整条分析链路直接返回 None，前端报错，体验严重受损。
     # 替代方案：多次重试 LLM 后再报错（用户等待时间长）；当前优雅降级体验最好。
     if intent_override is None:
-        from 后端_核心.上传报表生成器 import _意图驱动配置  # noqa: E402
+        from 后端_核心.规则意图 import _意图驱动配置  # 解耦：规则层独立模块
         rule_over = _意图驱动配置(画像, 分析需求)
         if rule_over:
             intent_override = rule_over

@@ -267,7 +267,7 @@ def _画像摘要(画像: Dict[str, Any]) -> str:
 
 def _降级(画像: Dict[str, Any], 分析需求: str, trace: TraceRecorder) -> Dict[str, Any]:
     """关键词匹配降级。"""
-    from 后端_核心.上传报表生成器 import _意图驱动配置
+    from 后端_核心.规则意图 import _意图驱动配置
     rule_over = _意图驱动配置(画像, 分析需求)
     if rule_over:
         trace.记录观察(轮次=0, 说明="降级为关键词匹配", 状态="成功")
