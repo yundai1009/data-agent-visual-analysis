@@ -209,7 +209,16 @@ export default function useAnalysis() {
     const payload = {
       数据集ID: dataset.数据集ID,
       分析需求: isFollowUp ? (followUp.trim() || nlInput) : nlInput,
-      图表类型: isFollowUp ? '自动推荐' : (chartMap[chartTypeOverride || chartType] || '自动推荐'),
+      // 【Bug修复】追问时若用户显式选择过图表类型（非 auto）则沿用上一图表
+      // （如追问"那华南区呢？"应继续用柱状图，而不是重置为自动推荐）；
+      // 用户未显式选择（auto）或显式传 chartTypeOverride 时优先用 override。
+      图表类型: (() => {
+        const effective = chartTypeOverride
+          || (isFollowUp && chartType !== 'auto' ? chartType : null)
+          || (isFollowUp ? null : chartType)
+          || 'auto';
+        return chartMap[effective] || '自动推荐';
+      })(),
       x轴: isFollowUp ? null : ((!xAxis || xAxis === '无') ? null : xAxis),
       y轴: isFollowUp ? [] : (yAxis ? [yAxis] : []),
       分组字段: isFollowUp ? null : ((!groupField || groupField === '无') ? null : groupField),
