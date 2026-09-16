@@ -386,8 +386,8 @@ export default function useAnalysis() {
   };
 
   // 继续追问
-  const handleFollowUp = async () => {
-    const q = followUp.trim();
+  const handleFollowUp = async (overrideText) => {
+    const q = (overrideText ?? followUp).trim();
     if (!q) return;
     if (!lastReportIdRef.current) {
       setError('还没有可追问的分析结果，请先完成一次分析');
@@ -397,6 +397,20 @@ export default function useAnalysis() {
     const started = await handleGenerate(true);
     if (started) setFollowUp('');
   };
+
+  // 阶段 45：推荐追问建议——基于当前数据字段生成 2-3 条可点击的自然语言追问，
+  // 用户不知该问什么时点一下即可继续（解决"不知道怎么追问"的体验断点）。
+  const followUpSuggestions = (() => {
+    const list = [];
+    const cat = catFields?.[0];
+    const date = dateFields?.[0];
+    const num = numFields?.[0];
+    if (cat) list.push(`那按「${cat}」分组看看分布呢？`);
+    if (date) list.push(`按「${date}」看趋势变化呢？`);
+    if (num) list.push(`只看「${num}」最高的前 10 呢？`);
+    // 最多展示 3 条，避免刷屏
+    return list.slice(0, 3).filter(Boolean);
+  })();
 
   return {
     // 数据/画像
@@ -418,7 +432,7 @@ export default function useAnalysis() {
     liveSteps, liveError, liveDone, elapsed, showChartSwitch, setShowChartSwitch,
     scrollRef,
     // 追问
-    followUp, setFollowUp,
+    followUp, setFollowUp, followUpSuggestions,
     // 动作
     handleChartSelect, handleGenerate, handleCancel, handleFollowUp,
     // 并发守卫引用（JSX 图表切换提示条直接读它判断是否可发起）

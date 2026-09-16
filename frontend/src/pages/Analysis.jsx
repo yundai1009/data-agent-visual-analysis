@@ -67,7 +67,7 @@ export default function Analysis() {
     schedules, scheduleCron, setScheduleCron, scheduleTplId, setScheduleTplId, scheduleMsg,
     loadSchedules, handleCreateSchedule, handleDeleteSchedule,
     liveSteps, liveError, liveDone, elapsed, showChartSwitch, setShowChartSwitch,
-    scrollRef, followUp, setFollowUp,
+    scrollRef, followUp, setFollowUp, followUpSuggestions,
     handleChartSelect, handleGenerate, handleCancel, handleFollowUp, generatingRef,
   } = useAnalysis();
 
@@ -215,6 +215,21 @@ export default function Analysis() {
               <Zap className="w-3.5 h-3.5" /> 追问分析
             </button>
           </div>
+          {/* 推荐追问：点一下直接继续（解决"不知道怎么追问"） */}
+          {followUpSuggestions.length > 0 && (
+            <div className="mt-2 flex items-center flex-wrap gap-1.5">
+              <span className="text-[11px] text-gray-400 shrink-0">试试追问：</span>
+              {followUpSuggestions.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => handleFollowUp(s)}
+                  className="px-2.5 py-1 rounded-full border border-accent/30 bg-accent-soft/40 text-[11px] text-accent hover:bg-accent-soft transition-colors"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

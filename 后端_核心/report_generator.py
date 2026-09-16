@@ -678,6 +678,28 @@ def _生成结论(
 
     insight_text = "\n".join(insight_lines)
 
+    # 建议：基于关键发现生成 1-2 条可执行的下一步行动（阶段 45：结论不再只罗列发现）
+    advice_lines: List[str] = []
+    if x_field and y_fields and x_field in report_df.columns:
+        first_y = y_fields[0]
+        if first_y in report_df.columns and not report_df.empty and pd.api.types.is_numeric_dtype(report_df[first_y]):
+            top_row = report_df.sort_values(first_y, ascending=False).iloc[0]
+            advice_lines.append(
+                f"- 建议重点关注 `{_格式化数值(top_row[x_field])}`：其 `{first_y}` 表现领先，"
+                f"可复盘其成功因素并评估是否可复制到其他 `{x_field}`。"
+            )
+            if len(report_df) >= 2:
+                bottom_row = report_df.sort_values(first_y, ascending=True).iloc[0]
+                advice_lines.append(
+                    f"- `{_格式化数值(bottom_row[x_field])}` 的 `{first_y}` 垫底，"
+                    f"建议排查原因（数据缺失/业务短板），再制定针对性提升或止损方案。"
+                )
+    if not advice_lines:
+        advice_lines.append(
+            "- 建议结合原始明细数据进一步验证结论，确认异常值或缺失值是否影响判断后再做决策。"
+        )
+    advice_text = "\n".join(advice_lines)
+
     return (
         "### 报表结论\n\n"
         f"- 已基于上传数据生成 `{图表类型}`，原始数据共 {rows} 行、{cols} 列。\n"
@@ -688,6 +710,8 @@ def _生成结论(
         f"{recommendation_lines}\n\n"
         "### 关键发现\n"
         f"{insight_text}\n\n"
+        "### 建议\n"
+        f"{advice_text}\n\n"
         "### 注意事项\n"
         f"{warning_lines}"
     )
