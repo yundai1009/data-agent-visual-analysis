@@ -106,7 +106,9 @@ def _准备上下文(
     df = item["数据"]
 
     # LLM 配置：推荐预设（白名单）或用户自定义供应商（自担风险 BYOK）
-    user_provider = (request.headers.get("x-llm-provider") or "deepseek").strip().lower()
+    raw_provider = (request.headers.get("x-llm-provider") or "").strip().lower()
+    is_provider_explicit = bool(raw_provider)  # 用户是否显式指定了 provider
+    user_provider = raw_provider or "deepseek"
     user_model = (request.headers.get("x-llm-model") or "").strip() or payload.model or ""
 
     providers = getattr(EnvConfig, "LLM_PROVIDERS", {})
@@ -169,6 +171,20 @@ def _准备上下文(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="自定义 LLM 供应商必须提供 API Key（请求头 / 账号 Key / 供应商自带 Key）",
         )
+
+    # ── 全局 .env 回退（修复「LLM 模式全降级」）──
+    # 场景：用户没在页面选 provider（前端不传 x-llm-provider），且没有 provider 级 key。
+    # 之前默认走 deepseek，但 .env 里配的 key 是智谱 GLM 的 → 用智谱 key 打 DeepSeek 接口 → 401 降级。
+    # 现在：未显式指定 provider 且拿不到任何 key 时，直接用 .env 全局 base_url + model + key。
+    if not is_provider_explicit and not user_api_key and (EnvConfig.LLM_API_KEY or "").strip():
+        llm_config = LLMRequestConfig(
+            provider="global-env",
+            base_url=(EnvConfig.LLM_BASE_URL or "").rstrip("/") or provider_conf["base_url"],
+            model=user_model or EnvConfig.LLM_MODEL or provider_conf.get("default_model", ""),
+            api_key=EnvConfig.LLM_API_KEY,
+        )
+        return df, llm_config
+
     llm_config = LLMRequestConfig(
         provider=user_provider,
         base_url=provider_conf["base_url"],
