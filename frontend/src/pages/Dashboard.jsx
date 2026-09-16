@@ -157,6 +157,48 @@ export default function Dashboard() {
     }
   };
 
+  // ── 原生拖拽排序（HTML5 DnD，零依赖）──
+  const [dragIndex, setDragIndex] = useState(null);   // 正在拖拽的卡片下标
+  const [overIndex, setOverIndex] = useState(null);   // 悬停的目标下标（视觉反馈）
+
+  const resetDrag = () => { setDragIndex(null); setOverIndex(null); };
+
+  const handleDragStart = (e, index) => {
+    setDragIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', String(index)); } catch { /* 兼容 */ }
+  };
+
+  const handleDragOver = (e, index) => {
+    e.preventDefault();                       // 允许 drop（默认禁止）
+    e.dataTransfer.dropEffect = 'move';
+    if (overIndex !== index) setOverIndex(index);
+  };
+
+  // drop：把 dragIndex 的卡片插到目标位置，并持久化新顺序
+  const handleDrop = async (e, index) => {
+    e.preventDefault();
+    const from = dragIndex;
+    resetDrag();
+    if (from === null || from === index) return;
+    const list = [...(detail.报表列表 || [])];
+    const [moved] = list.splice(from, 1);
+    list.splice(index, 0, moved);
+    try {
+      await updateDashboard(currentId, detail.名称, list.map((r) => r.报表ID));
+      await loadDetail(currentId);
+    } catch (err) {
+      setError('拖拽排序失败：' + (err.message || err));
+    }
+  };
+
+  // 智能排版：按图表类型分配卡片宽度（xl 两列栅格下）
+  // 宽图（表格/热力图/桑基/旭日/箱线）通栏占整行；标准图（饼图/折线/柱状等）并排占半行
+  const spanClassFor = (chartTypeKey) => {
+    const wide = new Set(['table', 'heatmap', 'sankey', 'sunburst', 'boxplot', 'treemap']);
+    return wide.has(chartTypeKey) ? 'xl:col-span-2' : 'xl:col-span-1';
+  };
+
   // 重命名
   const handleRename = async () => {
     if (!currentId || !detail) return;
@@ -279,15 +321,29 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* 图表网格 */}
+      {/* 图表网格（智能排版 + 拖拽排序） */}
       {reports.length > 0 && (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           {reports.map((item, i) => {
             const cfg = item.报表?.图表配置 || {};
             const chartTypeKey = cfg.类型 || 'bar';
             const conclusion = item.报表?.结论 || '';
+            const colSpan = spanClassFor(chartTypeKey);
+            // 拖拽视觉反馈：被拖卡片半透明，目标卡片加边框
+            const isDragging = dragIndex === i;
+            const isOver = overIndex === i && dragIndex !== null && dragIndex !== i;
             return (
-                            <div key={item.报表ID} className="bg-white rounded-2xl shadow-[var(--shadow-card)] overflow-hidden">
+              <div
+                key={item.报表ID}
+                className={`${colSpan} bg-white rounded-2xl shadow-[var(--shadow-card)] overflow-hidden transition-all duration-150 select-none ${
+                  isDragging ? 'opacity-40 scale-[0.98]' : ''
+                } ${isOver ? 'ring-2 ring-accent/60 ring-offset-2' : ''}`}
+                draggable
+                onDragStart={(e) => handleDragStart(e, i)}
+                onDragOver={(e) => handleDragOver(e, i)}
+                onDrop={(e) => handleDrop(e, i)}
+                onDragEnd={resetDrag}
+              >
                 <div className="flex items-center gap-2 px-4 pt-3.5">
                   <span className="text-[11px] px-2 py-0.5 rounded-md bg-accent-soft text-accent font-medium shrink-0">{item.图表类型 || '图表'}</span>
                   <p className="text-xs font-medium text-gray-700 truncate">{item.标题}</p>
