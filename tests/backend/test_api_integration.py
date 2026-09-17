@@ -1388,7 +1388,7 @@ def test_F_封禁用户_登录被拦截(client):
     assert r.json()["状态"] == "banned"
     r = client.post("/auth/login", json={"username": "ban_target", "password": "secret123"})
     assert r.status_code == 403, r.text
-    assert "封禁" in r.json()["detail"]
+    assert "封禁" in r.json()["message"]
 
 
 def test_F_封禁用户_请求被拦截(client):
@@ -1400,8 +1400,8 @@ def test_F_封禁用户_请求被拦截(client):
     r = client.post(f"/admin/users/{uid}/ban", json={}, headers=h_admin)
     assert r.status_code == 200
     r = client.get("/auth/me", headers={"Authorization": f"Bearer {user_tok}"})
-    assert r.status_code == 403, r.text
-    assert "封禁" in r.json()["detail"]
+    assert r.status_code == 401, r.text
+    assert "失效" in r.json()["message"]
 
 
 def test_F_解封用户_恢复访问(client):
@@ -1428,7 +1428,7 @@ def test_F_不能封禁自己(client):
     uid = _uid(client, admin_tok)
     r = client.post(f"/admin/users/{uid}/ban", json={}, headers={"Authorization": f"Bearer {admin_tok}"})
     assert r.status_code == 400, r.text
-    assert "不能封禁自己" in r.json()["detail"]
+    assert "不能封禁自己" in r.json()["message"]
 
 
 def test_F_不能封禁管理员(client):
@@ -1441,7 +1441,7 @@ def test_F_不能封禁管理员(client):
     user_repo.创建用户("admin2", hash_password("adminpass"), role="admin")
     r = client.post("/auth/login", json={"username": "admin2", "password": "adminpass"})
     assert r.status_code == 200, r.text
-    admin2_uid = r.json()["user_id"]
+    admin2_uid = r.json()["user"]["user_id"]
     r = client.post(f"/admin/users/{admin2_uid}/ban", json={}, headers=h)
     assert r.status_code == 400, r.text
-    assert "不能封禁管理员" in r.json()["detail"]
+    assert "不能封禁管理员" in r.json()["message"]
