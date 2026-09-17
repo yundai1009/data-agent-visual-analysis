@@ -237,6 +237,11 @@ def login(payload: LoginRequest, request: Request) -> AuthResponse:
         from repositories import audit_repo
         audit_repo.记录((user or {}).get("user_id", ""), "登录失败", username=payload.username.strip(), detail="密码错误")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
+    # 封禁拦截：被封账号即使密码正确也拒绝登录（管理后台封号后立即生效）
+    if user_repo.读取账号状态(user["user_id"]) == "banned":
+        from repositories import audit_repo
+        audit_repo.记录(user["user_id"], "登录失败", username=user["username"], detail="账号已封禁")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="账号已被封禁，请联系管理员")
     _清除登录限流(identifier, client_host)
     token = auth_service.create_access_token(
         user["user_id"], user["role"], user["username"],

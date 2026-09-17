@@ -5,7 +5,7 @@
  * 统一走 api/request.js 的 request()（token 注入 + 超时 + 401 + 错误解析）。
  * 传输层（上传/SSE）在 api/upload.js；本模块只依赖 request。
  */
-import { request } from './request';
+import { request, getStoredToken } from './request';
 
 export async function login(username, password) {
   return request('/auth/login', {
@@ -241,7 +241,7 @@ export async function getReport(reportId) {
 // 优化：并入统一超时保护（fetch 无默认超时，后端挂起时按钮永久 loading）
 
 export async function exportReport(reportId, format) {
-  const token = localStorage.getItem('access_token') || '';
+  const token = getStoredToken();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -277,7 +277,7 @@ export async function exportReport(reportId, format) {
 // 前端把 ECharts 渲染的图表 base64 dataURL 传上来，后端 reportlab 排版成单文件 PDF
 
 export async function exportFullReport(reportId, chartPng = '') {
-  const token = localStorage.getItem('access_token') || '';
+  const token = getStoredToken();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -474,7 +474,7 @@ export async function submitFeedback({ taskId = '', score, correction = '', sync
 // D 合规：导出我的全部数据（JSON 下载）
 
 export async function exportUserData() {
-  const token = localStorage.getItem('access_token') || '';
+  const token = getStoredToken();
   const res = await fetch('/auth/export', {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });

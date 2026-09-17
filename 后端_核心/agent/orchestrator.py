@@ -143,9 +143,9 @@ def _快速意图判断(分析需求: str, 画像: Dict[str, Any]) -> Optional[D
             # 未提到数值字段时饼图回退计数兜底，其余图表沿用空 y轴由下游自动填充。
             y轴 = []
             聚合 = 默认聚合 or "求和"
-            if 图表类型 == "饼图" and any(kw in 需求文本 for kw in ("占比", "比例", "构成")):
+            if 图表类型 == "饼图" and any(kw in 文本 for kw in ("占比", "比例", "构成")):
                 from 后端_核心.field_selector import _匹配数值字段
-                数值字段名 = _匹配数值字段(画像, 需求文本)
+                数值字段名 = _匹配数值字段(画像, 文本)
                 if 数值字段名:
                     y轴 = [数值字段名]
                     聚合 = "求和"
@@ -252,9 +252,26 @@ def 编排Agent(
 
     intent_override = None
     intent_source = "无"
+    # ═══ 规则快速通道（阶段 35+39）：明确关键词直接走规则，跳过 LLM ═══
+    # 第一层：受控语句（明确图表词，如"直方图""K线"）→ 规则精确识别；
+    # 第二层：快速路由（占比/趋势/TopN/相关 等通用意图词）→ 高置信度规则；
+    # 均未命中才继续走 LLM（模糊需求才需要智能推理，省 3-4s 且准确率更高）。
+    if enable_llm and (分析需求 or "").strip():
+        from 后端_核心.field_selector import _受控语句配置
+        _受控 = _受控语句配置(画像, 分析需求)
+        if _受控:
+            intent_override = _受控
+            intent_source = "规则-受控语句"
+            trace.记录观察(轮次=0, 说明="受控语句命中，跳过 LLM", 状态="成功")
+        else:
+            _快速 = _快速意图判断(分析需求, 画像)
+            if _快速:
+                intent_override = _快速
+                intent_source = "规则-快速路由"
+                trace.记录观察(轮次=0, 说明="快速路由命中，跳过 LLM", 状态="成功")
 
     # ═══ LLM 多轮 ReAct ═══
-    if enable_llm and (分析需求 or "").strip():
+    if enable_llm and (分析需求 or "").strip() and intent_override is None:
         # ── 检索相似历史记忆（few-shot） ──
         # 【关键行】从向量记忆库中检索与当前需求最相似的 top-3 条历史分析记录。
         # 为什么：LLM 在没有参考案例时容易"凭空想象"图表类型和字段组合；
@@ -337,7 +354,12 @@ def 编排Agent(
                             if chart_type == "雷达图":
                                 return (x not in 分类 and x not in 日期) or len(ys) < 1
                             # 柱状/折线/面积/饼/环形/漏斗/瀑布/直方图 等
-                            return False
+                            if chart_type == "直方图":
+                                # 直方图的 X 轴就是被统计的数值字段（与 Y 相同）
+                                return (not x) or (x not in 数值)
+                            # 柱状/折线/面积/饼/环形/漏斗/瀑布 等：X 轴必须是分类/日期/数值之一，否则回退自动选字段
+                            有效X = 分类 | 日期 | 数值
+                            return (not x) or (x not in 有效X) or (len(ys) == 0)
 
                         if _需回退():
                             rule_selected = 自动选字段(画像, chart_type)

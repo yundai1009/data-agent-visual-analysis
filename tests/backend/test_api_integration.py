@@ -1358,3 +1358,90 @@ def test_E_词云无文本字段400带建议(client):
     }, headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 400, r.text[:200]
     assert "文本字段" in r.json()["message"]
+# =============================================================================
+# F：封号 / 解封超级管理员权限（阶段 39 补测）
+# =============================================================================
+
+
+def _admin_token(client):
+    """种子管理员登录，返回 token。"""
+    import os
+    r = client.post("/auth/login", json={"username": "admin", "password": os.environ["SEED_ADMIN_PASSWORD"]})
+    assert r.status_code == 200, r.text
+    return r.json()["access_token"]
+
+
+def _uid(client, tok):
+    r = client.get("/auth/me", headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200, r.text
+    return r.json()["user_id"]
+
+
+def test_F_封禁用户_登录被拦截(client):
+    """封禁后用户无法重新登录（auth.py 登录拦截）。"""
+    admin_tok = _admin_token(client)
+    h_admin = {"Authorization": f"Bearer {admin_tok}"}
+    user_tok = _register(client, "ban_target")
+    uid = _uid(client, user_tok)
+    r = client.post(f"/admin/users/{uid}/ban", json={"reason": "测试封禁"}, headers=h_admin)
+    assert r.status_code == 200, r.text
+    assert r.json()["状态"] == "banned"
+    r = client.post("/auth/login", json={"username": "ban_target", "password": "secret123"})
+    assert r.status_code == 403, r.text
+    assert "封禁" in r.json()["detail"]
+
+
+def test_F_封禁用户_请求被拦截(client):
+    """封禁后现有 token 请求受保护接口 → 403（dependencies.py 第 5 关）。"""
+    admin_tok = _admin_token(client)
+    h_admin = {"Authorization": f"Bearer {admin_tok}"}
+    user_tok = _register(client, "ban_req")
+    uid = _uid(client, user_tok)
+    r = client.post(f"/admin/users/{uid}/ban", json={}, headers=h_admin)
+    assert r.status_code == 200
+    r = client.get("/auth/me", headers={"Authorization": f"Bearer {user_tok}"})
+    assert r.status_code == 403, r.text
+    assert "封禁" in r.json()["detail"]
+
+
+def test_F_解封用户_恢复访问(client):
+    """解封后用户可重新登录并正常访问。"""
+    admin_tok = _admin_token(client)
+    h_admin = {"Authorization": f"Bearer {admin_tok}"}
+    user_tok = _register(client, "ban_unban")
+    uid = _uid(client, user_tok)
+    r = client.post(f"/admin/users/{uid}/ban", json={}, headers=h_admin)
+    assert r.status_code == 200
+    r = client.post("/auth/login", json={"username": "ban_unban", "password": "secret123"})
+    assert r.status_code == 403
+    r = client.post(f"/admin/users/{uid}/unban", headers=h_admin)
+    assert r.status_code == 200, r.text
+    assert r.json()["状态"] == "active"
+    r = client.post("/auth/login", json={"username": "ban_unban", "password": "secret123"})
+    assert r.status_code == 200, r.text
+    assert "access_token" in r.json()
+
+
+def test_F_不能封禁自己(client):
+    """管理员不能封禁自己（防自杀式操作）。"""
+    admin_tok = _admin_token(client)
+    uid = _uid(client, admin_tok)
+    r = client.post(f"/admin/users/{uid}/ban", json={}, headers={"Authorization": f"Bearer {admin_tok}"})
+    assert r.status_code == 400, r.text
+    assert "不能封禁自己" in r.json()["detail"]
+
+
+def test_F_不能封禁管理员(client):
+    """管理员不能封禁其他管理员（防锁死管理入口）。"""
+    admin_tok = _admin_token(client)
+    h = {"Authorization": f"Bearer {admin_tok}"}
+    # 创建第二个 admin（直接用仓储层，模拟种子管理员以外的管理员）
+    from repositories import user_repo
+    from services.auth_service import hash_password
+    user_repo.创建用户("admin2", hash_password("adminpass"), role="admin")
+    r = client.post("/auth/login", json={"username": "admin2", "password": "adminpass"})
+    assert r.status_code == 200, r.text
+    admin2_uid = r.json()["user_id"]
+    r = client.post(f"/admin/users/{admin2_uid}/ban", json={}, headers=h)
+    assert r.status_code == 400, r.text
+    assert "不能封禁管理员" in r.json()["detail"]
