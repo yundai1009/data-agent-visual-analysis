@@ -1283,7 +1283,7 @@ _18图表矩阵 = [
     ("面积图", "面积图", "日期", "销售额", None),
     ("饼图占比", "饼图", "地区", None, None),
     ("环形图", "环形图", "地区", None, None),
-    ("直方图看分布", "直方图", "销售额", "销售额", None),
+    ("直方图看分布", "直方图", "销售额", "记录数", None),
     ("散点图看关系", "散点图", "销售额", "订单数", None),
     ("箱线图看异常", "箱线图", None, "销售额", None),
     ("K线图看行情", "K线图", "日期", "销售额", None),
@@ -1332,7 +1332,7 @@ def test_E_18图表全矩阵自然语言回归(client):
         cfg = body.get("图表配置") or {}
         x = cfg.get("X轴")
         y_list = cfg.get("Y轴") or []
-        group = cfg.get("分组字段")
+        group = cfg.get("颜色") or cfg.get("分组字段")
         if exp_x and x != exp_x:
             failures.append(f"{keyword}: X轴 {x} != {exp_x}")
         if exp_y and exp_y not in y_list:

@@ -297,6 +297,8 @@ def _受控语句配置(画像: Dict[str, Any], 分析需求: str) -> Dict[str, 
         return _合并显式字段(自动选字段(画像, "直方图"), first, second)
     if "堆积" in 文本:
         return _合并显式字段(自动选字段(画像, "堆积柱状图"), first, second)
+    if "柱状" in 文本 or "条形" in 文本:
+        return _合并显式字段(自动选字段(画像, "柱状图"), first, second)
     if "关系" in 文本 or "相关" in 文本 or "散点" in 文本:
         return _合并显式字段(自动选字段(画像, "散点图"), first, second)
     if "雷达" in 文本:
