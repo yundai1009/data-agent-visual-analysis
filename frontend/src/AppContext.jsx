@@ -13,6 +13,7 @@
  * ============================================================================= */
 /* oxlint-disable react/only-export-components -- Context 惯例：Provider 组件 + useApp hook 同文件导出 */
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import { setStoredToken, clearStoredToken } from './api/request';
 
 const AppContext = createContext(null);
 
@@ -44,7 +45,10 @@ export function AppProvider({ children }) {
   //   不一致的边界，可靠性不如直接读 token。
   const [isAuthed, setIsAuthed] = useState(() => {
     // B18 修复：Safari 隐私模式/localStorage 禁用时 getItem 抛 SecurityError，需 try 包裹
-    try { return !!localStorage.getItem('access_token'); } catch { return false; }
+    // 阶段 46：token 可能在 localStorage（记住我）或 sessionStorage（不记住），统一读取
+    try {
+      return !!(localStorage.getItem('access_token') || sessionStorage.getItem('access_token'));
+    } catch { return false; }
   });
 
   // F-S3 辅助：记录当前内存态 user_id，用于 setAuth 判断"换账号"（user_id 变化）。
@@ -85,18 +89,13 @@ export function AppProvider({ children }) {
   // 设置认证状态（登录/注册/改名/改密成功后统一调用）：
   // 入参 token = 新 access_token；userInfo = 最新用户对象（可只传 username 变化的部分字段）
   // 业务定位：全平台唯一“写登录态”入口，保证 token / 用户信息 / 界面三处永远一致
-  const setAuth = useCallback((token, userInfo) => {
+  const setAuth = useCallback((token, userInfo, remember = true) => {
     try {
-      // 【关键行】第一处同步：token 写入 localStorage —— 持久化，刷新不丢。
-      // 为什么：请求层每次从 localStorage 取 token（api.js getAuthHeaders），
-      //   不写这里下一次请求就还在用旧 token，改名/改密后立刻被 401。
-      // 删除后果：刷新后 isAuthed 变 false 被踢回登录页；或请求带旧 token 反复 401。
-      // 替代方案：把 token 放 React state（不存在持久化问题之外还多一处状态源，
-      //   请求层取不到要跨层传递）；localStorage 是请求层与状态层共享的最简介质。
-      if (token) localStorage.setItem('access_token', token);
+      // 阶段 46：token 写入对应存储（记住我→localStorage，不记住→sessionStorage）。
+      setStoredToken(token, remember);
       // 第二处同步：用户信息写入 user_cache —— 刷新后能恢复用户名/角色。
       if (userInfo) localStorage.setItem('user_cache', JSON.stringify(userInfo));
-    } catch { /* localStorage 不可用时忽略，仅本次会话有效 */ }
+    } catch { /* 不可用时忽略，仅本次会话有效 */ }
     // 第三处同步：更新内存态 user —— 界面立即反映新用户名（不刷新页面也生效）。
     if (userInfo) {
       // F-S3 修复：换账号（user_id 变化）时必须清 dataset_cache/reports_cache 与
@@ -120,7 +119,8 @@ export function AppProvider({ children }) {
   // 登出：手动退出/注销账号时调用，三处本地缓存 + 三处内存态全部清空
   const logout = useCallback(() => {
     try {
-      localStorage.removeItem('access_token');
+      // 阶段 46：双存储都清（记住我的 localStorage + 不记住的 sessionStorage）
+      clearStoredToken();
       localStorage.removeItem('user_cache');
       // 【关键行】B5 修复：登出必须连数据集缓存一起清。
       // 为什么：dataset_cache 按账号维度缓存，若不清理，A 账号上传的数据会在

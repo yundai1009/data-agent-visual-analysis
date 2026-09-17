@@ -30,6 +30,7 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [remember, setRemember] = useState(true); // 阶段 46：记住我（默认勾选，关浏览器不丢登录态）
   const [sending, setSending] = useState(false);
   const [cooldown, setCooldown] = useState(0); // 获取验证码倒计时（秒）
   const cooldownRef = useRef(null);
@@ -103,7 +104,7 @@ export default function Login() {
         res = await login(username.trim(), password);
       }
       if (!mountedRef.current) return; // 【Bug9 修复】await 后组件可能已卸载
-      setAuth(res.access_token, res.user);
+      setAuth(res.access_token, res.user, remember);
       navigate('/data');
     } catch (err) {
       if (!mountedRef.current) return; // 【Bug9 修复】
@@ -225,7 +226,12 @@ export default function Login() {
               </div>
 
               {mode === 'login' && (
-                <div className="text-right -mt-1">
+                <div className="flex items-center justify-between -mt-1">
+                  <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                    <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)}
+                      className="w-3.5 h-3.5 rounded border-white/30 accent-[#0f4c81]" />
+                    <span className="text-xs text-white/60">记住我</span>
+                  </label>
                   <button type="button" className="text-xs text-blue-200/80 hover:text-white transition-colors" onClick={() => { setInfo(''); setMode('reset'); setError(''); }}>
                     忘记密码？
                   </button>

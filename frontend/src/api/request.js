@@ -7,6 +7,22 @@
 
 const BASE = '';
 
+// --- 登录态存储（阶段 46：双存储层）---
+// localStorage = 「记住我」（长期，关浏览器不丢）；sessionStorage = 不记住（会话级，关浏览器失效）。
+// 读取：localStorage 优先（记住我的 token 更长期）；清除：两个都清，保证任何场景不残留。
+export function getStoredToken() {
+  try { return localStorage.getItem('access_token') || sessionStorage.getItem('access_token') || ''; } catch { return ''; }
+}
+export function setStoredToken(token, remember) {
+  try {
+    if (remember) { localStorage.setItem('access_token', token); sessionStorage.removeItem('access_token'); }
+    else { sessionStorage.setItem('access_token', token); localStorage.removeItem('access_token'); }
+  } catch { /* ignore */ }
+}
+export function clearStoredToken() {
+  try { localStorage.removeItem('access_token'); sessionStorage.removeItem('access_token'); } catch { /* ignore */ }
+}
+
 // --- LLM / Auth 头构建 ---
 
 function getLLMHeaders() {
@@ -26,7 +42,7 @@ function getLLMHeaders() {
 
 function getAuthHeaders() {
   try {
-    const token = localStorage.getItem('access_token');
+    const token = getStoredToken();
     return token ? { Authorization: `Bearer ${token}` } : {};
   } catch { return {}; }
 }
@@ -42,7 +58,7 @@ function handleAuthExpired(url) {
   const isAuthApi = url.includes('/auth/login') || url.includes('/auth/register');
   if (isAuthApi) return;
   try {
-    localStorage.removeItem('access_token');
+    clearStoredToken();
     localStorage.removeItem('user_cache');
     localStorage.removeItem('dataset_cache');
     localStorage.removeItem('reports_cache');
