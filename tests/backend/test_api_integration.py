@@ -462,7 +462,7 @@ def test_BYOK用户Key优先于服务端(client):
         assert r.status_code == 200, r.text
         did = _did(r.json())
         r = client.post("/reports/generate", json={
-            "数据集ID": did, "分析需求": "各地区销售额对比", "图表类型": "自动推荐",
+            "数据集ID": did, "分析需求": "帮我看看这份数据整体怎么样", "图表类型": "自动推荐",
             "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
         }, headers={"Authorization": f"Bearer {tok}", "X-LLM-API-Key": "sk-user-123"})
         assert r.status_code == 200, r.text[:200]
@@ -493,7 +493,7 @@ def test_BYOK不填Key回退服务端(client):
         r = _upload(client, tok, filename="d.csv", content=content)
         did = _did(r.json())
         r = client.post("/reports/generate", json={
-            "数据集ID": did, "分析需求": "各地区销售额对比", "图表类型": "自动推荐",
+            "数据集ID": did, "分析需求": "帮我看看这份数据整体怎么样", "图表类型": "自动推荐",
             "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
         }, headers={"Authorization": f"Bearer {tok}"})
         assert r.status_code == 200, r.text[:200]
@@ -935,7 +935,7 @@ def test_账号key_报表生成自动回退(client):
         client.put("/auth/llm-key", json={"api_key": "sk-account-abcdef"}, headers={"Authorization": f"Bearer {tok}"})
         did = _did(_upload(client, tok).json())
         r = client.post("/reports/generate", json={
-            "数据集ID": did, "分析需求": "各地区销售额对比", "图表类型": "自动推荐",
+            "数据集ID": did, "分析需求": "帮我看看这份数据整体怎么样", "图表类型": "自动推荐",
             "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
         }, headers={"Authorization": f"Bearer {tok}"})  # 不带 X-LLM-API-Key
         assert r.status_code == 200, r.text[:200]
@@ -961,7 +961,7 @@ def test_账号key_请求头优先于账号(client):
         client.put("/auth/llm-key", json={"api_key": "sk-account-111111"}, headers={"Authorization": f"Bearer {tok}"})
         did = _did(_upload(client, tok).json())
         r = client.post("/reports/generate", json={
-            "数据集ID": did, "分析需求": "各地区销售额对比", "图表类型": "自动推荐",
+            "数据集ID": did, "分析需求": "帮我看看这份数据整体怎么样", "图表类型": "自动推荐",
             "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
         }, headers={"Authorization": f"Bearer {tok}", "X-LLM-API-Key": "sk-browser-222222"})
         assert r.status_code == 200, r.text[:200]
@@ -1071,7 +1071,7 @@ def test_LLM失败原因_透传到报表(client):
         client.put("/auth/llm-key", json={"api_key": "sk-llm-fail-12345678"}, headers={"Authorization": f"Bearer {tok}"})
         did = _did(_upload(client, tok).json())
         r = client.post("/reports/generate", json={
-            "数据集ID": did, "分析需求": "各地区销售额占比", "图表类型": "自动推荐",
+            "数据集ID": did, "分析需求": "帮我看看这份数据整体怎么样", "图表类型": "自动推荐",
             "x轴": None, "y轴": [], "分组字段": None, "聚合方式": "求和", "agent_mode": "single",
         }, headers={"Authorization": f"Bearer {tok}"})
         assert r.status_code == 200, r.text[:200]
