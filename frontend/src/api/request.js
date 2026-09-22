@@ -58,7 +58,21 @@ function handleAuthExpired(url) {
   const isAuthApi = url.includes('/auth/login') || url.includes('/auth/register');
   if (isAuthApi) return;
   try {
-    clearStoredToken();
+    // 阶段 48 修复（多标签误杀）：401 不一定代表「记住我」token 失效——
+    // 某个标签页的过期/残留 token 请求 401 时，若直接清 localStorage，
+    // 会把另一标签页刚登录的有效「记住我」token 也清掉，导致刷新/新标签掉登录。
+    // 处理策略：
+    //   - /auth/me 的 401 = 对 token 真实性/有效性的权威校验 → 两个存储都清
+    //     （AuthBootstrap 启动校验走的就是它，token 真失效时在此收口）；
+    //   - 其他接口 401 = 先只清 sessionStorage（不记住的会话级 token），
+    //     localStorage 的「记住我」token 保留——若它真失效，下一次 /auth/me
+    //     校验会兜底清除，不会无限循环。
+    const meUnauthorized = url.includes('/auth/me');
+    if (meUnauthorized) {
+      clearStoredToken();
+    } else {
+      try { sessionStorage.removeItem('access_token'); } catch { /* ignore */ }
+    }
     localStorage.removeItem('user_cache');
     localStorage.removeItem('dataset_cache');
     localStorage.removeItem('reports_cache');

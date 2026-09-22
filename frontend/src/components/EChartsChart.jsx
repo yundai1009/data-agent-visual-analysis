@@ -190,10 +190,17 @@ export function buildOption(chartType, config) {
   const valueField = config.值;
 
   const base = {
-    title: { text: title, left: 'center', textStyle: { fontSize: 14, fontWeight: 600, color: '#1e293b' } },
+    // 标题移出图形区顶部（top:0 固定），超长截断——避免长需求文本（如追问句子）
+    // 居中覆盖在图形区上影响可读性
+    title: {
+      text: title.length > 30 ? `${title.slice(0, 30)}…` : title,
+      left: 'center', top: 0,
+      textStyle: { fontSize: 13, fontWeight: 600, color: '#1e293b' },
+    },
     color: COLORS,
     textStyle: CHART_TEXT_STYLE,
-    grid: { left: '3%', right: '4%', bottom: '8%', containLabel: true },
+    // top: 6% 给标题留位，避免标题与图形/标签文字重叠
+    grid: { left: '3%', right: '4%', top: '6%', bottom: '8%', containLabel: true },
     animationDuration: 600,
     animationEasing: 'cubicOut',
   };
@@ -296,7 +303,11 @@ export function buildOption(chartType, config) {
     return {
       ...base, tooltip: { ...CHART_TOOLTIP, trigger: 'axis', axisPointer: { type: 'shadow' } },
       legend: { data: groups, bottom: 0 },
-      xAxis: { type: 'category', data: xVals },
+      xAxis: {
+        type: 'category', data: xVals,
+        // X 轴标签过长时旋转 + 截断（如股票代码/长部门名），避免标签重叠覆盖图形
+        axisLabel: { rotate: xVals.some(v => v.length > 6) ? 35 : 0, overflow: 'truncate', width: 80 },
+      },
       yAxis: { type: 'value' },
       series: groups.map((g, i) => ({
         name: g, type: 'bar', stack: 'total',
