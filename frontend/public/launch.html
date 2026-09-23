@@ -128,8 +128,11 @@
     if (go.done) return;
     go.done = true;
     enterBtn.textContent = '进入中…';
+    // 阶段 49 修复：与 request.js getStoredToken() 保持同一套 key 逻辑——
+    // 记住我（localStorage）/ 不记住（sessionStorage）都能读到，否则启动页
+    // 永远读不到 token → 每次点桌面快捷键都强制跳登录页（登录"无法保存"）。
     var token = '';
-    try { token = localStorage.getItem('token') || ''; } catch (e) {}
+    try { token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token') || ''; } catch (e) {}
     fetch('/auth/me', { cache: 'no-store', headers: { Authorization: 'Bearer ' + token } })
       .then(function (r) {
         // demo 模式（AUTH 关闭）返回 200；正式未登录 401
