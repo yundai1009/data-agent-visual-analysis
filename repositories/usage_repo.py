@@ -79,6 +79,19 @@ def 用户今日用量(user_id: str) -> Dict[str, int]:
     return {"记录数": int(row["n"]), "总token": int(row["t"])}
 
 
+def 用户近期用量(user_id: str, days: int = 30) -> Dict[str, int]:
+    """某个用户近 N 天用量：记录数 + 总 token（阶段 53 · C10：账号页用量展示）。"""
+    初始化用量表()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(total_tokens),0) AS t "
+            "FROM llm_usage WHERE user_id = ? AND created_at >= ?",
+            (user_id, cutoff),
+        ).fetchone()
+    return {"记录数": int(row["n"]), "总token": int(row["t"])}
+
+
 def 统计用量(days: int = 7) -> Dict[str, Any]:
     """管理员视角：近 N 天总量 + 按天 + 按 provider 分组。"""
     初始化用量表()

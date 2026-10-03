@@ -6,6 +6,7 @@
  * ============================================================================= */
 import { Zap, Sparkles, BarChart3, LineChart, PieChart, ScatterChart, Table, Layers, Loader2, Cpu, GitBranch, X, Brain, Wrench, Eye, AlertTriangle, MessageSquare, ArrowRight, Bookmark } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useState } from 'react';
 import LLMConfig from '../components/LLMConfig';
 import useAnalysis, { chartMap } from '../hooks/useAnalysis';
 
@@ -66,7 +67,7 @@ export default function Analysis() {
     savedTemplates, showTemplates, setShowTemplates,
     templateName, setTemplateName, savingTemplate, runningTemplateId, templateMsg,
     loadTemplates, handleSaveTemplate, handleRunTemplate, handleLoadTemplate, handleDeleteTemplate,
-    schedules, scheduleCron, setScheduleCron, scheduleTplId, setScheduleTplId, scheduleMsg,
+    schedules, scheduleCron, setScheduleCron, scheduleTplId, setScheduleTplId, scheduleMsg, scheduleMsgType,
     loadSchedules, handleCreateSchedule, handleDeleteSchedule,
     liveSteps, liveError, liveDone, elapsed, showChartSwitch, setShowChartSwitch,
     scrollRef, followUp, setFollowUp, followUpSuggestions,
@@ -81,6 +82,9 @@ export default function Analysis() {
     if (savedTemplates.length === 0) loadTemplates();
     if (schedules.length === 0) loadSchedules();
   };
+
+  // 阶段 53 · B8：字段列表折叠状态（>10 个字段时默认收起）
+  const [showAllFields, setShowAllFields] = useState(false);
 
   return (
     <div className="p-8 max-w-5xl mx-auto">
@@ -108,6 +112,31 @@ export default function Analysis() {
         <div className="px-5 py-4 rounded-t-xl">
           <textarea rows={3} className="w-full bg-transparent border-0 text-sm text-gray-700 resize-none focus:outline-none placeholder:text-gray-400 leading-relaxed"
             placeholder="输入分析需求，例如：按【地区】统计【销售额】占比…" value={nlInput} onChange={(e) => setNlInput(e.target.value)} />
+          {/* 阶段 53 · B8：字段引导——用户不知道自己的数据里有哪些字段可用，
+              示例里的"销售额"未必存在。列出本数据集真实字段，点一下插入需求框。 */}
+          {dataset && fields.length > 0 && (
+            <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+              <span className="text-[11px] text-gray-400 shrink-0">可用字段</span>
+              {(showAllFields ? fields : fields.slice(0, 10)).map((f) => {
+                const kind = numFields.includes(f) ? '数值'
+                  : dateFields.includes(f) ? '日期'
+                    : catFields.includes(f) ? '分类' : '文本';
+                return (
+                  <button key={f} title={`${kind}字段 · 点击插入到需求框`}
+                    onClick={() => setNlInput(nlInput + `【${f}】`)}
+                    className="px-2 py-0.5 rounded border border-gray-200 bg-white text-[11px] text-gray-600 hover:border-accent hover:text-accent transition-colors">
+                    {f}
+                  </button>
+                );
+              })}
+              {fields.length > 10 && (
+                <button className="px-2 py-0.5 text-[11px] text-accent hover:underline"
+                  onClick={() => setShowAllFields(!showAllFields)}>
+                  {showAllFields ? '收起字段' : `展开全部 ${fields.length} 个字段`}
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex items-center justify-between px-5 py-3 bg-gray-50/80 border-t border-gray-100 rounded-b-xl">
           <div className="flex items-center gap-3 flex-wrap">
@@ -339,7 +368,9 @@ export default function Analysis() {
             <p className="text-xs font-semibold text-gray-500">定时执行 <span className="text-[10px] text-gray-400 font-normal">（模板 + cron，到点自动生成到报表历史）</span></p>
             {schedules.length > 0 && <button className="text-[11px] text-accent hover:underline" onClick={() => {}}>收起</button>}
           </div>
-          {scheduleMsg && <p className="text-[11px] mb-2 text-amber-600">{scheduleMsg}</p>}
+          {scheduleMsg && (
+            <p className={`text-[11px] mb-2 ${scheduleMsgType === 'success' ? 'text-emerald-600' : 'text-red-500'}`}>{scheduleMsg}</p>
+          )}
           <div className="flex items-center gap-2">
             <select className="flex-1 border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white focus:outline-none focus:border-accent" value={scheduleTplId} onChange={(e) => setScheduleTplId(e.target.value)}>
               <option value="">选择模板</option>
@@ -381,12 +412,18 @@ export default function Analysis() {
             </select>
           </div>
           <div className="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
-            <button className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${agentMode === 'single' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setAgentMode('single')}>单 Agent</button>
-            <button className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1 ${agentMode === 'multi' ? 'bg-white text-accent shadow-sm' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setAgentMode('multi')}>
+            <button title="单 Agent：一个 AI 完成全部分析，速度快，适合大多数需求"
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${agentMode === 'single' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setAgentMode('single')}>单 Agent</button>
+            <button title="多智能体协同：一个主管 AI 拆解需求，多个专职 AI 分头分析后汇总"
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1 ${agentMode === 'multi' ? 'bg-white text-accent shadow-sm' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setAgentMode('multi')}>
               <GitBranch className="w-3 h-3" /> 多智能体
             </button>
           </div>
-          {agentMode === 'multi' && <span className="text-[11px] text-accent">Supervisor + 3 个 Worker Agent</span>}
+          {/* 阶段 53 · B6：原文案"Supervisor + 3 个 Worker Agent"是内部架构术语，
+              用户看不懂也不知道该不该选 → 改讲"多做什么、代价是什么" */}
+          {agentMode === 'multi' && (
+            <span className="text-[11px] text-accent">多智能体协同：需求拆给多个专职 AI 分头分析后汇总，复杂维度更全面，耗时略长</span>
+          )}
         </div>
 
         {/* 图表类型 */}

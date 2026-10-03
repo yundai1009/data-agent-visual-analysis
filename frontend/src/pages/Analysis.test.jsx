@@ -70,6 +70,9 @@ describe('Analysis 智能分析页', () => {
       showChartSwitch: false,
       followUpSuggestions: [],
       nlInput: '',
+      // 重置数据集/字段（防用例间状态残留）
+      dataset: { 数据集ID: 'd1', 文件名: '销售.csv' },
+      fields: [], catFields: [], numFields: [], dateFields: [], textFields: [],
     });
   });
 
@@ -163,5 +166,77 @@ describe('Analysis 智能分析页', () => {
     mockState.state.liveDone = null;
     renderPage();
     expect(screen.queryByRole('button', { name: /存为模板/ })).not.toBeInTheDocument();
+  });
+
+  it('多智能体模式说明用用户语言，不暴露 Supervisor/Worker Agent 术语（B6）', () => {
+    mockState.state.showAdvanced = true; // 该区在"高级选项"折叠面板内
+    mockState.state.agentMode = 'multi';
+    renderPage();
+    expect(screen.getByText(/多智能体协同：/)).toBeInTheDocument();
+    expect(screen.queryByText(/Supervisor/)).not.toBeInTheDocument();
+    // 说明要讲清"什么时候用、代价是什么"
+    expect(screen.getByText(/耗时略长/)).toBeInTheDocument();
+  });
+
+  it('单 Agent 模式也有悬浮说明（默认模式用户同样需要知道差异）', () => {
+    mockState.state.showAdvanced = true;
+    mockState.state.agentMode = 'single';
+    renderPage();
+    const btn = screen.getByTitle(/单 Agent：一个 AI/);
+    expect(btn.getAttribute('title')).toMatch(/快/);
+  });
+
+  // ---- 阶段 53 · B8：字段加入分析引导 ----
+  it('B8 输入框下方展示本数据集的可用字段（用户不知道自己能用什么字段）', () => {
+    Object.assign(mockState.state, {
+      fields: ['地区', '销售额', '月份', '评论'],
+      catFields: ['地区'], numFields: ['销售额'], dateFields: ['月份'], textFields: ['评论'],
+    });
+    renderPage();
+    expect(screen.getByText('可用字段')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '销售额' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '月份' })).toBeInTheDocument();
+  });
+
+  it('B8 点击字段 chip → 需求框插入【字段名】（mock 下按当前输入追加）', () => {
+    Object.assign(mockState.state, {
+      fields: ['地区', '销售额'], catFields: ['地区'], numFields: ['销售额'], dateFields: [], textFields: [],
+      nlInput: '按',
+    });
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: '地区' }));
+    expect(mockState.state.setNlInput).toHaveBeenLastCalledWith('按【地区】');
+    fireEvent.click(screen.getByRole('button', { name: '销售额' }));
+    // setNlInput 是 mock，state.nlInput 不更新，因此第二次基于同一 mock 值追加
+    expect(mockState.state.setNlInput).toHaveBeenLastCalledWith('按【销售额】');
+  });
+
+  it('B8 空输入时点字段 → 需求框直接填【字段名】', () => {
+    Object.assign(mockState.state, {
+      fields: ['地区'], catFields: ['地区'], numFields: [], dateFields: [], textFields: [], nlInput: '',
+    });
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: '地区' }));
+    expect(mockState.state.setNlInput).toHaveBeenCalledWith('【地区】');
+  });
+
+  it('B8 无数据集时不展示字段引导', () => {
+    Object.assign(mockState.state, {
+      dataset: null, fields: [], catFields: [], numFields: [], dateFields: [], textFields: [],
+    });
+    renderPage();
+    expect(screen.queryByText('可用字段')).not.toBeInTheDocument();
+  });
+
+  it('B8 字段过多时折叠并提供展开入口', () => {
+    Object.assign(mockState.state, {
+      fields: Array.from({ length: 20 }, (_, i) => `字段${i}`),
+      catFields: [], numFields: [], dateFields: [], textFields: [],
+    });
+    renderPage();
+    expect(screen.getByRole('button', { name: '展开全部 20 个字段' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '字段15' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '展开全部 20 个字段' }));
+    expect(screen.getByRole('button', { name: '字段15' })).toBeInTheDocument();
   });
 });

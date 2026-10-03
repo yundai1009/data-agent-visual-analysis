@@ -67,6 +67,8 @@ export default function useAnalysis() {
   const [scheduleCron, setScheduleCron] = useState('');
   const [scheduleTplId, setScheduleTplId] = useState('');
   const [scheduleMsg, setScheduleMsg] = useState('');
+  // 阶段 53 · B7：反馈类型（success 绿 / error 红），此前一律琥珀警告色
+  const [scheduleMsgType, setScheduleMsgType] = useState('');
   const lastPayloadRef = useRef(null); // 最近一次实际发出的生成请求（保存模板用）
   // 分析直播状态（SSE 实时决策流）
   const [liveSteps, setLiveSteps] = useState([]);      // [{ record, status: 'done'|'active' }]
@@ -362,20 +364,24 @@ export default function useAnalysis() {
       const res = await listSchedules();
       setSchedules(res?.任务列表 || []);
     } catch (e) {
+      setScheduleMsgType('error');
       setScheduleMsg('定时任务加载失败：' + (e.message || e));
     }
   };
   const handleCreateSchedule = async () => {
     const cron = scheduleCron.trim();
-    if (!cron) { setScheduleMsg('请填写 cron 表达式（分 时 日 月 周）'); return; }
-    if (!scheduleTplId) { setScheduleMsg('请选择要定时执行的模板'); return; }
+    // 阶段 53 · B7：反馈区分成功/失败（此前成功文案也用琥珀警告色，用户分不清）
+    if (!cron) { setScheduleMsgType('error'); setScheduleMsg('请填写 cron 表达式（分 时 日 月 周），或点上方快捷按钮'); return; }
+    if (!scheduleTplId) { setScheduleMsgType('error'); setScheduleMsg('请选择要定时执行的模板'); return; }
     setScheduleMsg('');
     try {
       await createSchedule(scheduleTplId, cron);
+      setScheduleMsgType('success');
       setScheduleMsg('定时任务已创建（到点自动生成报表，可在报表历史查看）');
       setScheduleCron('');
       await loadSchedules();
     } catch (e) {
+      setScheduleMsgType('error');
       setScheduleMsg('创建失败：' + (e.message || e));
     }
   };
@@ -384,6 +390,7 @@ export default function useAnalysis() {
       await deleteSchedule(job.任务ID);
       setSchedules(prev => prev.filter(j => j.任务ID !== job.任务ID));
     } catch (e) {
+      setScheduleMsgType('error');
       setScheduleMsg('删除失败：' + (e.message || e));
     }
   };
@@ -429,7 +436,7 @@ export default function useAnalysis() {
     savedTemplates, setSavedTemplates, showTemplates, setShowTemplates,
     templateName, setTemplateName, savingTemplate, runningTemplateId, templateMsg,
     loadTemplates, handleSaveTemplate, handleRunTemplate, handleLoadTemplate, handleDeleteTemplate,
-    schedules, scheduleCron, setScheduleCron, scheduleTplId, setScheduleTplId, scheduleMsg,
+    schedules, scheduleCron, setScheduleCron, scheduleTplId, setScheduleTplId, scheduleMsg, scheduleMsgType,
     loadSchedules, handleCreateSchedule, handleDeleteSchedule,
     // 直播
     liveSteps, liveError, liveDone, elapsed, showChartSwitch, setShowChartSwitch,

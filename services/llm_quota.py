@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from typing import Dict
+from typing import Any, Dict
 
 from config.settings import EnvConfig
 from repositories import usage_repo
@@ -48,3 +48,27 @@ def 检查LLM配额(user_id: str) -> Dict[str, int]:
             "请明天再试，或使用自己的 API Key（BYOK）"
         )
     return 用量
+
+
+def 当前用量(user_id: str) -> Dict[str, Any]:
+    """阶段 53 · C10：账号页用量透明——返回本人配额与已用（不抛异常）。
+
+    配额上限为 0 时表示"不限"，剩余次数/剩余 token 返回 None，
+    前端展示"不限"而非误导性的 0。
+    """
+    token_quota = _解析配额(EnvConfig.LLM_DAILY_TOKEN_QUOTA)
+    request_quota = _解析配额(EnvConfig.LLM_DAILY_REQUEST_QUOTA)
+    今日 = usage_repo.用户今日用量(user_id)
+    近30 = usage_repo.用户近期用量(user_id, days=30)
+    今日_次数 = 今日["记录数"]
+    今日_token = 今日["总token"]
+    return {
+        "今日分析次数": int(今日_次数),
+        "今日token": int(今日_token),
+        "每日次数上限": int(request_quota),
+        "每日token上限": int(token_quota),
+        "剩余次数": (request_quota - 今日_次数) if request_quota > 0 else None,
+        "剩余token": (token_quota - 今日_token) if token_quota > 0 else None,
+        "近30天分析次数": int(近30["记录数"]),
+        "近30天token": int(近30["总token"]),
+    }

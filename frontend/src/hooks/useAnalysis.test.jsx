@@ -160,4 +160,46 @@ describe('useAnalysis 智能分析 Hook', () => {
     expect(s[0]).toContain('地区');
     expect(s[1]).toContain('月份');
   });
+
+  // ---- 阶段 53 · B7：定时任务创建反馈（成功/失败可区分、失败可读）----
+  it('B7 创建定时任务成功：反馈含"已创建"且标记成功样式', async () => {
+    const { result } = renderHook(() => useAnalysis(), { wrapper });
+    act(() => {
+      result.current.setScheduleTplId('t1');
+      result.current.setScheduleCron('0 9 * * *');
+    });
+    await act(async () => {
+      await result.current.handleCreateSchedule();
+    });
+    expect(mockCtx.createSchedule).toHaveBeenCalledWith('t1', '0 9 * * *');
+    expect(result.current.scheduleMsg).toContain('已创建');
+    expect(result.current.scheduleMsgType).toBe('success');
+    // 成功后清空 cron 输入，避免重复提交同一任务
+    expect(result.current.scheduleCron).toBe('');
+    expect(mockCtx.listSchedules).toHaveBeenCalled(); // 列表刷新
+  });
+
+  it('B7 创建定时任务失败：反馈含错误原因且标记失败样式', async () => {
+    mockCtx.createSchedule.mockRejectedValueOnce({ message: 'cron 表达式不合法' });
+    const { result } = renderHook(() => useAnalysis(), { wrapper });
+    act(() => {
+      result.current.setScheduleTplId('t1');
+      result.current.setScheduleCron('bad cron');
+    });
+    await act(async () => {
+      await result.current.handleCreateSchedule();
+    });
+    expect(result.current.scheduleMsg).toContain('cron 表达式不合法');
+    expect(result.current.scheduleMsgType).toBe('error');
+  });
+
+  it('B7 未选模板/未填 cron：就地提示（error 样式），不发请求', async () => {
+    const { result } = renderHook(() => useAnalysis(), { wrapper });
+    await act(async () => {
+      await result.current.handleCreateSchedule();
+    });
+    expect(result.current.scheduleMsg).toContain('cron');
+    expect(result.current.scheduleMsgType).toBe('error');
+    expect(mockCtx.createSchedule).not.toHaveBeenCalled();
+  });
 });

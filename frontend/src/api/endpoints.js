@@ -29,6 +29,11 @@ export async function changeUsername(username) {
   });
 }
 
+/** 阶段 53 · C10：账号页用量（今日次数/token、配额剩余、近 30 天） */
+export async function getMyUsage() {
+  return request('/auth/usage');
+}
+
 export async function sendCode(email) {
   return request('/auth/send-code', {
     method: 'POST',

@@ -18,6 +18,7 @@ import { listReports, getReport, deleteReport, exportReport, exportFullReport, r
 import EChartsChart from '../components/EChartsChart';
 import ExportDialog from '../components/ExportDialog';
 import ShareDialog from '../components/ShareDialog';
+import { 计算数据依据 } from '../utils/结论依据';
 
 // Report 报表历史页主组件
 // 路由参数：reportId（可选）= URL 里指定的报表 ID，无则展示最新一张
@@ -357,6 +358,8 @@ export default function Report() {
   const intentSource = report.意图来源 || 'AI';
   const exportData = report.导出数据 || {};
   const dataProfile = report.数据画像 || {};
+  // 阶段 53 · C9：结论附数据依据（纯函数从聚合数据计算，异常数据返回空数组）
+  const 结论依据 = 计算数据依据(chartConfig.数据);
 
   return (
     <div className="p-8 max-w-5xl mx-auto">
@@ -519,6 +522,17 @@ export default function Report() {
              style={{ boxShadow: '0 8px 16px -8px rgba(15,76,129,.08)', borderLeft: '4px solid var(--color-accent, #0f4c81)' }}>
           <p className="text-xs text-gray-400 font-semibold tracking-wide mb-2">分析结论</p>
           <p className="text-sm text-ink leading-relaxed whitespace-pre-wrap">{conclusion}</p>
+          {/* 阶段 53 · C9：附数据依据——结论可被数字核对，而不是只听 AI 一句话 */}
+          {结论依据.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-gray-100">
+              <p className="text-xs text-gray-400 font-semibold tracking-wide mb-1.5">数据依据</p>
+              <ul className="space-y-0.5">
+                {结论依据.map((t) => (
+                  <li key={t} className="text-xs text-gray-500 leading-relaxed">· {t}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
 

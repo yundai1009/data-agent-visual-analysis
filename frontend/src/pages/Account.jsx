@@ -10,11 +10,11 @@
  *   - api.js：changeUsername / changePassword / deleteAccount
  *   - AppContext：useApp() 里的 user、setAuth、logout
  * ============================================================================= */
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { UserRoundPen, KeyRound, UserX } from 'lucide-react';
+import { UserRoundPen, KeyRound, UserX, Gauge } from 'lucide-react';
 import { useApp } from '../AppContext';
-import { changeUsername, changePassword, deleteAccount } from '../api';
+import { changeUsername, changePassword, deleteAccount, getMyUsage } from '../api';
 
 // 三个共享样式串：普通输入框 / 主按钮（蓝）/ 危险按钮（红）
 const inputCls =
@@ -59,6 +59,16 @@ export default function Account() {
   const [delPwd, setDelPwd] = useState('');
   const [delMsg, setDelMsg] = useState('');
   const [delBusy, setDelBusy] = useState(false);
+  // 阶段 53 · C10：用量概览（挂载即加载；失败不阻塞其余功能）
+  const [usage, setUsage] = useState(null);
+  const [usageErr, setUsageErr] = useState('');
+  useEffect(() => {
+    let alive = true;
+    getMyUsage()
+      .then((u) => { if (alive) setUsage(u); })
+      .catch((e) => { if (alive) setUsageErr(e?.message || '用量加载失败'); });
+    return () => { alive = false; };
+  }, []);
 
   // 修改用户名：成功后后端吊销旧 token 并签发新 token，必须用 setAuth 同步三处状态
   const handleChangeName = async () => {
@@ -134,6 +144,53 @@ export default function Account() {
           {user?.role === 'admin' && ' · 管理员'}
         </span>
       </div>
+
+      {/* 阶段 53 · C10：用量概览——用户之前看不到"今天用了多少、还剩多少"，只能等 429 被拦 */}
+      <Section
+        icon={Gauge}
+        title="用量概览"
+        desc="今日已用 / 每日配额 + 近 30 天用量。使用自己 API Key（BYOK）的分析不消耗共享配额。"
+      >
+        {usageErr ? (
+          <p className="text-xs text-gray-400">用量加载失败（{usageErr}），不影响账号其他功能</p>
+        ) : usage ? (
+          <div className="grid grid-cols-3 gap-3">
+            <div className="bg-gray-50 rounded-xl p-3">
+              <p className="text-[11px] text-gray-400 mb-1">今日分析</p>
+              <p className="text-sm font-semibold text-gray-900">
+                {usage['今日分析次数'] ?? 0} / {usage['每日次数上限'] > 0 ? `${usage['每日次数上限']} 次` : '不限'}
+              </p>
+              <p className="text-[11px] text-gray-400 mt-0.5">
+                {usage['剩余次数'] === null || usage['剩余次数'] === undefined
+                  ? '配额不限'
+                  : `今日剩余 ${usage['剩余次数']} 次`}
+              </p>
+            </div>
+            <div className="bg-gray-50 rounded-xl p-3">
+              <p className="text-[11px] text-gray-400 mb-1">今日 Token</p>
+              <p className="text-sm font-semibold text-gray-900">
+                {(usage['今日token'] ?? 0).toLocaleString('zh-CN')} / {usage['每日token上限'] > 0 ? `${(usage['每日token上限']).toLocaleString('zh-CN')} token` : '不限'}
+              </p>
+              <p className="text-[11px] text-gray-400 mt-0.5">
+                {usage['剩余token'] === null || usage['剩余token'] === undefined
+                  ? '配额不限'
+                  : `剩余 ${(usage['剩余token']).toLocaleString('zh-CN')}`}
+              </p>
+            </div>
+            <div className="bg-gray-50 rounded-xl p-3">
+              <p className="text-[11px] text-gray-400 mb-1">近 30 天</p>
+              <p className="text-sm font-semibold text-gray-900">
+                近 30 天：{usage['近30天分析次数'] ?? 0} 次
+              </p>
+              <p className="text-[11px] text-gray-400 mt-0.5">
+                共消耗 {(usage['近30天token'] ?? 0).toLocaleString('zh-CN')} token
+              </p>
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-gray-400">用量加载中…</p>
+        )}
+      </Section>
 
       {/* 修改用户名 */}
       <Section

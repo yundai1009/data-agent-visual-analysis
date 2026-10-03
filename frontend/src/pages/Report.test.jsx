@@ -109,3 +109,33 @@ describe('Report 统一下载对话框', () => {
     expect(screen.getByText('Excel 表格')).toBeInTheDocument();
   });
 });
+
+describe('Report 结论附数据依据（阶段 53 · C9）', () => {
+  it('结论面板下方展示数据依据（合计/最高分组/占比），结论可被核对', async () => {
+    setupMocks({
+      ...chartReport,
+      图表配置: {
+        类型: 'bar',
+        数据: [
+          { 地区: '杭州', 销售额: 30 },
+          { 地区: '上海', 销售额: 70 },
+        ],
+      },
+    });
+    renderReport();
+    await screen.findByText('报表查看');
+
+    expect(screen.getByText('分析结论')).toBeInTheDocument();
+    expect(screen.getByText('数据依据')).toBeInTheDocument();
+    expect(screen.getByText(/合计 100/)).toBeInTheDocument();
+    expect(screen.getByText(/最高：上海/)).toBeInTheDocument();
+    expect(screen.getByText(/70\.0%/)).toBeInTheDocument();
+  });
+
+  it('聚合数据为空 → 不渲染数据依据卡片（不误导用户）', async () => {
+    setupMocks({ ...chartReport, 图表配置: { 类型: 'bar', 数据: [] } });
+    renderReport();
+    await screen.findByText('报表查看');
+    expect(screen.queryByText('数据依据')).not.toBeInTheDocument();
+  });
+});

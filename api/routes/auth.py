@@ -267,6 +267,17 @@ def me(user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     return user
 
 
+@router.get("/usage")
+def my_usage(user: dict = Depends(get_current_user)) -> Dict[str, Any]:
+    """阶段 53 · C10：账号页用量透明——本人今日/近 30 天用量与配额剩余。
+
+    只查本人（user_id 来自 token），管理员的全平台统计仍在 /admin/usage。
+    配额为 0（不限）时剩余次数/剩余 token 返回 null，前端展示"不限"。
+    """
+    from services.llm_quota import 当前用量
+    return 当前用量(user["user_id"])
+
+
 # ---- 账号级 LLM Key（BYOK 后端存储）----
 
 

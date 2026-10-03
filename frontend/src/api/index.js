@@ -1,9 +1,9 @@
-﻿/**
+/**
  * api/index.js - re-export entry
  */
 export { uploadFile, uploadFileWithProgress, generateReportStream } from './upload';
 export {
-  login, changePassword, changeUsername, sendCode, sendResetCode, resetPassword, register, fetchMe,
+  login, changePassword, changeUsername, sendCode, sendResetCode, resetPassword, register, fetchMe, getMyUsage,
   getAccountLLMKey, fetchLLMProviders, saveCustomProvider, deleteCustomProvider, testCustomProvider,
   saveAccountLLMKey, clearAccountLLMKey,
   loadExample, getDataset, getDatasetRows, listDatasets, deleteDataset, renameDataset, mergeDatasets, cleanDataset,
