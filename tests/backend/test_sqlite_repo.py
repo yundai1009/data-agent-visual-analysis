@@ -1,4 +1,4 @@
-﻿"""SQLite 仓储层单元测试：不依赖网络、不依赖 LLM、不依赖真实上传文件。
+"""SQLite 仓储层单元测试：不依赖网络、不依赖 LLM、不依赖真实上传文件。
 
 覆盖目标
 ========
@@ -46,6 +46,9 @@ def 临时db(tmp_path, monkeypatch):
     # settings.py 在 import 时已读环境变量，需手动刷新 EnvConfig.SQLITE_PATH
     from config import settings
     monkeypatch.setattr(settings.EnvConfig, "SQLITE_PATH", str(db_path), raising=False)
+    # 阶段 54 Fix 5：把 _PARQUET_DIR 一并隔离到临时目录——否则既有测试（未单独打
+    # _PARQUET_DIR 补丁）保存数据集时会把 parquet 写进项目 data/parquet/ 造成残留。
+    monkeypatch.setattr(sqlite_repo, "_PARQUET_DIR", tmp_path / "parquet")
     # 初始化 schema
     sqlite_repo.初始化数据库()
     yield db_path
@@ -343,3 +346,146 @@ def test_删除数据集_同时清理parquet文件(临时db, 样本df, 样本画
     assert pq.exists()
     assert sr.删除数据集("u", "pq4") is True
     assert not pq.exists(), "parquet 文件应随数据集一起删除"
+
+
+# ============================================================================
+# 阶段 54 · Fix 修复（审查发现）
+# ============================================================================
+
+def test_临时db_fixture_隔离parquet目录(临时db):
+    """Fix 5：既有测试未打 _PARQUET_DIR 补丁，单文件跑完会在项目 data/parquet/ 残留。
+
+    要求：把 _PARQUET_DIR 补丁下沉到 临时db fixture，一处修复全部测试。
+    """
+    import 后端_核心.存储.sqlite_repo as sr
+    assert str(sr._PARQUET_DIR).startswith(str(临时db.parent)), (
+        f"_PARQUET_DIR 应被 临时db fixture 隔离到临时目录，实际指向 {sr._PARQUET_DIR}"
+    )
+
+
+def test_读取数据集_parquet缺失且df_json空_返回None(临时db, monkeypatch, tmp_path):
+    """Fix 1：data_path 指向不存在文件且 df_json 为空 → 返回 None，不抛异常（接口 500）。"""
+    import 后端_核心.存储.sqlite_repo as sr
+    missing = tmp_path / "不存在.parquet"
+    with sr._get_conn() as conn:
+        conn.execute(
+            "INSERT INTO datasets (dataset_id, user_id, file_name, stored_path, rows_count,"
+            " cols_count, df_json, profile_json, created_at, updated_at, data_path)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            ("lost1", "u", "lost.csv", "/tmp/lost.csv", 2, 2,
+             "", "{}", "2026-01-01", "2026-01-01", str(missing)),
+        )
+    result = sr.读取数据集("u", "lost1")
+    assert result is None, "parquet 缺失且 df_json 为空时应返回 None，不抛异常（接口 500）"
+
+
+def test_读取数据集_parquet损坏_回退df_json(临时db, 样本df, monkeypatch, tmp_path):
+    """Fix 1：parquet 文件存在但损坏（解析异常）→ 回退读 df_json，数据仍可读。"""
+    import 后端_核心.存储.sqlite_repo as sr
+    pq = tmp_path / "坏.parquet"
+    pq.write_bytes(b"not a parquet file")
+    with sr._get_conn() as conn:
+        conn.execute(
+            "INSERT INTO datasets (dataset_id, user_id, file_name, stored_path, rows_count,"
+            " cols_count, df_json, profile_json, created_at, updated_at, data_path)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            ("corrupt1", "u", "c.csv", "/tmp/c.csv", 4, 4,
+             sr._df_to_json(样本df), "{}", "2026-01-01", "2026-01-01", str(pq)),
+        )
+    out = sr.读取数据集("u", "corrupt1")
+    assert out is not None
+    assert out["数据"].shape == (4, 4), "parquet 损坏时应回退 df_json 读出"
+
+
+def test_保存数据集_先写临时文件再原子替换(临时db, 样本df, 样本画像, monkeypatch):
+    """Fix 2：保存 parquet 应写临时文件后 os.replace 原子替换，不直接写目标文件。"""
+    import 后端_核心.存储.sqlite_repo as sr
+    import pandas as pd
+    观测: List[Path] = []
+    real_to_parquet = pd.DataFrame.to_parquet
+
+    def spy(self, path, **kwargs):
+        观测.append(Path(path))
+        return real_to_parquet(self, path, **kwargs)
+
+    monkeypatch.setattr(pd.DataFrame, "to_parquet", spy)
+    sr.保存数据集(user_id="u", dataset_id="atomic1", 文件名="a.csv", 存储路径="",
+                 df=样本df, 画像=样本画像)
+    assert 观测, "保存时应调用 to_parquet"
+    首写路径 = 观测[0]
+    assert 首写路径.name == ".atomic1.parquet.tmp", f"应先写临时文件再原子替换，实际直接写入 {首写路径.name}"
+    目标 = sr._parquet路径("atomic1")
+    assert 目标.exists(), "最终 parquet 文件应存在"
+    assert not 首写路径.exists(), "临时文件应已被 os.replace 替换，不残留"
+
+
+def test_parquet路径_非法dataset_id_抛ValueError(临时db):
+    """Fix 3：_parquet路径 拼路径前必须净化 dataset_id，防路径穿越/任意文件删除。"""
+    import 后端_核心.存储.sqlite_repo as sr
+    for 坏id in ("../evil", "..", ".", "a/b", "a\\b", "a b", "x.y"):
+        with pytest.raises(ValueError):
+            sr._parquet路径(坏id)
+    # 合法 id 不受影响
+    assert sr._parquet路径("pq-1_2").name == "pq-1_2.parquet"
+    assert sr._parquet路径("AbC123").name == "AbC123.parquet"
+
+
+def test_保存数据集_重复列名_降级存df_json(临时db, monkeypatch, tmp_path):
+    """Fix 4：pyarrow 不可序列化（重复列名）时保存不硬失败，降级走 df_json 且可读。"""
+    import 后端_核心.存储.sqlite_repo as sr
+    df = pd.DataFrame([[1, 2], [3, 4]], columns=["a", "a"])  # 重复列名，to_parquet 必抛
+    画像 = {"行数": 2, "列数": 2, "字段列表": ["a", "a"]}
+    sr.保存数据集(user_id="u", dataset_id="dup1", 文件名="dup.csv", 存储路径="",
+                 df=df, 画像=画像)  # 不应抛异常
+    with sr._get_conn() as conn:
+        row = conn.execute("SELECT df_json, data_path FROM datasets WHERE dataset_id = 'dup1'").fetchone()
+    assert row["data_path"] == "", "parquet 无法序列化时应回退 df_json（data_path 置空）"
+    assert row["df_json"], "降级后该行应仍存 JSON（可读）"
+    out = sr.读取数据集("u", "dup1")
+    assert out["数据"].values.tolist() == [[1, 2], [3, 4]], "降级的 JSON 应能读回"
+
+
+def test_迁移脚本_dry_run_clear_df_json_只报告不清空(临时db, 样本df, monkeypatch, tmp_path, capsys):
+    """Fix 6：--dry-run --clear-df-json 应提示将清空多少行，且不真正清空。"""
+    import 后端_核心.存储.sqlite_repo as sr
+    import scripts.migrate_datasets_to_parquet as mig
+    monkeypatch.setattr(sr, "_PARQUET_DIR", tmp_path / "pq")
+    with sr._get_conn() as conn:
+        conn.execute(
+            "INSERT INTO datasets (dataset_id, user_id, file_name, stored_path, rows_count,"
+            " cols_count, df_json, profile_json, created_at, updated_at, data_path)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            ("mig1", "u", "m.csv", "/tmp/m.csv", 4, 4,
+             sr._df_to_json(样本df), "{}", "2026-01-01", "2026-01-01", None),
+        )
+    monkeypatch.setattr(sys, "argv", ["migrate_datasets_to_parquet.py", "--dry-run", "--clear-df-json"])
+    assert mig.main() == 0
+    out = capsys.readouterr().out
+    assert "将清空" in out, f"dry-run 应提示将清空的行数：{out}"
+    assert "1 行" in out, f"dry-run 应报出会清空的行数：{out}"
+    with sr._get_conn() as conn:
+        row = conn.execute("SELECT df_json FROM datasets WHERE dataset_id='mig1'").fetchone()
+    assert row["df_json"] != "", "dry-run 不应真正清空 df_json"
+
+
+def test_迁移脚本_clear_df_json_全部成功后清空(临时db, 样本df, monkeypatch, tmp_path, capsys):
+    """Fix 6：迁移全部成功后 --clear-df-json 把 df_json 置空（释放库空间）。"""
+    import 后端_核心.存储.sqlite_repo as sr
+    import scripts.migrate_datasets_to_parquet as mig
+    monkeypatch.setattr(sr, "_PARQUET_DIR", tmp_path / "pq")
+    with sr._get_conn() as conn:
+        conn.execute(
+            "INSERT INTO datasets (dataset_id, user_id, file_name, stored_path, rows_count,"
+            " cols_count, df_json, profile_json, created_at, updated_at, data_path)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            ("mig1", "u", "m.csv", "/tmp/m.csv", 4, 4,
+             sr._df_to_json(样本df), "{}", "2026-01-01", "2026-01-01", None),
+        )
+    monkeypatch.setattr(sys, "argv", ["migrate_datasets_to_parquet.py", "--clear-df-json"])
+    assert mig.main() == 0
+    capsys.readouterr()
+    with sr._get_conn() as conn:
+        row = conn.execute("SELECT df_json, data_path FROM datasets WHERE dataset_id='mig1'").fetchone()
+    assert row["data_path"], "迁移后应写入 parquet 路径"
+    assert (tmp_path / "pq" / "mig1.parquet").exists(), "迁移应写出 parquet 文件"
+    assert row["df_json"] == "", "迁移全部成功后 --clear-df-json 应清空 df_json"

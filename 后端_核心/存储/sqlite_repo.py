@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -186,8 +187,24 @@ def _df_to_json(df: pd.DataFrame) -> str:
     return df.to_json(orient="records", force_ascii=False, date_format="iso")
 
 
+def _df_to_json_split(df: pd.DataFrame) -> str:
+    """DataFrame → JSON（split 格式：columns/index/data 分开存）。
+
+    Fix 4 兜底：records 格式以列名为 key，表达不了重复列名
+    （pandas 抛 "DataFrame columns must be unique for orient='records'"）；
+    split 格式按位置存列名与数据，重复列名也能原样写出、读回。
+    """
+    return df.to_json(orient="split", force_ascii=False, date_format="iso")
+
+
 def _parquet路径(dataset_id: str) -> Path:
-    """阶段 54：某个数据集的 parquet 本体文件路径。"""
+    """阶段 54：某个数据集的 parquet 本体文件路径。
+
+    Fix 3：dataset_id 拼进文件名前先净化——仅允许 [A-Za-z0-9_-]，
+    其余字符抛 ValueError，防止未来用户可控的 dataset_id 造成路径穿越/删除任意文件。
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", dataset_id or ""):
+        raise ValueError(f"非法的 dataset_id：{dataset_id!r}（仅允许字母、数字、下划线、连字符）")
     return _PARQUET_DIR / f"{dataset_id}.parquet"
 
 
@@ -196,7 +213,18 @@ def _df_from_json(json_str: str) -> pd.DataFrame:
 
     注意：``pd.read_json`` 在新版本中针对字面字符串会抛 ``FutureWarning``，
     需用 ``StringIO`` 包一层；这是 pandas 官方推荐的写法。
+
+    Fix 4：split 格式（重复列名降级产物，以 ``{`` 开头且含 columns/data 键）
+    自动识别为 orient="split"，records 格式走原路径。
     """
+    text = json_str.lstrip()
+    if text.startswith("{"):
+        try:
+            head = json.loads(json_str)
+        except Exception:
+            head = None
+        if isinstance(head, dict) and "columns" in head and "data" in head:
+            return pd.read_json(StringIO(json_str), orient="split")
     return pd.read_json(StringIO(json_str), orient="records")
 
 
@@ -227,10 +255,29 @@ def 保存数据集(
     cols_count = int(len(df.columns))
     now = _now_iso()
     # 阶段 54：DataFrame 落 parquet 文件（保留 dtype、压缩率高），DB 不再存整表 JSON
+    # Fix 2：先写临时文件再 os.replace 原子替换——避免并发/读取时读到写一半的 parquet
+    # Fix 4：pyarrow 序列化不了（如重复列名）时降级存 df_json，保证保存不硬失败
     pq = _parquet路径(dataset_id)
     pq.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(pq, index=False)
-    df_json = ""  # 旧列保留兼容，不再写入
+    tmp = _PARQUET_DIR / f".{dataset_id}.parquet.tmp"
+    df_json = ""
+    data_path = str(pq)
+    try:
+        df.to_parquet(tmp, index=False)
+        os.replace(tmp, pq)
+    except Exception as exc:
+        logger.warning("保存数据集 %s 写 parquet 失败（%s），降级存 df_json", dataset_id, exc)
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        data_path = ""
+        try:
+            df_json = _df_to_json(df)
+        except Exception as exc2:
+            # 重复列名连 records JSON 都无法表达 → 用 split 格式兜底（列/数据分行存）
+            logger.warning("保存数据集 %s records JSON 序列化失败（%s），改用 split 格式", dataset_id, exc2)
+            df_json = _df_to_json_split(df)
 
     with _write_lock, _get_conn() as conn:
         # upsert: 存在则更新，不存在则插入
@@ -252,7 +299,7 @@ def 保存数据集(
                 data_path     = excluded.data_path
             """,
             (dataset_id, user_id, 文件名, 存储路径, rows_count, cols_count,
-             df_json, profile_json, now, now, parent_id, str(pq)),
+             df_json, profile_json, now, now, parent_id, data_path),
         )
     logger.info("保存数据集 %s（用户 %s, %s, %d 行）", dataset_id, user_id, 文件名, rows_count)
 
@@ -270,11 +317,24 @@ def 读取数据集(user_id: str, dataset_id: str) -> Optional[Dict[str, Any]]:
     if row is None:
         return None
 
+    # 阶段 54 Fix 1：parquet 缺失/损坏时回退 df_json；两者皆空/皆失败 → 返回 None，
+    # 不让接口 500（此前 data_path 存在但 parquet 文件丢失会走 _df_from_json("") 抛 ValueError）。
     data_path = row["data_path"] or ""
-    if data_path and Path(data_path).exists():
-        df = pd.read_parquet(data_path)          # 阶段 54：优先读 parquet（快且保 dtype）
-    else:
-        df = _df_from_json(row["df_json"])      # 回退：旧数据仍存 df_json
+    df = None
+    if data_path:
+        try:
+            if Path(data_path).exists():
+                df = pd.read_parquet(data_path)   # 阶段 54：优先读 parquet（快且保 dtype）
+        except Exception as exc:
+            logger.warning("读取数据集 %s 的 parquet 失败（%s），回退 df_json", dataset_id, exc)
+    if df is None and row["df_json"]:
+        try:
+            df = _df_from_json(row["df_json"])   # 回退：旧数据仍存 df_json
+        except Exception as exc:
+            logger.error("读取数据集 %s 回退 df_json 失败: %s", dataset_id, exc)
+    if df is None:
+        logger.error("读取数据集 %s 失败：parquet 与 df_json 均不可用（data_path=%s）", dataset_id, data_path)
+        return None
 
     return {
         "数据集ID": row["dataset_id"],
