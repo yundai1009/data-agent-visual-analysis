@@ -509,6 +509,62 @@ def list_reports(
     return {"报表列表": items}
 
 
+@router.get("/export-all")
+def export_all_reports(
+    format: str = Query("xlsx", pattern="^(xlsx|csv)$"),
+    user: dict = Depends(get_current_user),
+) -> StreamingResponse:
+    """阶段 53 · D：批量导出——把本人全部报表打包成一个 ZIP（路由须早于 /{report_id} 声明）。"""
+    import io
+    import re as _re
+    import zipfile
+    from urllib.parse import quote
+
+    import pandas as pd
+
+    from repositories import audit_repo, report_repo
+
+    items = report_repo.列出报表(user["user_id"], limit=200, offset=0)
+    if not items:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="暂无报表可导出，请先生成报表")
+    audit_repo.记录(user["user_id"], "批量导出报表", target_type="report", target_id="", detail=f"format={format}")
+
+    buf = io.BytesIO()
+    已用名: Dict[str, int] = {}
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for it in items:
+            item = report_repo.读取报表(user["user_id"], it["报表ID"])
+            if not item:
+                continue
+            rows = (item["报表"] or {}).get("报表数据", [])
+            标题 = (item["标题"] or "报表").replace('"', '').replace('\\', '_').replace('/', '_')
+            基础名 = f"{标题}.{format}"
+            # 重名去重：同名第 N 份加 (2)/(3)…，保证 ZIP 内不互相覆盖
+            if 基础名 in 已用名:
+                已用名[基础名] += 1
+                根, ext = os.path.splitext(基础名)
+                基础名 = f"{根}({已用名[基础名]}){ext}"
+            else:
+                已用名[基础名] = 1
+            单份 = io.BytesIO()
+            if format == "xlsx":
+                pd.DataFrame(rows).to_excel(单份, index=False, engine="openpyxl")
+            else:
+                _危险前缀 = _re.compile(r"^[=+\-@]")
+                esc_rows = [
+                    {k: ("'" + v if isinstance(v, str) and _危险前缀.match(v) else v) for k, v in row.items()}
+                    for row in rows
+                ]
+                pd.DataFrame(esc_rows).to_csv(单份, index=False)
+            zf.writestr(基础名, 单份.getvalue())
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename=reports.zip; filename*=UTF-8''{quote('全部报表.zip')}"},
+    )
+
+
 @router.put("/{report_id}/favorite")
 def 切换收藏(report_id: str, user: dict = Depends(get_current_user)) -> Dict[str, bool]:
     """收藏/取消收藏切换（幂等）；报表不存在时仍操作（不泄露信息）。"""

@@ -279,6 +279,34 @@ export async function exportReport(reportId, format) {
   }
 }
 
+/** 阶段 53 · D：批量导出——本人全部报表打包 ZIP（一次下载，免逐份点击） */
+export async function exportAllReports(format = 'xlsx') {
+  const token = getStoredToken();
+  try {
+    const res = await fetch(`/reports/export-all?format=${format}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      if (res.status === 401) handleAuthExpired('/reports/export-all');
+      let msg = `批量导出失败（HTTP ${res.status}）`;
+      try {
+        const body = await res.json();
+        if (body?.message) msg = body.message;
+      } catch { /* 非 JSON，用默认信息 */ }
+      const err = new Error(msg);
+      err.status = res.status;
+      throw err;
+    }
+    return {
+      blob: await res.blob(),
+      filename: parseContentDispositionFilename(res.headers.get('Content-Disposition'), '全部报表.zip'),
+    };
+  } catch (e) {
+    if (e?.name === 'AbortError') throw new Error('批量导出超时了，请重试');
+    throw e;
+  }
+}
+
 // 阶段 30：完整 PDF 报告导出（图表 PNG + 结论 + 数据表 + Trace）
 // 前端把 ECharts 渲染的图表 base64 dataURL 传上来，后端 reportlab 排版成单文件 PDF
 

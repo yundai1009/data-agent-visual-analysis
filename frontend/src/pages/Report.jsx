@@ -14,7 +14,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Download, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, RotateCcw, GitBranch, Filter, Star, Search } from 'lucide-react';
-import { listReports, getReport, deleteReport, exportReport, exportFullReport, replayReport, toggleFavorite, createDashboard } from '../api';
+import { listReports, getReport, deleteReport, exportReport, exportFullReport, exportAllReports, replayReport, toggleFavorite, createDashboard } from '../api';
 import EChartsChart from '../components/EChartsChart';
 import ExportDialog from '../components/ExportDialog';
 import ShareDialog from '../components/ShareDialog';
@@ -320,6 +320,22 @@ export default function Report() {
     }
   };
 
+  // 阶段 53 · D：批量导出——把全部报表打包成 ZIP 一次下载
+  const [batchExporting, setBatchExporting] = useState(false);
+  const handleExportAll = async () => {
+    if (batchExporting) return;
+    setLoadError('');
+    setBatchExporting(true);
+    try {
+      const { blob, filename } = await exportAllReports('xlsx');
+      await saveWithPicker(blob, filename);
+    } catch (e) {
+      setLoadError(e.message || '批量导出失败，请重试');
+    } finally {
+      setBatchExporting(false);
+    }
+  };
+
   const report = localReport;
 
   // 骨架屏：首次加载且还没数据时展示占位动画，避免白屏闪烁
@@ -500,6 +516,15 @@ export default function Report() {
             title="数据有更新？用同一分析参数读取最新数据重新生成（产生一份新报表）"
           >
             <RotateCcw className={`w-3 h-3 ${replaying ? 'animate-spin' : ''}`} /> {replaying ? '重跑中…' : '用最新数据重跑'}
+          </button>
+          {/* 阶段 53 · D：批量导出全部报表（ZIP） */}
+          <button
+            onClick={handleExportAll}
+            disabled={batchExporting}
+            className="flex items-center gap-1 px-2.5 py-1 rounded text-xs bg-gray-50 text-gray-500 border border-gray-200 hover:bg-gray-100 transition-all disabled:opacity-50"
+            title="把你的全部报表打包成一个 ZIP（xlsx）一次下载"
+          >
+            <Download className="w-3 h-3" /> {batchExporting ? '打包中…' : '导出全部'}
           </button>
         </div>
       </div>

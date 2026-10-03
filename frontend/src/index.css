@@ -27,6 +27,16 @@
 }
 .dark .hover\:bg-gray-50:hover { background-color: #1c2840 !important; }
 .dark .hover\:bg-gray-100:hover { background-color: #1e2c46 !important; }
+/* 阶段 53 · D：深色模式补齐 CSS 变量——阶段 32 只覆盖了 bg-white/bg-gray-*，
+ * 遗漏了走设计令牌的 bg-card / text-ink / bg-surface（数据管理页概览卡片实测白底残留）。
+ * 这里直接翻转变量值，所有引用令牌的地方（含未来新增页面）自动适配。 */
+.dark {
+  --color-card: #17202f;
+  --color-surface: #0f1724;
+  --color-ink: #e2e8f0;
+  --color-line: #2a3a52;
+}
+
 /* App 主布局背景是内联 radial-gradient，深色下强制覆盖 */
 .dark .min-h-\[100dvh\] { background: #0b1220 !important; }
 /* 优化⑤：弹层/浮层在深色模式下保持浅色——深色 !important 规则按类名全量覆盖

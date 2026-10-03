@@ -8,10 +8,13 @@ vi.mock('../api', () => ({
   getReport: vi.fn(),
   deleteReport: vi.fn(),
   exportReport: vi.fn(),
+  exportAllReports: vi.fn(),
   createShare: vi.fn(),
   listShares: vi.fn(),
   revokeShare: vi.fn(),
   replayReport: vi.fn(),
+  toggleFavorite: vi.fn(),
+  createDashboard: vi.fn(),
 }));
 
 // mock ECharts：避免在测试中加载 1MB echarts chunk
@@ -41,6 +44,10 @@ function setupMocks(report = chartReport) {
   });
   api.getReport.mockResolvedValue({ 报表: report, 报表ID: report.报表ID, 上一报表标题: '' });
   api.exportReport.mockResolvedValue({ blob: new Blob(['x']), filename: 'report.csv' });
+  api.exportAllReports.mockResolvedValue({ blob: new Blob(['zip']), filename: '全部报表.zip' });
+  api.toggleFavorite.mockResolvedValue({ is_favorited: false });
+  api.listShares.mockResolvedValue({ 分享列表: [] });
+  api.createDashboard.mockResolvedValue({ 看板ID: 'b1' });
 }
 
 function renderReport() {
@@ -137,5 +144,28 @@ describe('Report 结论附数据依据（阶段 53 · C9）', () => {
     renderReport();
     await screen.findByText('报表查看');
     expect(screen.queryByText('数据依据')).not.toBeInTheDocument();
+  });
+});
+
+describe('Report 批量导出（阶段 53 · D）', () => {
+  it('点击「导出全部」→ 下载 ZIP（一次打包所有报表，免去逐份点击）', async () => {
+    renderReport();
+    await screen.findByText('报表查看');
+
+    fireEvent.click(screen.getByRole('button', { name: /导出全部/ }));
+
+    await waitFor(() => expect(api.exportAllReports).toHaveBeenCalledWith('xlsx'));
+    // 下载文件名来自后端 Content-Disposition
+    await waitFor(() => expect(HTMLAnchorElement.prototype.click).toHaveBeenCalled());
+  });
+
+  it('「导出全部」失败 → 页面内提示，不静默无反应', async () => {
+    api.exportAllReports.mockRejectedValueOnce(new Error('暂无报表可导出，请先生成报表'));
+    renderReport();
+    await screen.findByText('报表查看');
+
+    fireEvent.click(screen.getByRole('button', { name: /导出全部/ }));
+
+    expect(await screen.findByText(/暂无报表可导出/)).toBeInTheDocument();
   });
 });

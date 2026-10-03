@@ -10,7 +10,7 @@ export {
   generateReport,
   listTemplates, saveTemplate, deleteTemplate, runTemplate,
   listSchedules, createSchedule, deleteSchedule, globalSearch, fetchFailedSchedules,
-  listReports, getReport, exportReport, exportFullReport, deleteReport,
+  listReports, getReport, exportReport, exportFullReport, exportAllReports, deleteReport,
   createShare, toggleFavorite, listShares, revokeShare, getSharedReport, replayReport,
   listDashboards, getDashboard, createDashboard, updateDashboard, deleteDashboard, shareDashboard,
   fetchStatistics, fetchAdminUsers, fetchAuditLog, fetchUsage, fetchMetrics, exportEvents,
