@@ -275,3 +275,71 @@ def test_upsert相同ID覆盖(临时db):
     assert out["文件名"] == "f2.csv"
     assert out["行数"] == 3
     assert out["数据"]["a"].tolist() == [10, 20, 30]
+
+
+# ============================================================================
+# 阶段 54 · 数据本体出库：parquet 替代 df_json
+# ============================================================================
+
+def test_保存数据集_写parquet文件而非df_json(临时db, 样本df, 样本画像, monkeypatch, tmp_path):
+    import 后端_核心.存储.sqlite_repo as sr
+    隔离目录 = tmp_path / "parquet_out"
+    monkeypatch.setattr(sr, "_PARQUET_DIR", 隔离目录)
+
+    sr.保存数据集(
+        user_id="u_test", dataset_id="pq1", 文件名="t.csv", 存储路径="/tmp/t.csv",
+        df=样本df, 画像=样本画像,
+    )
+
+    pq = 隔离目录 / "pq1.parquet"
+    assert pq.exists(), "应生成 parquet 文件"
+    assert pq.stat().st_size > 0
+    with sr._get_conn() as conn:
+        row = conn.execute("SELECT df_json, data_path FROM datasets WHERE dataset_id = ?",
+                           ("pq1",)).fetchone()
+    assert row["df_json"] == "", "df_json 应为空串（数据本体已出库）"
+    assert row["data_path"] == str(pq)
+
+
+def test_parquet_保留dtype_日期列不被读成字符串(临时db, 样本df, 样本画像, monkeypatch, tmp_path):
+    import 后端_核心.存储.sqlite_repo as sr
+    monkeypatch.setattr(sr, "_PARQUET_DIR", tmp_path / "pq")
+    sr.保存数据集(user_id="u", dataset_id="pq2", 文件名="t.csv", 存储路径="/tmp/t.csv",
+                 df=样本df, 画像=样本画像)
+    df_back = sr.读取数据集("u", "pq2")["数据"]
+    assert str(df_back["月份"].dtype).startswith("datetime64"), f"日期列 dtype 丢失：{df_back['月份'].dtype}"
+    assert df_back["销售额"].dtype == "int64"
+
+
+def test_读取数据集_优先parquet_回退df_json(临时db, 样本df, 样本画像, monkeypatch, tmp_path):
+    import 后端_核心.存储.sqlite_repo as sr
+    monkeypatch.setattr(sr, "_PARQUET_DIR", tmp_path / "pq")
+    sr.保存数据集(user_id="u", dataset_id="pq3", 文件名="t.csv", 存储路径="/tmp/t.csv",
+                 df=样本df, 画像=样本画像)
+    out = sr.读取数据集("u", "pq3")
+    assert out["数据路径"].endswith("pq3.parquet")
+    assert out["数据"].shape == (4, 4)
+
+    # 手工构造一条只有 df_json 的旧数据 → 必须能回退读出
+    with sr._get_conn() as conn:
+        conn.execute(
+            "INSERT INTO datasets (dataset_id, user_id, file_name, stored_path, rows_count,"
+            " cols_count, df_json, profile_json, created_at, updated_at, data_path)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            ("legacy1", "u", "old.csv", "/tmp/old.csv", 2, 2,
+             sr._df_to_json(样本df), "{}", "2026-01-01", "2026-01-01", None),
+        )
+    old = sr.读取数据集("u", "legacy1")
+    assert old["数据"].shape == (4, 4), "旧数据应回退 df_json 读出"
+    assert old["数据路径"] == ""
+
+
+def test_删除数据集_同时清理parquet文件(临时db, 样本df, 样本画像, monkeypatch, tmp_path):
+    import 后端_核心.存储.sqlite_repo as sr
+    monkeypatch.setattr(sr, "_PARQUET_DIR", tmp_path / "pq")
+    sr.保存数据集(user_id="u", dataset_id="pq4", 文件名="t.csv", 存储路径="",
+                 df=样本df, 画像=样本画像)
+    pq = tmp_path / "pq" / "pq4.parquet"
+    assert pq.exists()
+    assert sr.删除数据集("u", "pq4") is True
+    assert not pq.exists(), "parquet 文件应随数据集一起删除"

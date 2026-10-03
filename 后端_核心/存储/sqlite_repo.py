@@ -51,6 +51,9 @@ logger = logging.getLogger(__name__)
 # 路径优先级：``DAA_SQLITE_PATH`` 环境变量 > ``EnvConfig.SQLITE_PATH`` > 默认值
 _DEFAULT_DB_PATH = Path("data/daa.db")
 
+# 阶段 54：数据本体出库——DataFrame 落 parquet 文件，DB 只留元信息
+_PARQUET_DIR = Path("data/parquet")
+
 # 线程锁，保护 SQLite 连接的写操作
 # SQLite 默认不允许跨线程共享连接，所以我们每次请求都新建连接，但用一个锁串行化写
 _write_lock = threading.Lock()
@@ -139,6 +142,10 @@ def 初始化数据库() -> None:
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(datasets)").fetchall()}
         if "parent_id" not in cols:
             conn.execute("ALTER TABLE datasets ADD COLUMN parent_id TEXT")
+        # 阶段 54：data_path 列（数据本体 parquet 文件路径；旧数据为空，走 df_json 回退）
+        cols2 = {row["name"] for row in conn.execute("PRAGMA table_info(datasets)").fetchall()}
+        if "data_path" not in cols2:
+            conn.execute("ALTER TABLE datasets ADD COLUMN data_path TEXT")
         # 用户表（阶段 3 认证体系）
         conn.execute(
             """
@@ -179,6 +186,11 @@ def _df_to_json(df: pd.DataFrame) -> str:
     return df.to_json(orient="records", force_ascii=False, date_format="iso")
 
 
+def _parquet路径(dataset_id: str) -> Path:
+    """阶段 54：某个数据集的 parquet 本体文件路径。"""
+    return _PARQUET_DIR / f"{dataset_id}.parquet"
+
+
 def _df_from_json(json_str: str) -> pd.DataFrame:
     """JSON 字符串 → DataFrame。
 
@@ -207,12 +219,18 @@ def 保存数据集(
     """新增或覆盖保存一个数据集（归属指定用户）。
 
     优化⑬：parent_id 记录来源数据集（清洗另存/合并产物的版本链来源）。
+
+    阶段 54：DataFrame 本体落 parquet 文件，DB 只留元信息。
     """
-    df_json = _df_to_json(df)
     profile_json = json.dumps(画像, ensure_ascii=False, default=str)
     rows_count = int(len(df))
     cols_count = int(len(df.columns))
     now = _now_iso()
+    # 阶段 54：DataFrame 落 parquet 文件（保留 dtype、压缩率高），DB 不再存整表 JSON
+    pq = _parquet路径(dataset_id)
+    pq.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(pq, index=False)
+    df_json = ""  # 旧列保留兼容，不再写入
 
     with _write_lock, _get_conn() as conn:
         # upsert: 存在则更新，不存在则插入
@@ -220,8 +238,8 @@ def 保存数据集(
             """
             INSERT INTO datasets
                 (dataset_id, user_id, file_name, stored_path, rows_count, cols_count,
-                 df_json, profile_json, created_at, updated_at, parent_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 df_json, profile_json, created_at, updated_at, parent_id, data_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(dataset_id) DO UPDATE SET
                 user_id       = excluded.user_id,
                 file_name     = excluded.file_name,
@@ -230,10 +248,11 @@ def 保存数据集(
                 cols_count    = excluded.cols_count,
                 df_json       = excluded.df_json,
                 profile_json  = excluded.profile_json,
-                updated_at    = excluded.updated_at
+                updated_at    = excluded.updated_at,
+                data_path     = excluded.data_path
             """,
             (dataset_id, user_id, 文件名, 存储路径, rows_count, cols_count,
-             df_json, profile_json, now, now, parent_id),
+             df_json, profile_json, now, now, parent_id, str(pq)),
         )
     logger.info("保存数据集 %s（用户 %s, %s, %d 行）", dataset_id, user_id, 文件名, rows_count)
 
@@ -243,13 +262,19 @@ def 读取数据集(user_id: str, dataset_id: str) -> Optional[Dict[str, Any]]:
     with _get_conn() as conn:
         row = conn.execute(
             "SELECT dataset_id, user_id, file_name, stored_path, rows_count, cols_count, "
-            "df_json, profile_json, created_at, updated_at, parent_id "
+            "df_json, profile_json, created_at, updated_at, parent_id, data_path "
             "FROM datasets WHERE dataset_id = ? AND user_id = ?",
             (dataset_id, user_id),
         ).fetchone()
 
     if row is None:
         return None
+
+    data_path = row["data_path"] or ""
+    if data_path and Path(data_path).exists():
+        df = pd.read_parquet(data_path)          # 阶段 54：优先读 parquet（快且保 dtype）
+    else:
+        df = _df_from_json(row["df_json"])      # 回退：旧数据仍存 df_json
 
     return {
         "数据集ID": row["dataset_id"],
@@ -258,7 +283,8 @@ def 读取数据集(user_id: str, dataset_id: str) -> Optional[Dict[str, Any]]:
         "路径": row["stored_path"],
         "行数": row["rows_count"],
         "列数": row["cols_count"],
-        "数据": _df_from_json(row["df_json"]),
+        "数据": df,
+        "数据路径": data_path,
         "数据画像": json.loads(row["profile_json"]),
         "创建时间": row["created_at"],
         "更新时间": row["updated_at"],
@@ -340,10 +366,11 @@ def 删除数据集(user_id: str, dataset_id: str) -> bool:
     """
     with _write_lock, _get_conn() as conn:
         row = conn.execute(
-            "SELECT stored_path FROM datasets WHERE dataset_id = ? AND user_id = ?",
+            "SELECT stored_path, data_path FROM datasets WHERE dataset_id = ? AND user_id = ?",
             (dataset_id, user_id),
         ).fetchone()
         stored_path = row["stored_path"] if row else None
+        data_path = row["data_path"] if row else None
         cur = conn.execute(
             "DELETE FROM datasets WHERE dataset_id = ? AND user_id = ?",
             (dataset_id, user_id),
@@ -351,6 +378,7 @@ def 删除数据集(user_id: str, dataset_id: str) -> bool:
         deleted = cur.rowcount > 0
     if deleted:
         _删除存储文件(stored_path)
+        _删除存储文件(data_path)   # 阶段 54：一并清理 parquet 本体
         logger.info("删除数据集 %s（用户 %s）", dataset_id, user_id)
     return deleted
 
