@@ -75,13 +75,18 @@ def 公开查看报表(
         if _密码尝试超限(share_id):
             raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="尝试次数过多，请稍后再试")
         given = (request.headers.get("X-Share-Password") or request.query_params.get("password") or "").strip()
+        # 阶段 53 · A3：区分"没带密码"与"密码错误"——
+        #   没带密码 → detail="需要访问密码"（前端首次打开只显示密码框，不指责"密码不正确"）；
+        #   密码错误 → detail="访问密码不正确"（前端才提示重试）。
+        if not given:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="需要访问密码")
         import hashlib
         import hmac as _hmac
         from config.settings import EnvConfig
         calc = _hmac.new(EnvConfig.JWT_SECRET_KEY.encode(), given.encode(), hashlib.sha256).hexdigest()
         if not _hmac.compare_digest(calc, share["密码哈希"]):
             _记录密码失败(share_id)
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="需要访问密码")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="访问密码不正确")
 
     # 阶段 31：协作者白名单——非空时仅白名单内登录用户可看（公开访客/名单外 401）
     协作者 = share.get("协作者") or []

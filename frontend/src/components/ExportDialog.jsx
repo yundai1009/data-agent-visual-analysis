@@ -12,6 +12,8 @@ import { Download, X } from 'lucide-react';
 
 export default function ExportDialog({ showDl, onClose, onExport, dlFmt, setDlFmt, chartTypeKey, trace, exportData }) {
   const [dlBusy, setDlBusy] = useState(false);
+  // 阶段 53 · A2：导出失败改用弹窗内错误横幅（替代原生 alert，与全站错误呈现一致）。
+  const [dlErr, setDlErr] = useState(null);
   if (!showDl) return null;
 
   const dlOptions = [
@@ -26,12 +28,15 @@ export default function ExportDialog({ showDl, onClose, onExport, dlFmt, setDlFm
 
   const handleConfirm = async () => {
     setDlBusy(true);
+    setDlErr(null);
     try {
-      // onExport 返回 Promise（Report.jsx 的 handleExportFormat 是 async）
+      // onExport 返回 Promise；失败时把错误留在弹窗内展示，不弹原生 alert。
       await onExport(dlFmt);
+      onClose();
+    } catch (e) {
+      setDlErr(e?.message || '导出失败，请重试');
     } finally {
       setDlBusy(false);
-      onClose();
     }
   };
 
@@ -56,6 +61,11 @@ export default function ExportDialog({ showDl, onClose, onExport, dlFmt, setDlFm
             </button>
           ))}
         </div>
+        {dlErr && (
+          <div className="mt-3 rounded-lg px-3 py-2 text-xs text-red-600 bg-red-50 border border-red-200" role="alert">
+            导出失败：{dlErr}
+          </div>
+        )}
         <div className="flex gap-2 mt-4">
           <button onClick={onClose} className="flex-1 py-2 rounded-lg border border-gray-200 text-sm text-gray-500 hover:bg-gray-50 transition-all">取消</button>
           <button onClick={handleConfirm} disabled={dlBusy}

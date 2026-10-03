@@ -156,7 +156,7 @@ def _快速意图判断(分析需求: str, 画像: Dict[str, Any]) -> Optional[D
                 "y轴": y轴,
                 "分组字段": None,
                 "聚合方式": 聚合,
-                "推荐理由": f"{推荐理由}（快速路由，跳过 LLM）",
+                "推荐理由": f"{推荐理由}（已按明确的指标关键词快速生成）",
                 "筛选条件": [],
                 "TopN": None,
                 "对比": None,
@@ -262,13 +262,13 @@ def 编排Agent(
         if _受控:
             intent_override = _受控
             intent_source = "规则-受控语句"
-            trace.记录观察(轮次=0, 说明="受控语句命中，跳过 LLM", 状态="成功")
+            trace.记录观察(轮次=0, 说明="识别到明确的图表关键词（如 直方图/折线图），已直接生成对应配置", 状态="成功")
         else:
             _快速 = _快速意图判断(分析需求, 画像)
             if _快速:
                 intent_override = _快速
                 intent_source = "规则-快速路由"
-                trace.记录观察(轮次=0, 说明="快速路由命中，跳过 LLM", 状态="成功")
+                trace.记录观察(轮次=0, 说明="识别到明确的指标关键词（如 占比/趋势），已直接生成对应配置", 状态="成功")
 
     # ═══ LLM 多轮 ReAct ═══
     if enable_llm and (分析需求 or "").strip() and intent_override is None:

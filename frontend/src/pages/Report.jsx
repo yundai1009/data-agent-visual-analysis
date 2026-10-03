@@ -239,58 +239,51 @@ export default function Report() {
   // 设计：7 种格式共用一套下载/保存链路，格式差异只体现在 blob 生成这一段
   // 【Bug5 修复】弹窗打开期间翻页切到另一份报表后，导出会因报表不符被拦截。
   const handleExportFormat = async (fmt) => {
-    try {
-      if (dlReportIdRef.current && currentReportId && dlReportIdRef.current !== currentReportId) {
-        alert('报表已切换，导出已取消，请重新选择报表后操作');
-        setShowDl(false);
-        return;
-      }
-      let blob, filename;
-      if (fmt === 'xlsx' || fmt === 'csv') {
-        // 走后端导出端点：带 token 下载，返回 { blob, filename }（文件名由后端 Content-Disposition 给出）
-        if (!currentReportId) return;
-        ({ blob, filename } = await exportReport(currentReportId, fmt));
-      } else if (fmt === 'pdf') {
-        // 阶段 30：完整 PDF 报告——先截当前 ECharts 图表为 PNG（浏览器本地能力），
-        // 再连同图表图片交给后端 reportlab 排版成"图文并茂"的单文件报告
-        if (!currentReportId) return;
-        const canvas = chartContainerRef.current?.querySelector('canvas');
-        const chartPng = canvas ? canvas.toDataURL('image/png') : '';
-        ({ blob, filename } = await exportFullReport(currentReportId, chartPng));
-      } else if (fmt === 'png') {
-        // PNG 不走后端：直接截当前 ECharts canvas（浏览器本地能力，无需请求）
-        const canvas = chartContainerRef.current?.querySelector('canvas');
-        if (!canvas) { alert('图表尚未渲染完成，请稍后再试'); return; }
-        blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
-        // 文件名用报表标题，非法文件名字符替换成下划线（Windows 不允许 \/:*?"<>|）
-        filename = `${(report?.标题 || '报表').replace(/[\\/:*?"<>|]/g, '_')}.png`;
-      } else if (fmt === 'trace') {
-        // Agent 决策记录：前端本地拼 Markdown（步骤 + 说明），无需后端参与
-        if (trace.length === 0) return;
-        const lines = [
-          `# Agent 决策记录 — ${report.标题 || '数据分析报表'}`,
-          '',
-          ...trace.map((step, i) => `## ${i + 1}. ${step.步骤 || step.说明 || `步骤 ${i + 1}`}${step.状态 === '成功' || step.状态 === '完成' ? ' ✓' : ''}\n${step.说明 || step.理由 || ''}`),
-        ];
-        blob = new Blob([lines.join('\n\n')], { type: 'text/markdown;charset=utf-8' });
-        filename = `Agent决策记录-${(report.标题 || '报表').replace(/[\\/:*?"<>|]/g, '_')}.md`;
-      } else if (fmt === 'html') {
-        // HTML 报告：直接用后端导出数据里预生成的 HTML 字符串
-        // 【Bug4 修复】旧报表/异常报表可能没有 HTML 导出数据，直接 new Blob([undefined]) 会导出空文件
-        if (!exportData.HTML) { alert('该报表未生成 HTML 导出数据，请换用其他格式'); return; }
-        blob = new Blob([exportData.HTML], { type: 'text/html' });
-        filename = 'report.html';
-      } else if (fmt === 'json') {
-        // JSON 数据：后端导出的结构化 JSON 字符串
-        // 【Bug4 修复】同上：无 JSON 数据时给出明确提示而非空文件
-        if (!exportData.JSON) { alert('该报表未生成 JSON 导出数据，请换用其他格式'); return; }
-        blob = new Blob([exportData.JSON], { type: 'application/json' });
-        filename = 'report.json';
-      }
-      if (blob) await saveWithPicker(blob, filename); // 统一走保存位置选择逻辑
-    } catch (e) {
-      alert(`导出失败：${e.message || e}`);
+    // 阶段 53 · A2：错误直接抛出，由 ExportDialog 在弹窗内展示错误横幅（替代原生 alert）
+    if (dlReportIdRef.current && currentReportId && dlReportIdRef.current !== currentReportId) {
+      throw new Error('报表已切换，导出已取消，请重新选择报表后操作');
     }
+    let blob, filename;
+    if (fmt === 'xlsx' || fmt === 'csv') {
+      // 走后端导出端点：带 token 下载，返回 { blob, filename }（文件名由后端 Content-Disposition 给出）
+      if (!currentReportId) return;
+      ({ blob, filename } = await exportReport(currentReportId, fmt));
+    } else if (fmt === 'pdf') {
+      // 阶段 30：完整 PDF 报告——先截当前 ECharts 图表为 PNG（浏览器本地能力），
+      // 再连同图表图片交给后端 reportlab 排版成"图文并茂"的单文件报告
+      if (!currentReportId) return;
+      const canvas = chartContainerRef.current?.querySelector('canvas');
+      const chartPng = canvas ? canvas.toDataURL('image/png') : '';
+      ({ blob, filename } = await exportFullReport(currentReportId, chartPng));
+    } else if (fmt === 'png') {
+      // PNG 不走后端：直接截当前 ECharts canvas（浏览器本地能力，无需请求）
+      const canvas = chartContainerRef.current?.querySelector('canvas');
+      if (!canvas) { throw new Error('图表尚未渲染完成，请稍后再试'); }
+      blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      // 文件名用报表标题，非法文件名字符替换成下划线（Windows 不允许 \/:*?"<>|）
+      filename = `${(report?.标题 || '报表').replace(/[\\/:*?"<>|]/g, '_')}.png`;
+    } else if (fmt === 'trace') {
+      // Agent 决策记录：前端本地拼 Markdown（步骤 + 说明），无需后端参与
+      if (trace.length === 0) return;
+      const lines = [
+        `# Agent 决策记录 — ${report.标题 || '数据分析报表'}`,
+        '',
+        ...trace.map((step, i) => `## ${i + 1}. ${step.步骤 || step.说明 || `步骤 ${i + 1}`}${step.状态 === '成功' || step.状态 === '完成' ? ' ✓' : ''}\n${step.说明 || step.理由 || ''}`),
+      ];
+      blob = new Blob([lines.join('\n\n')], { type: 'text/markdown;charset=utf-8' });
+      filename = `Agent决策记录-${(report.标题 || '报表').replace(/[\\/:*?"<>|]/g, '_')}.md`;
+    } else if (fmt === 'html') {
+      // HTML 报告：直接用后端导出数据里预生成的 HTML 字符串
+      if (!exportData.HTML) { throw new Error('该报表未生成 HTML 导出数据，请换用其他格式'); }
+      blob = new Blob([exportData.HTML], { type: 'text/html' });
+      filename = 'report.html';
+    } else if (fmt === 'json') {
+      // JSON 数据：后端导出的结构化 JSON 字符串
+      if (!exportData.JSON) { throw new Error('该报表未生成 JSON 导出数据，请换用其他格式'); }
+      blob = new Blob([exportData.JSON], { type: 'application/json' });
+      filename = 'report.json';
+    }
+    if (blob) await saveWithPicker(blob, filename); // 统一走保存位置选择逻辑
   };
 
 

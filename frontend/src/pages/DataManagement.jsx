@@ -16,6 +16,7 @@ import { Upload, Download, FileDown, Database, FileText, AlertTriangle, Search, 
 import { uploadFileWithProgress, loadExample, cleanDataset, healthCheck, listDatasets, deleteDataset, renameDataset, mergeDatasets, getDataset, getDatasetRows, exportUserData } from '../api';
 import { useApp } from '../AppContext';
 import { 清洗摘要转文本 } from '../validators/cleanSummary';
+import { 默认清洗文件名 } from '../validators/cleanNaming';
 
 // 演示模式（vite --mode demo 构建）：打开页面自动加载示例数据，零基础用户无需上传即可体验
 const DEMO_MODE = import.meta.env.VITE_DEMO === '1';
@@ -272,7 +273,7 @@ export default function DataManagement() {
         fill_strategy: cleanOps.fill_strategy,
         drop_empty_rows: cleanOps.drop_empty_rows,
         // 优化②：另存为新数据集（保留原始数据对照）
-        新文件名: cleanAsNew ? (cleanNewName.trim() || `${dataset.文件名}-已清洗`) : '',
+        新文件名: cleanAsNew ? (cleanNewName.trim() || 默认清洗文件名(dataset?.文件名)) : '',
       });
       setCleanResult(res);
       // 另存时：选中新数据集 + 刷新列表；覆盖时：原地更新画像
@@ -779,7 +780,7 @@ export default function DataManagement() {
                   {cleanAsNew && (
                     <input
                       className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-gray-50 focus:outline-none focus:border-accent"
-                      placeholder={`新数据集名称（默认：${dataset?.文件名}-已清洗）`}
+                      placeholder={`新数据集名称（默认：${默认清洗文件名(dataset?.文件名)}）`}
                       value={cleanNewName}
                       onChange={(e) => setCleanNewName(e.target.value)}
                       maxLength={120}

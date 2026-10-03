@@ -354,11 +354,20 @@ export async function getSharedReport(shareId, password = '') {
       signal: controller.signal,
     });
     if (!res.ok) {
+      // 阶段 53 · A3：先读后端统一错误体的 message（{code, message, request_id}，
+      //   后端按场景区分了"需要访问密码"/"访问密码不正确"/"尝试次数过多…"），
+      //   读不到才回退默认文案——否则后端的精细区分在前端被抹平。
+      let serverMsg = '';
+      try {
+        const body = await res.json();
+        if (body && typeof body.message === 'string' && body.message.trim()) serverMsg = body.message.trim();
+      } catch { /* 非 JSON 响应，用默认信息 */ }
       const err = new Error(
-        res.status === 404 ? '分享链接不存在或已过期'
+        serverMsg
+        || (res.status === 404 ? '分享链接不存在或已过期'
           : res.status === 401 ? '需要访问密码'
             : res.status === 429 ? '尝试次数过多，请稍后再试'
-              : `访问失败（HTTP ${res.status}）`,
+              : `访问失败（HTTP ${res.status}）`),
       );
       err.status = res.status;
       throw err;

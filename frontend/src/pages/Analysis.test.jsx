@@ -138,4 +138,30 @@ describe('Analysis 智能分析页', () => {
     fireEvent.click(btn);
     expect(navMock.navigate).toHaveBeenCalledWith('/report/r-abc');
   });
+
+  it('完成栏"存为模板"快捷入口：一键展开模板区（用户找不到模板保存入口的修复）', () => {
+    mockState.state.liveDone = { 报表ID: 'r-1', 标题: '地区销售构成' };
+    mockState.state.savedTemplates = [];
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: /存为模板/ }));
+    expect(mockState.state.setShowAdvanced).toHaveBeenCalledWith(true);
+    expect(mockState.state.setShowTemplates).toHaveBeenCalledWith(true);
+    // 模板列表为空时按需加载
+    expect(mockState.state.loadTemplates).toHaveBeenCalled();
+  });
+
+  it('完成栏"存为模板"在模板列表非空时不重复加载', () => {
+    mockState.state.liveDone = { 报表ID: 'r-1', 标题: 'x' };
+    mockState.state.savedTemplates = [{ 模板ID: 't1', 名称: '每周周报' }];
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: /存为模板/ }));
+    expect(mockState.state.loadTemplates).not.toHaveBeenCalled();
+    expect(mockState.state.setShowTemplates).toHaveBeenCalledWith(true);
+  });
+
+  it('未完成分析时不显示"存为模板"快捷入口', () => {
+    mockState.state.liveDone = null;
+    renderPage();
+    expect(screen.queryByRole('button', { name: /存为模板/ })).not.toBeInTheDocument();
+  });
 });

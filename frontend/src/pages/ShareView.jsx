@@ -27,8 +27,14 @@ export default function ShareView() {
   const [authError, setAuthError] = useState('');
   // 【Bug12 修复】序号守卫：shareId 变化/快速切换时，旧请求的 then 不覆盖新报表。
   const loadSeqRef = useRef(0);
+  // 【阶段 53 · A3】同一分享只发起一次初始请求：StrictMode dev 下 effect 双跑，
+  // 否则打开带密码的分享会打两次无密码请求（network 两条 401）。
+  // shareId 变化（用户点了别的分享）仍正常重载。
+  const loadedIdRef = useRef(null);
 
   const load = (pwd) => {
+    if (!pwd && loadedIdRef.current === shareId) return;
+    if (!pwd) loadedIdRef.current = shareId;
     const seq = ++loadSeqRef.current;
     setLoading(true);
     setAuthError('');
@@ -37,7 +43,13 @@ export default function ShareView() {
       .then((data) => { if (loadSeqRef.current !== seq) return; setReport(data); setNeedsPassword(false); })
       .catch((e) => {
         if (loadSeqRef.current !== seq) return;
-        if (e.status === 401) { setNeedsPassword(true); setAuthError('密码不正确，请重试'); }
+        if (e.status === 401) {
+          // 阶段 53 · A3：首次无密码（后端"需要访问密码"）→ 只显示密码框，
+          //   不显示"密码不正确"（用户还没输过，指责是错的）；
+          // 输错密码后（后端"访问密码不正确"）→ 才提示重试。
+          setNeedsPassword(true);
+          setAuthError(pwd ? (e.message || '密码不正确，请重试') : '');
+        }
         else setError(e.message || '分享内容加载失败');
       })
       .finally(() => { if (loadSeqRef.current === seq) setLoading(false); });

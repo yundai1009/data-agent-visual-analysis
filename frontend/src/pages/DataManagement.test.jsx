@@ -162,4 +162,23 @@ describe('DataManagement 数据管理页', () => {
 
     expect(await screen.findByText(/成功上传 1 个文件，失败 1 个/)).toBeInTheDocument();
   });
+
+  it('清洗另存为：默认新名不再叠加「已清洗」后缀（阶段 53 · A1）', async () => {
+    // 已清洗过的数据集：文件名已带标记（历史脏名还叠加了两次）
+    const 脏名数据集 = { 数据集ID: 'd1', 文件名: '销售.csv（已清洗）（已清洗）', 行数: 100, 列数: 4 };
+    mockApi.listDatasets.mockResolvedValue({ 数据集列表: [脏名数据集], 统计: { 总数: 1, 总行数: 100 } });
+    mockApi.getDataset.mockResolvedValue({ 文件名: '销售.csv（已清洗）（已清洗）', 数据画像: { 行数: 100, 列数: 4, 日期字段: [], 分类字段: [], 数值字段: [], 字段建议: [], 总缺失值: 1, 数据质量: { 评级: 'C', 等级说明: '缺失率偏高', 缺失字段: ['age（12.5%）'] } } });
+    mockApi.getDatasetRows.mockResolvedValue({ 行: [], 列数: 0 });
+
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: /我的数据集/ }));
+    const 行 = await screen.findByText('销售.csv（已清洗）（已清洗）');
+    fireEvent.click(行);
+    // 画像加载后出现缺失值卡片 → 点击打开清洗弹窗
+    fireEvent.click(await screen.findByText('缺失值数量'));
+    // 勾选"另存为新数据集"
+    fireEvent.click(screen.getByLabelText('另存为新数据集（保留原始数据）'));
+    // 默认名归一化为单个 -已清洗，不再叠加
+    expect(screen.getByPlaceholderText('新数据集名称（默认：销售.csv-已清洗）')).toBeInTheDocument();
+  });
 });

@@ -73,6 +73,15 @@ export default function Analysis() {
     handleChartSelect, handleGenerate, handleCancel, handleFollowUp, generatingRef,
   } = useAnalysis();
 
+  // 阶段 53 · B5：一键展开模板区（保存模板入口此前藏在"高级选项 → 模板"两层折叠里，
+  // 走查时按"保存为模板"找不到入口）。按需加载模板与定时任务列表，避免多余请求。
+  const openTemplates = () => {
+    setShowAdvanced(true);
+    setShowTemplates(true);
+    if (savedTemplates.length === 0) loadTemplates();
+    if (schedules.length === 0) loadSchedules();
+  };
+
   return (
     <div className="p-8 max-w-5xl mx-auto">
       {/* Header */}
@@ -224,6 +233,15 @@ export default function Analysis() {
                 查看报表
               </button>
             )}
+            {/* 阶段 53 · B5：保存模板入口一键可达（藏太深，用户找不到） */}
+            {liveDone && (
+              <button
+                onClick={openTemplates}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-accent/30 text-accent text-xs font-medium hover:bg-accent-soft transition-all"
+                title="把当前配置保存为模板，下次一键复用 / 定时执行">
+                <Bookmark className="w-3.5 h-3.5" /> 存为模板
+              </button>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <input value={followUp} onChange={(e) => setFollowUp(e.target.value)}
@@ -291,7 +309,7 @@ export default function Analysis() {
                   placeholder="模板名称，如：每周销售周报" value={templateName} onChange={(e) => setTemplateName(e.target.value)} maxLength={50} />
                 <button onClick={handleSaveTemplate} disabled={savingTemplate}
                   className="px-3 py-1.5 rounded-lg text-xs bg-accent text-white hover:opacity-90 transition-all disabled:opacity-50">
-                  {savingTemplate ? '保存中…' : '保存当前配置'}
+                  {savingTemplate ? '保存中…' : '保存为模板'}
                 </button>
               </div>
               {savedTemplates.length === 0 ? (

@@ -87,6 +87,34 @@ describe('阶段52：endpoints.js 导出/分享接口不得运行时崩溃', () 
     await expect(getSharedReport('missing')).rejects.toThrow('分享链接不存在或已过期');
   });
 
+  it('getSharedReport 401 保留后端 message（需要访问密码 vs 访问密码不正确）【阶段 53 · A3】', async () => {
+    // 未带密码：后端 message = 需要访问密码
+    mockFetchOnce(async () => ({
+      ok: false,
+      status: 401,
+      json: async () => ({ message: '需要访问密码', code: 'HTTP_401' }),
+    }));
+    await expect(getSharedReport('share-pwd')).rejects.toThrow('需要访问密码');
+
+    // 带密码但错误：后端 message = 访问密码不正确 —— 前端必须拿到区分信息，
+    // 才能做到"首次打开不指责密码不对，输错才提示"
+    mockFetchOnce(async () => ({
+      ok: false,
+      status: 401,
+      json: async () => ({ message: '访问密码不正确', code: 'HTTP_401' }),
+    }));
+    await expect(getSharedReport('share-pwd', 'wrong')).rejects.toThrow('访问密码不正确');
+  });
+
+  it('getSharedReport 429 限频提示（防暴破状态可感知）', async () => {
+    mockFetchOnce(async () => ({
+      ok: false,
+      status: 429,
+      json: async () => ({ message: '尝试次数过多，请稍后再试' }),
+    }));
+    await expect(getSharedReport('share-pwd', 'x')).rejects.toThrow('尝试次数过多，请稍后再试');
+  });
+
   it('exportUserData 用 Content-Disposition 解析文件名（未导入解析器会崩）', async () => {
     mockFetchOnce(async () => blobResponse('json-bytes', {
       'content-disposition': "attachment; filename*=UTF-8''%E6%88%91%E7%9A%84%E6%95%B0%E6%8D%AE.json",
