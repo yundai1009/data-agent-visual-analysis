@@ -1,0 +1,269 @@
+{
+  "request": {
+    "url": "https://api.deepseek.com/v1/chat/completions",
+    "json": {
+      "model": "deepseek-chat",
+      "messages": [
+        {
+          "role": "system",
+          "content": "你是数据分析 Agent。根据用户的分析需求和数据画像，逐步完成分析任务。\n\n你有以下工具可用：\n1. 获取数据画像 — 读取数据集的字段信息和统计摘要\n2. 聚合分析 — 按指定字段和聚合方式计算数据\n3. 推荐图表 — 推荐合适的图表类型\n4. 生成结论 — 生成分析结论\n\n请按顺序调用工具，每次调用一个。完成所有分析后输出最终结论。\n\n筛选与排名（重要）：\n- 如果需求包含条件过滤（如\"只看华东区\"、\"排除华南\"、\"销量大于500\"），\n  请在「聚合分析」的\"筛选条件\"参数中明确给出（字段/操作/值），AND 语义；\n- 如果需求包含排名（如\"销量Top 10的商品\"、\"前5名\"），请给出\"TopN\"参数；\n- 如果需求包含时间对比（如\"按月环比\"、\"同比去年\"）且 X 轴是日期字段，\n  请在「聚合分析」的\"对比\"参数中给出（环比/同比）。\n"
+        },
+        {
+          "role": "user",
+          "content": "帮我看看这份数据整体怎么样"
+        },
+        {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "call_1",
+              "type": "function",
+              "function": {
+                "name": "获取数据画像",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_1",
+          "content": "数据集共 6 行、4 列。\n字段列表：月份, 地区, 销售额, 订单数\n数值字段：销售额, 订单数\n日期字段：月份\n分类字段：地区\n数据质量评级：良好 - 完整无缺失\n字段示例值（帮助理解语义，非完整数据）：\n月份: 2026-01, 2026-01, 2026-02 | 地区: 华东, 华南, 华东 | 销售额: 100, 80, 120 | 订单数: 10, 8, 12"
+        },
+        {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "call_2",
+              "type": "function",
+              "function": {
+                "name": "聚合分析",
+                "arguments": "{\"X轴\": \"地区\", \"Y轴\": [\"销售额\"], \"聚合方式\": \"求和\", \"前N行\": 5}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_2",
+          "content": "聚合方式：求和，返回 2 行\n  地区: 华东, 销售额: 330\n  地区: 华南, 销售额: 265\n"
+        }
+      ],
+      "temperature": 0.0,
+      "stream": false,
+      "max_tokens": 2048,
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "获取数据画像",
+            "description": "读取当前数据集的字段画像：行数 / 列数 / 字段列表 / 字段类型 / 数值·日期·分类字段 / 数据质量等级。无入参。",
+            "parameters": {
+              "type": "object",
+              "properties": {},
+              "required": []
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "聚合分析",
+            "description": "按 X 轴 / 分组字段 / 聚合方式对数据集做 pandas 聚合，返回前 N 行结果。字段名必须来自画像.字段列表。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "X轴": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "X 轴字段名，必须来自画像字段列表；无则 null"
+                },
+                "Y轴": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Y 轴字段列表，元素必须来自画像字段列表；空数组表示只做计数"
+                },
+                "分组字段": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "分组字段名；无则 null"
+                },
+                "聚合方式": {
+                  "type": "string",
+                  "enum": [
+                    "求和",
+                    "平均值",
+                    "计数",
+                    "最大值",
+                    "最小值"
+                  ],
+                  "description": "聚合方式；占比/分布场景一律用计数"
+                },
+                "筛选条件": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "字段": {
+                        "type": "string",
+                        "description": "筛选字段名，必须来自画像.字段列表"
+                      },
+                      "操作": {
+                        "type": "string",
+                        "enum": [
+                          "等于",
+                          "不等于",
+                          "包含",
+                          "大于",
+                          "大于等于",
+                          "小于",
+                          "小于等于",
+                          "为空",
+                          "不为空"
+                        ]
+                      },
+                      "值": {
+                        "type": "string",
+                        "description": "筛选值（文本或数字，过滤时按字段类型自动转换）"
+                      }
+                    },
+                    "required": [
+                      "字段",
+                      "操作"
+                    ]
+                  },
+                  "description": "筛选条件列表（AND 语义，全部满足才保留）。用户说'只看华东区'→[{字段:'地区',操作:'等于',值:'华东区'}]；无筛选则省略"
+                },
+                "TopN": {
+                  "type": "integer",
+                  "description": "只保留聚合结果中数值最大的前 N 行（用户说'销量Top 10'时使用）"
+                },
+                "对比": {
+                  "type": "string",
+                  "enum": [
+                    "环比",
+                    "同比"
+                  ],
+                  "description": "时间序列对比：环比=与上一周期比，同比=与去年同期（12 期前）比；仅当 X 轴是日期字段且用户要求时给出"
+                },
+                "前N行": {
+                  "type": "integer",
+                  "description": "返回前 N 行；默认 5，最大 50",
+                  "default": 5
+                }
+              },
+              "required": [
+                "X轴",
+                "Y轴",
+                "聚合方式"
+              ]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "推荐图表",
+            "description": "根据数据画像 + 已经做过的聚合结果，推荐一个合适的图表类型。会返回图表类型与一句话理由。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "图表类型": {
+                  "type": "string",
+                  "enum": [
+                    "柱状图",
+                    "折线图",
+                    "饼图",
+                    "散点图",
+                    "表格",
+                    "直方图",
+                    "热力图",
+                    "堆积柱状图",
+                    "面积图",
+                    "雷达图",
+                    "词云图",
+                    "漏斗图",
+                    "桑基图",
+                    "箱线图",
+                    "环形图",
+                    "瀑布图",
+                    "旭日图",
+                    "K线图"
+                  ],
+                  "description": "推荐的图表类型"
+                },
+                "理由": {
+                  "type": "string",
+                  "description": "为什么推荐这个图表（一句话）"
+                }
+              },
+              "required": [
+                "图表类型"
+              ]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "生成结论",
+            "description": "看完整画像 + 聚合结果 + 推荐依据，写一段 200-400 字的中文 Markdown 分析结论：含关键发现、Top/Bottom、异常提示、跟需求呼应。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "结论": {
+                  "type": "string",
+                  "description": "Markdown 格式的中文分析结论"
+                }
+              },
+              "required": [
+                "结论"
+              ]
+            }
+          }
+        }
+      ],
+      "tool_choice": "auto"
+    }
+  },
+  "status_code": 200,
+  "json": {
+    "id": "chatcmpl-call_3",
+    "object": "chat.completion",
+    "created": 0,
+    "model": "deepseek-chat",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "call_3",
+              "type": "function",
+              "function": {
+                "name": "推荐图表",
+                "arguments": "{\"图表类型\": \"饼图\", \"理由\": \"地区销售构成适合饼图展示\"}"
+              }
+            }
+          ]
+        },
+        "finish_reason": "tool_calls"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 10,
+      "completion_tokens": 5,
+      "total_tokens": 15
+    }
+  }
+}
