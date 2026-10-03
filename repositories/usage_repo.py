@@ -66,6 +66,19 @@ def 记录用量(
         )
 
 
+def 用户今日用量(user_id: str) -> Dict[str, int]:
+    """某个用户今日（UTC）LLM 用量：请求次数 + 总 token（阶段 51 配额限流口径）。"""
+    初始化用量表()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(total_tokens),0) AS t "
+            "FROM llm_usage WHERE user_id = ? AND substr(created_at,1,10) = ?",
+            (user_id, today),
+        ).fetchone()
+    return {"记录数": int(row["n"]), "总token": int(row["t"])}
+
+
 def 统计用量(days: int = 7) -> Dict[str, Any]:
     """管理员视角：近 N 天总量 + 按天 + 按 provider 分组。"""
     初始化用量表()

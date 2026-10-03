@@ -67,6 +67,11 @@ class EnvConfig:
     # LLM 输出长度上限（批次4：防超长输出失控/控制 token 成本）
     LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "2048"))
 
+    # 阶段 51：服务端共享 Key 的 LLM 配额（0 = 不限；BYOK 不消耗）
+    # 默认 1000000 token/天 + 200 次/天 每人（宽松安全网，正常使用远不会触达）
+    LLM_DAILY_TOKEN_QUOTA = int(os.getenv("LLM_DAILY_TOKEN_QUOTA", "1000000"))
+    LLM_DAILY_REQUEST_QUOTA = int(os.getenv("LLM_DAILY_REQUEST_QUOTA", "200"))
+
     # CORS 白名单（P0 加固）：生产用逗号分隔的显式域名；默认仅本地开发源
     CORS_ORIGINS = [
         o.strip() for o in os.getenv(

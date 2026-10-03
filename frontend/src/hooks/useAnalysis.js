@@ -268,6 +268,9 @@ export default function useAnalysis() {
         setError('认证已过期或无效，请重新登录');
       } else if (e.status === 413) {
         setError('文件超过大小限制（最大 50MB）');
+      } else if (e.status === 429) {
+        // 阶段 51：服务端共享 Key 配额限流——后端 message 已带"已用/上限"，直接透传
+        setError(e.message || '已达今日分析上限，请明天再试或使用自己的 API Key');
       } else if (e.status === 400) {
         setError(e.message || '分析失败：参数或字段不满足要求');
       } else if (e.message?.includes('Failed to fetch') || e.name === 'TypeError') {

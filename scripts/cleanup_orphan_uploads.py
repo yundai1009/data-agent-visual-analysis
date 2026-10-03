@@ -68,7 +68,7 @@ def main() -> int:
     ]
 
     if not orphans:
-        print("没有孤儿文件，一切干净 ✅")
+        print("没有孤儿文件，一切干净 [OK]")
         return 0
 
     total = sum(f.stat().st_size for f in orphans)

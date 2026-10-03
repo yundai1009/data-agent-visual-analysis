@@ -162,6 +162,9 @@ def _准备上下文(
         user_api_key = _user_repo.读取LLMKey(user["user_id"])
     if not user_api_key and custom_api_key:
         user_api_key = custom_api_key
+    # 阶段 51：记录是否用户自备 Key（BYOK）——必须在 provider 级 env key 回退前判定，
+    # 否则共享 key 会被误判为"用户自带"而绕过配额。
+    is_byok = bool(user_api_key)
     # provider 级 Key（api_key_env 对应环境变量，参考 Reasonix 接入方式）
     if not user_api_key and provider_conf.get("api_key_env"):
         user_api_key = os.getenv(provider_conf["api_key_env"], "")
@@ -171,6 +174,17 @@ def _准备上下文(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="自定义 LLM 供应商必须提供 API Key（请求头 / 账号 Key / 供应商自带 Key）",
         )
+    # 阶段 51：服务端共享 Key 配额限流（BYOK 豁免——用户自带 key 不消耗共享额度）。
+    # generate / generate-stream / replay 三路都经本函数汇合，花费前拦截，超限 429。
+    if not is_byok:
+        from services.llm_quota import QuotaExceeded, 检查LLM配额
+        try:
+            检查LLM配额(user["user_id"])
+        except QuotaExceeded as exc:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=str(exc),
+            ) from exc
 
     # ── 全局 .env 回退（修复「LLM 模式全降级」）──
     # 场景：用户没在页面选 provider（前端不传 x-llm-provider），且没有 provider 级 key。
