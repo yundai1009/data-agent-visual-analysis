@@ -135,9 +135,18 @@ export function AppProvider({ children }) {
     setDataset(null);
   }, []);
 
-  // dataset 变化时自动持久化：State 需要知道“数据集被谁选中了”，刷新后凭缓存恢复
+  // dataset 变化时持久化：有值写入，null 时对称移除
+  // 【阶段 52 修复】原实现只有 `if (dataset) setItem(...)` —— dataset 变 null 时
+  // 既不写也不删：删除数据集（单个/批量/合并产物）只 setDataset(null) 清内存，
+  // 旧缓存留在 localStorage，刷新后 loadState 恢复**已删除**数据集 →
+  // 分析页显示「当前数据集：已删文件」，点开始分析报「分析失败：数据集不存在」。
+  // 对称持久化（写/删成对）让任何 setDataset(null) 的入口（删除、登出、401）
+  // 都自动清掉本地缓存，不必在每个调用点记得手动 removeItem。
   useEffect(() => {
-    if (dataset) localStorage.setItem('dataset_cache', JSON.stringify(dataset));
+    try {
+      if (dataset) localStorage.setItem('dataset_cache', JSON.stringify(dataset));
+      else localStorage.removeItem('dataset_cache');
+    } catch { /* 隐私模式/配额满时忽略：仅本次会话有效 */ }
   }, [dataset]);
 
   return (
