@@ -33,7 +33,11 @@ _SYSTEM_PROMPT = """你是数据分析 Agent，任务是根据给定的画像、
 2. 结构为：先一句话总结，再 2-4 点「关键发现」（用 `-` 列表），再 1-2 点「需关注」（如果有风险提示），最后 1-2 点「建议」（基于关键发现给出可执行的下一步行动，例如关注领先项、排查垫底原因，不要泛泛而谈）；
 3. 不要使用代码块，不要输出解释性开场白；
 4. 控制在 200-400 字之间；
-5. 必须调用 ``生成结论`` 工具，把结论作为参数传入；不要直接输出文本。"""
+5. 必须调用 ``生成结论`` 工具，把结论作为参数传入；不要直接输出文本。
+6. 【阶段 52】关于排名的铁律：聚合预览里的行**已按数值降序排好，第 1 行就是最大值**，
+   "谁最高/首位"只能照抄第 1 行，**禁止凭感觉重排**；
+   若预览里声明"未排序/行序不代表排名"，则**一个名次都不要断言**，只说趋势与差异，
+   所有数字必须原样引用，不得四舍五入到改变量级。"""
 
 _TOOL_SCHEMA = [{
     "type": "function",
@@ -52,17 +56,45 @@ _TOOL_SCHEMA = [{
 
 
 def _build_report_summary(report_df: pd.DataFrame) -> str:
-    """把聚合结果压缩成 LLM prompt 用的摘要：列名 + top3 行。"""
+    """把聚合结果压缩成 LLM prompt 用的摘要：列名 + 按数值降序的 top3 行。
+
+    【阶段 52 修复 · P1 正确性】
+    原实现直接 ``report_df.head(3)`` —— 取的是聚合结果的原始前 3 行，
+    既不是最大值也不是最小值。LLM 只看到这 3 行就写"北京位居首位"，
+    而真实最大值是杭州（pandas 核对：杭州 1093921 > 北京 1055460），
+    结论与报表数据表直接矛盾。
+
+    修复纪律：**排名由代码算，不让 LLM 自己排**。
+    1. 按"数值列的总量"降序排序（多个数值列时取行内合计，保证
+       "值最大的那一行"排在第 1 位）；
+    2. prompt 明示"已降序、第 1 行即最大"，LLM 只负责叙述；
+    3. 没有数值列时如实声明未排序，避免 LLM 凭行序推断排名。
+    """
     if report_df is None or report_df.empty:
         return "（聚合结果为空）"
-    columns = list(report_df.columns)
-    top3 = report_df.head(3)
+
+    df = report_df
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+    if numeric_cols:
+        # 行内合计最大的排最前；无法求和时（混合类型）退回按首个数值列排序
+        try:
+            sort_key = df[numeric_cols].sum(axis=1)
+        except (TypeError, ValueError):
+            sort_key = df[numeric_cols[0]]
+        order = sort_key.sort_values(ascending=False, kind="mergesort").index
+        df = df.loc[order]
+        note = f"已按数值（{'/'.join(map(str, numeric_cols))}）降序排列，第 1 行即为最大值："
+    else:
+        note = "（本结果无数值列，未排序，行序不代表排名，请勿断言名次）："
+
+    columns = list(df.columns)
+    top3 = df.head(3)
     # 用 dict-records 而非 to_markdown，避免 pandas额外依赖
     rows_text = []
     for _, row in top3.iterrows():
         items = [f"{col}: {_safe_value(row[col])}" for col in columns]
         rows_text.append("  - " + ", ".join(items))
-    return f"列名: {columns}\n前3行:\n" + "\n".join(rows_text)
+    return f"列名: {columns}\n{note}\n前3行:\n" + "\n".join(rows_text)
 
 
 def _safe_value(value: Any) -> str:

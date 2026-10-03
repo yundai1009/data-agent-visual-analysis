@@ -48,6 +48,9 @@ vi.mock('../hooks/useAnalysis', () => ({
   chartMap: { auto: '自动推荐', bar: '柱状图', line: '折线图', pie: '饼图' },
 }));
 
+const navMock = vi.hoisted(() => ({ navigate: vi.fn() }));
+vi.mock('react-router-dom', () => ({ useNavigate: () => navMock.navigate }));
+
 import Analysis from './Analysis';
 
 function renderPage() {
@@ -86,10 +89,12 @@ describe('Analysis 智能分析页', () => {
     expect(mockState.state.setNlInput).toHaveBeenCalledWith('帮我按地区看销售额');
   });
 
-  it('点击开始分析 → 触发 handleGenerate', () => {
+  it('点击开始分析 → handleGenerate 必须是 isFollowUp=false（回归：MouseEvent 当参数会丢弃高级设置并串成追问）', () => {
     renderPage();
     fireEvent.click(screen.getByRole('button', { name: /开始分析/ }));
     expect(mockState.state.handleGenerate).toHaveBeenCalled();
+    // 回归锁定：不能把点击事件对象当 isFollowUp 传下去（真值 → 追问分支）
+    expect(mockState.state.handleGenerate).toHaveBeenCalledWith(false);
   });
 
   it('渲染错误横幅（如配额 429 消息透传）', () => {
@@ -120,5 +125,17 @@ describe('Analysis 智能分析页', () => {
     renderPage();
     fireEvent.click(screen.getByRole('button', { name: '饼图' }));
     expect(mockState.state.handleGenerate).toHaveBeenCalledWith(false, 'pie');
+  });
+
+  it('生成完成后显示"查看报表"入口并跳转（回归：原文案谎称"报表即将打开"且无入口）', () => {
+    navMock.navigate.mockClear();
+    mockState.state.liveDone = { 报表ID: 'r-abc', 标题: '某报表' };
+    renderPage();
+    const btn = screen.getByRole('button', { name: '查看报表' });
+    expect(btn).toBeInTheDocument();
+    // 不再出现误导文案
+    expect(screen.queryByText('报表即将打开')).not.toBeInTheDocument();
+    fireEvent.click(btn);
+    expect(navMock.navigate).toHaveBeenCalledWith('/report/r-abc');
   });
 });

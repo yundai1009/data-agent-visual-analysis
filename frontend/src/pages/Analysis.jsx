@@ -1,10 +1,11 @@
-﻿/* =============================================================================
+/* =============================================================================
  * 文件：frontend/src/pages/Analysis.jsx —— 智能分析页（路由 /analysis，平台核心页面）
  * 职责：纯 JSX 渲染层（所有状态与业务逻辑已拆分到 hooks/useAnalysis.js）
  * 依赖：hooks/useAnalysis（业务逻辑）、components/LLMConfig（模型配置）、
  *        components/TraceRow（决策流步骤卡片——定义在本文件末尾）
  * ============================================================================= */
 import { Zap, Sparkles, BarChart3, LineChart, PieChart, ScatterChart, Table, Layers, Loader2, Cpu, GitBranch, X, Brain, Wrench, Eye, AlertTriangle, MessageSquare, ArrowRight, Bookmark } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import LLMConfig from '../components/LLMConfig';
 import useAnalysis, { chartMap } from '../hooks/useAnalysis';
 
@@ -53,6 +54,7 @@ const 筛选操作列表 = ['等于', '不等于', '包含', '大于', '大于�
 // ---- 主组件 ----
 
 export default function Analysis() {
+  const navigate = useNavigate();
   const {
     dataset, profile, fields, numFields, catFields, dateFields, textFields,
     nlInput, setNlInput, chartType, setChartType, generating,
@@ -112,7 +114,11 @@ export default function Analysis() {
           </div>
           <button disabled={generating}
             className="flex items-center gap-2 px-5 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-deep transition-all active:scale-[.98] disabled:opacity-50"
-            onClick={handleGenerate}>
+            /* 阶段 52 修复：必须显式传 isFollowUp=false。
+             * 原来直接 onClick={handleGenerate}，点击事件对象被当成 isFollowUp（真值），
+             * 走追问分支 → 用户在高级选项里选的图表类型/X轴/Y轴/分组/聚合/筛选/TopN 全被丢弃，
+             * 且已有历史报表时会把新需求当追问（携带上一报表ID），结果与需求不符。 */
+            onClick={() => handleGenerate(false)}>
             {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
             {generating ? '分析中…' : '开始分析'}
           </button>
@@ -192,7 +198,13 @@ export default function Analysis() {
                   style={{ height: `${h}%`, background: 'linear-gradient(180deg, #4a8ac2, #0f4c81)', boxShadow: '0 6px 14px -6px rgba(15,76,129,.35)', animation: `live-grow 0.9s cubic-bezier(.22,1,.36,1) ${0.12 * i + 0.1}s both` }} />
               ))}
             </div>
-            <p className="text-[11px] text-gray-400 mt-3">{liveError ? '生成失败，请检查参数后重试' : liveDone ? '决策完成，报表即将打开' : 'AI 正在根据决策流生成图表与结论…'}</p>
+            <p className="text-[11px] text-gray-400 mt-3">
+              {liveError
+                ? '生成失败，请检查参数后重试'
+                : liveDone
+                  ? '决策完成，报表已保存到报表历史'
+                  : 'AI 正在根据决策流生成图表与结论…'}
+            </p>
           </div>
         </div>
       )}
@@ -204,6 +216,14 @@ export default function Analysis() {
             <MessageSquare className="w-4 h-4 text-accent" />
             <span className="text-xs font-semibold text-gray-700">继续追问</span>
             <span className="text-[11px] text-gray-400">基于刚才的分析结果接着问，例如「那华南区呢？」「按月份对比呢？」</span>
+            {/* 阶段 52 修复：生成完成提示"报表即将打开"却不跳转——补上显式查看入口 */}
+            {liveDone.报表ID && (
+              <button
+                onClick={() => navigate(`/report/${liveDone.报表ID}`)}
+                className="ml-auto px-3 py-1.5 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-deep transition-all">
+                查看报表
+              </button>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <input value={followUp} onChange={(e) => setFollowUp(e.target.value)}

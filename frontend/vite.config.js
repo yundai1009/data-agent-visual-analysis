@@ -9,6 +9,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { DEV_PROXY } from './dev-proxy.js'
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), cspPlugin()],
@@ -30,21 +31,7 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    proxy: {
-      '/health': 'http://127.0.0.1:8000',
-      '/auth': 'http://127.0.0.1:8000',
-      '/datasets': 'http://127.0.0.1:8000',
-      '/reports': 'http://127.0.0.1:8000',
-      '/clean': 'http://127.0.0.1:8000',
-      '/examples': 'http://127.0.0.1:8000',
-      '/admin': 'http://127.0.0.1:8000',
-      '/feedback': 'http://127.0.0.1:8000',
-      // F-S2 修复：补 4 个 dev 代理缺失，避免分享/看板/模板/定时任务 dev 环境 404
-      '/share-data': 'http://127.0.0.1:8000',
-      '/dashboards': 'http://127.0.0.1:8000',
-      '/templates': 'http://127.0.0.1:8000',
-      '/schedules': 'http://127.0.0.1:8000',
-    },
+    proxy: DEV_PROXY,
   },
 });
 

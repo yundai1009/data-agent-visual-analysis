@@ -49,6 +49,14 @@ export default function ShareDialog({ showShare, onClose, currentReportId }) {
     })();
   }, [showShare, currentReportId]);
 
+  // 阶段 52（P3 a11y）：ESC 关闭弹窗（此前只有 X 和点遮罩可关）
+  useEffect(() => {
+    if (!showShare) return;
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showShare, onClose]);
+
   if (!showShare) return null;
 
   const handleCreateShare = async () => {

@@ -37,7 +37,14 @@ export default function Login() {
   // 【Bug9 修复】组件卸载守卫：异步回调（发送验证码/登录提交）在 await 完成后
   // 检查是否仍挂载，避免 setState 更新已卸载组件。
   const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  // 【Bug9 修复 + 阶段 52 修正】挂载守卫必须能复位：StrictMode 开发模式会
+  // setup → cleanup → setup 双调用，若 cleanup 只置 false 而 setup 不复位，
+  // ref 将永久为 false，导致所有 await 回调提前 return——验证码按钮卡"发送中"、
+  // 注册/登录卡"处理中…"。正确写法：setup 复位 true、cleanup 置 false。
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   // 验证码倒计时
   useEffect(() => {

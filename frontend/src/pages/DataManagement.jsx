@@ -1,4 +1,4 @@
-﻿// 数据管理页（面试讲解）
+// 数据管理页（面试讲解）
 //
 // 做了什么：数据资产的"仓库页"——上传/下载数据集、加载示例数据、
 //   清洗、重命名、删除、预览；上传后立即展示字段画像与 LLM 字段
@@ -15,6 +15,7 @@ import { useNavigate } from 'react-router-dom';
 import { Upload, Download, FileDown, Database, FileText, AlertTriangle, Search, Sparkles, Loader2, BarChart3, LineChart, Pencil, Trash2, Lightbulb } from 'lucide-react';
 import { uploadFileWithProgress, loadExample, cleanDataset, healthCheck, listDatasets, deleteDataset, renameDataset, mergeDatasets, getDataset, getDatasetRows, exportUserData } from '../api';
 import { useApp } from '../AppContext';
+import { 清洗摘要转文本 } from '../validators/cleanSummary';
 
 // 演示模式（vite --mode demo 构建）：打开页面自动加载示例数据，零基础用户无需上传即可体验
 const DEMO_MODE = import.meta.env.VITE_DEMO === '1';
@@ -808,7 +809,7 @@ export default function DataManagement() {
               </div>
               <div className="bg-accent-soft rounded-lg p-3 text-xs text-accent">
                 <p className="font-medium mb-1">操作摘要</p>
-                <pre className="text-xs whitespace-pre-wrap">{JSON.stringify(cleanResult.操作摘要, null, 2)}</pre>
+                <p className="whitespace-pre-wrap leading-relaxed">{清洗摘要转文本(cleanResult.操作摘要)}</p>
               </div>
               <button className="w-full py-2 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-deep transition-all" onClick={() => { setCleanResult(null); navigate('/analysis'); }}>前往分析</button>
             </div>
