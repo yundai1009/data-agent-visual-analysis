@@ -12,7 +12,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from 后端_核心.存储.sqlite_repo import _get_conn, _write_lock
+from 后端_核心.存储.backend import 写锁 as _write_lock
+from 后端_核心.存储.sqlite_repo import _get_conn   # 连接暂仍由 SQLite 实现提供
 
 logger = logging.getLogger(__name__)
 
