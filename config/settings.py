@@ -43,6 +43,26 @@ class EnvConfig:
         str(PROJECT_ROOT / "data" / "daa.db"),
     )
 
+    # 阶段 54：存储后端选择（sqlite 默认 / mysql）
+    # - sqlite：单文件库，写锁是进程内 threading.Lock，多 worker 会撞锁（对外服务须 --workers 1）
+    # - mysql：真并发，可多 worker 部署
+    DB_BACKEND = os.getenv("DB_BACKEND", "sqlite").strip().lower()
+    MYSQL_HOST = os.getenv("MYSQL_HOST", "127.0.0.1")
+    MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
+    MYSQL_USER = os.getenv("MYSQL_USER", "daa_app")
+    MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
+    MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "daa")
+
+    # 阶段 54：存储后端选择（sqlite 默认 / mysql）
+    # - sqlite：单文件库，写锁是进程内 threading.Lock，多 worker 会撞锁（对外服务须 --workers 1）
+    # - mysql：真并发，可多 worker 部署
+    DB_BACKEND = os.getenv("DB_BACKEND", "sqlite").strip().lower()
+    MYSQL_HOST = os.getenv("MYSQL_HOST", "127.0.0.1")
+    MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
+    MYSQL_USER = os.getenv("MYSQL_USER", "daa_app")
+    MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
+    MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "daa")
+
     # 认证开关：开发阶段设为 false 可免 token 访问
     AUTH_ENABLED = os.getenv("AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
 
