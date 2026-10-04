@@ -8,25 +8,30 @@
 - 不引 ORM：127 处业务 SQL 一行不改，只换连接来源与占位符风格
 
 配合 backend.占位符风格/转换SQL：repo 层写 ``?``，本后端执行时转 ``%s``（pymysql 风格）。
+（此处仅为说明性引用，本模块**不** import backend——无循环依赖，也无实际使用。）
 """
 from __future__ import annotations
 
 import threading
 from contextlib import contextmanager
 from typing import Iterator, List, Tuple
+from urllib.parse import quote_plus
 
 from sqlalchemy import create_engine
-
-from 后端_核心.存储.backend import 当前后端
 
 _引擎 = None
 _引擎锁 = threading.Lock()
 
 
 def _连接url() -> str:
+    """拼 SQLAlchemy DSN。
+
+    账号/密码经 ``quote_plus`` 做 URL 编码：密码含 ``@`` / ``#`` / ``/`` / ``?`` 这类
+    URL 保留字符时，裸拼会破坏 URL 结构（``#`` 之后被当成 fragment、``@`` 截断 userinfo）。
+    """
     from config.settings import EnvConfig
     return (
-        f"mysql+pymysql://{EnvConfig.MYSQL_USER}:{EnvConfig.MYSQL_PASSWORD}"
+        f"mysql+pymysql://{quote_plus(EnvConfig.MYSQL_USER)}:{quote_plus(EnvConfig.MYSQL_PASSWORD)}"
         f"@{EnvConfig.MYSQL_HOST}:{EnvConfig.MYSQL_PORT}/{EnvConfig.MYSQL_DATABASE}"
         f"?charset=utf8mb4"
     )
@@ -53,6 +58,9 @@ def _取引擎():
 def get_conn() -> Iterator:
     """借一条连接（用完归还池）；正常 commit、异常 rollback。
 
+    返回类型标注为 ``Iterator``：经 ``@contextmanager`` 装饰后，调用方拿到的实际是
+    ``_GeneratorContextManager``（上下文管理器），注解与被包装的生成器函数一致。
+
     借出的是 DBAPI 连接（pymysql），调用方用 ``conn.cursor()`` 走原生 cursor。
     """
     conn = _取引擎().raw_connection()
@@ -70,7 +78,7 @@ def 建表语句(表名: str, 列定义: List[Tuple[str, str]]) -> str:
     """生成 MySQL 建表 DDL：InnoDB + utf8mb4，列名/表名反引号包裹。
 
     列定义形如 ``[("id", "INT PRIMARY KEY"), ("名称", "VARCHAR(64)")]``。
-    已知限制：列名内含反引号（```）不做转义——项目纪律禁止此类列名，本期不处理。
+    已知限制：**表名与列名均不做反引号（```）转义**——项目纪律禁止此类标识符，本期不处理。
     """
     列清单 = ", ".join(f"`{列名}` {列类型}" for 列名, 列类型 in 列定义)
     return (
