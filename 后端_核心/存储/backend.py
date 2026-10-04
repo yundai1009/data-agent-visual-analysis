@@ -17,16 +17,21 @@ import threading
 # 写锁：SQLite 需要串行化写（进程内）；MySQL 靠事务/行锁，保留同对象仅为接口统一
 写锁 = threading.Lock()
 
-# 字面问号检测：匹配单引号字符串，凡引号内出现 ? 即为字面问号（裸 ? 一律是占位符）
-_去字符串 = re.compile(r"'[^']*'")
+# 字面问号检测：匹配单引号字符串字面量（支持 SQL 标准 '' 双写转义与 \' 反斜杠
+# 转义写法），凡字符串内出现 ? 即为字面问号（裸 ? 一律视为占位符）
+_去字符串 = re.compile(r"'(?:[^'\\]|''|\\.)*'")
 
 
 def 当前后端() -> str:
-    """返回当前启用的后端名：``sqlite``（默认）或 ``mysql``。"""
+    """返回当前启用的后端名：``sqlite``（默认）或 ``mysql``。
+
+    仅 config 导入失败（ImportError，如缺依赖/配置模块不存在）时回落默认值；
+    其他异常（配置读取错误等）向上抛出，避免静默掩盖真实问题。
+    """
     try:
         from config.settings import EnvConfig
         return (getattr(EnvConfig, "DB_BACKEND", "sqlite") or "sqlite").strip().lower()
-    except Exception:
+    except ImportError:
         return "sqlite"
 
 
@@ -38,10 +43,13 @@ def 占位符风格(后端: str) -> str:
 def 转换SQL(sql: str, 后端: str) -> str:
     """把 repo 层的 ``?`` 占位符转成目标后端风格。SQLite 原样返回。
 
-    含字面问号（单引号字符串内的 ?）时抛 ValueError——朴素替换会把字面问号
-    也换成 %s，产生错误 SQL。SQL 规范要求 SQL 文本中不写字面问号。
-    注：检测对象是"引号内是否含 ?"。裸 ? 一律视为占位符（约定如此），
-    不能报错；否则合法占位符 SQL 将无法转换（brief 原实现有此倒置缺陷）。
+    含字面问号（单引号字符串字面量内的 ?）时抛 ValueError——朴素替换会把字面问号
+    也换成 %s，产生错误 SQL。裸 ? 一律视为占位符（约定如此），不会报错。
+
+    检测范围：单引号字符串字面量，支持 SQL 标准 ``''`` 双写转义与常见 ``\\'``
+    反斜杠转义写法。不在检测范围（已知限制）：双引号字符串 ``"q?"``、反引号标识符
+    `` `col?` ``、``--`` 注释内的 ``?`` 会漏检、可能被误替换；项目纪律是 SQL 中
+    禁止字面问号，未来接 MySQL 时应升级为 SQL 解析级检测（本函数不引入手写解析器）。
     """
     if 后端 != "mysql":
         return sql
