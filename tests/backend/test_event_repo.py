@@ -40,7 +40,9 @@ import repositories.event_repo as event_repo
 def _tmp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """把 SQLite 路径临时指向 tmp_path，防止污染项目数据库。"""
     fake_db = str(tmp_path / "test_events.db")
-    monkeypatch.setattr("后端_核心.存储.sqlite_repo._resolve_db_path", lambda: Path(fake_db))
+    # 阶段 54：连接解析已搬入 sqlite_backend，补丁目标随之迁移
+    # （sqlite_repo._resolve_db_path 现为别名，打补丁不影响 get_conn 的解析）
+    monkeypatch.setattr("后端_核心.存储.sqlite_backend.解析db路径", lambda: Path(fake_db))
     event_repo.初始化事件表()
     yield
     Path(fake_db).unlink(missing_ok=True)
