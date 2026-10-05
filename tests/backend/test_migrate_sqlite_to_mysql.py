@@ -122,6 +122,75 @@ def test_迁移_时间列转DATETIME(源sqlite库):
     assert v.year == 2026 and v.month == 1
 
 
+@pytest.fixture
+def 源sqlite库_含非法时间(tmp_path, monkeypatch):
+    """建一个含一条非法时间值记录的临时 SQLite 库（TEXT 主键表）。
+
+    用于验证 I-1：非法 ISO 时间串在 MySQL 严格模式下插不进 DATETIME 列，
+    落库置 NULL 的同时必须把「表/列/行标识/原始串/原因」记进迁移结果，
+    使数据事后可恢复（源库原值永不被破坏）。
+    """
+    from config import settings
+    路径 = tmp_path / "src_bad_time.db"
+    monkeypatch.setenv("DAA_SQLITE_PATH", str(路径))
+    monkeypatch.setattr(settings.EnvConfig, "SQLITE_PATH", str(路径), raising=False)
+    with sqlite_backend.get_conn() as conn:
+        conn.execute(
+            "CREATE TABLE t_stage54_mig_users ("
+            "user_id TEXT PRIMARY KEY, 用户名 TEXT NOT NULL, 创建时间 TEXT)")
+        conn.execute(
+            "INSERT INTO t_stage54_mig_users VALUES (?,?,?)",
+            ("u1", "张三", "2026-01-01T10:00:00"))
+        conn.execute(
+            "INSERT INTO t_stage54_mig_users VALUES (?,?,?)",
+            ("u2", "李四", "not-a-date"))  # 非法 ISO 时间串
+    return 路径
+
+
+@ pytest.mark.skipif(not _能连mysql(), reason="无 MySQL 实例或凭据，跳过")
+def test_迁移_非法时间置NULL但失败可恢复(源sqlite库_含非法时间):
+    """I-1：非法时间值 → MySQL 侧 NULL + 源库原值保留 + 完整失败记录可恢复。"""
+    import sqlite3
+    from scripts import migrate_sqlite_to_mysql as m
+
+    报告 = m.迁移(源sqlite库_含非法时间, 清空目标=True)
+
+    # 1) 源库原值仍在（迁移脚本全程 mode=ro，且失败不影响后续行）
+    with sqlite3.connect(源sqlite库_含非法时间) as conn:
+        源值 = conn.execute(
+            "SELECT 创建时间 FROM t_stage54_mig_users WHERE user_id = 'u2'").fetchone()[0]
+    assert 源值 == "not-a-date", f"源库原始值不能被破坏：{源值!r}"
+
+    # 2) MySQL 严格模式下非法串插不进 DATETIME 列 → 该值落库为 NULL
+    with mysql_backend.get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 创建时间 FROM t_stage54_mig_users WHERE user_id = %s", ("u2",))
+            v = cur.fetchone()[0]
+    assert v is None, f"非法时间值应落库为 NULL，实得 {v!r}"
+    # 合法行的时间值不受影响
+    with mysql_backend.get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 创建时间 FROM t_stage54_mig_users WHERE user_id = %s", ("u1",))
+            v1 = cur.fetchone()[0]
+    assert v1 is not None and v1.year == 2026, f"合法行时间被破坏：{v1!r}"
+
+    # 3) 结构化失败记录：表/列/行标识(主键值)/原始串/原因 一个不少
+    失败 = 报告["时间转换失败"]
+    assert len(失败) == 1, f"应恰好 1 条失败记录，实得 {失败}"
+    记录 = 失败[0]
+    assert 记录["表名"] == "t_stage54_mig_users", 记录
+    assert 记录["列名"] == "创建时间", 记录
+    assert 记录["行标识"] == {"user_id": "u2"}, 记录["行标识"]
+    assert 记录["原始串"] == "not-a-date", 记录["原始串"]
+    assert "不是合法 ISO" in 记录["原因"], 记录["原因"]
+
+    # 4) as_dict 序列化（--报告 JSON 文件写入的就是它）同样携带失败记录
+    序列化 = 报告.as_dict()
+    assert 序列化["时间转换失败"][0]["原始串"] == "not-a-date", 序列化["时间转换失败"]
+
+
 @ pytest.mark.skipif(not _能连mysql(), reason="无 MySQL 实例或凭据，跳过")
 def test_迁移_幂等_重复运行不重复(源sqlite库):
     from scripts import migrate_sqlite_to_mysql as m

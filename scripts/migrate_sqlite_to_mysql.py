@@ -62,17 +62,25 @@ class 迁移结果:
     """迁移报告。
 
     既支持按表名取报告（``报告["users"]["迁入"]``），也支持整体序列化（``--报告``）。
+    ``报告["时间转换失败"]`` 返回结构化失败记录列表，每项含
+    ``表名/列名/行标识(主键值)/原始串/原因``：非法时间值在 MySQL 严格模式下
+    插不进 DATETIME 列、落库为 NULL，但原始串与行定位信息全部保留，数据可恢复
+    （与源库 mode=ro 打开互为备份，事后可据此人工修正）。
     """
 
-    def __init__(self, *, 源库: str, dry_run: bool, 清空目标: bool, 表: Dict[str, dict]):
+    def __init__(self, *, 源库: str, dry_run: bool, 清空目标: bool, 表: Dict[str, dict],
+                 时间转换失败: Optional[Sequence[dict]] = None):
         self.源库 = 源库
         self.dry_run = dry_run
         self.清空目标 = 清空目标
         self.表 = 表
+        self.时间转换失败 = list(时间转换失败 or [])
 
-    # 映射式访问
+    # 映射式访问：表名走 self.表，其余（如「时间转换失败」）回退到属性
     def __getitem__(self, 表名: str) -> dict:
-        return self.表[表名]
+        if 表名 in self.表:
+            return self.表[表名]
+        return getattr(self, 表名)
 
     def __contains__(self, 表名: str) -> bool:
         return 表名 in self.表
@@ -110,6 +118,7 @@ class 迁移结果:
             "总源行数": self.总源行数,
             "总迁入": self.总迁入,
             "总警告": self.总警告,
+            "时间转换失败": self.时间转换失败,
             "表": self.表,
         }
 
@@ -157,6 +166,20 @@ def 是时间列名(列名: str) -> bool:
     return any(名.endswith(后缀) for 后缀 in _时间列后缀)
 
 
+def _是文本族(源类型: str) -> bool:
+    """SQLite 文本族判定：TEXT/CHAR/CLOB + 原生 DATE/TIME/DATETIME + 无声明类型。
+
+    原生日期时间类型（``DATE`` / ``TIME`` / ``DATETIME``，含 ``DATETIME(6)`` 这类
+    带精度的写法）与 TEXT 时间列一样按「时间列名 → DATETIME(6)」映射，使
+    :func:`列类型映射` 与 :func:`_该列是时间` 口径自洽（源库时间列当前全为 TEXT，
+    此分支不触发，但映射函数本身应对任意声明类型自洽）。
+    """
+    if not 源类型:
+        return True
+    return ("TEXT" in 源类型 or "CHAR" in 源类型 or "CLOB" in 源类型
+            or 源类型.startswith(("DATE", "TIME", "DATETIME")))
+
+
 def 列类型映射(列名: str, 源类型: str, *, 是主键: bool, 主键列数: int) -> str:
     """SQLite 声明类型 → MySQL 列类型。
 
@@ -165,23 +188,25 @@ def 列类型映射(列名: str, 源类型: str, *, 是主键: bool, 主键列�
     1. 单列 INTEGER 主键 → ``backend.自增主键DDL("mysql")``（方言收敛，不重复造）
     2. 其余主键列（含 TEXT 主键）→ ``VARCHAR(255) PRIMARY KEY``；复合主键用 191
        （MySQL 的 TEXT/BLOB **不能做主键**：无默认长度、加不了索引长度前缀）
-    3. 时间列名 + TEXT 值 → ``DATETIME(6)``（保留微秒，ISO 串精度不丢）
+    3. 时间列名 + 文本族 → ``DATETIME(6)``（保留微秒，ISO 串精度不丢）
     4. ``BOOLEAN`` → ``BOOLEAN``；INTEGER 族 → ``INT``；REAL 族 → ``DOUBLE``
-    5. BLOB 族 → ``LONGBLOB``；其余 TEXT 族 → ``LONGTEXT``
+    5. BLOB 族 → ``LONGBLOB``；其余文本族 → ``LONGTEXT``
        （SQLite 文本无长度上限：实测 ``datasets.df_json`` 单行最大 1236 万字符、
        ``reports.report_json`` 最大 30 万字符，MySQL ``TEXT`` 只有 64KB 会直接截断报错）
     """
     源类型 = (源类型 or "").strip().upper()
-    是文本族 = ("TEXT" in 源类型 or "CHAR" in 源类型 or "CLOB" in 源类型 or not 源类型)
 
     if 是主键:
         if 源类型.startswith("INT") and 主键列数 == 1:
             return backend.自增主键DDL("mysql")          # INT AUTO_INCREMENT PRIMARY KEY
-        # TEXT 主键 / 复合主键：VARCHAR(255)（单列）/ VARCHAR(191)（复合，utf8mb4 索引更安全）
+        # TEXT 主键 / 复合主键：VARCHAR(255)（单列）/ VARCHAR(191)（复合，utf8mb4 索引更安全）。
+        # 已知限制：复合主键若含 INTEGER 列，这里也一刀切映射成 VARCHAR(191)（整数主键值
+        # 会被存成字符串）——当前源库复合主键全为 TEXT（favorites 两列均 TEXT）不触发；
+        # 若将来出现含 INTEGER 的复合主键，需按各列声明类型分别映射主键列，本脚本不实现。
         长度 = 255 if 主键列数 == 1 else 191
         return f"VARCHAR({长度}) PRIMARY KEY"
 
-    if 是文本族 and 是时间列名(列名):
+    if _是文本族(源类型) and 是时间列名(列名):
         return "DATETIME(6)"
     if 源类型 == "BOOLEAN":
         return "BOOLEAN"
@@ -207,24 +232,30 @@ def _建表DDL(表名: str, 结构: Sequence[dict]) -> str:
 # --------------------------------------------------------------------------- 值转换
 
 
-def 转时间值(值) -> Tuple[Optional[datetime], Optional[str]]:
-    """ISO 时间串 → naive UTC datetime；失败返回 ``(None, 原因)``。
+def 转时间值(值) -> Tuple[Optional[datetime], Optional[str], Optional[str]]:
+    """ISO 时间串 → naive UTC datetime。
+
+    成功返回 ``(转换值, None, None)``；解析失败返回 ``(None, 原始串, 原因)``：
+    非法串在 MySQL 严格模式下插不进 DATETIME 列、落库为 NULL，但**原始串随三元组
+    一起交给调用方记入结构化失败记录**（表/列/行标识/原始串/原因），数据事后可恢复，
+    源库原值（mode=ro 打开）也不被破坏。
 
     源库时间值有两种形态：``2026-08-01T05:22:30.480774+00:00``（带时区）与
     ``2026-08-18 11:20:07``（无时区）。带时区的一律折算成 UTC 再去掉 tzinfo——
     MySQL ``DATETIME`` 不带时区语义，留着 offset 只会被服务端按会话时区二次偏移。
     """
     if 值 is None:
-        return None, None
+        return None, None, None
     if isinstance(值, datetime):
-        return _去时区(值), None
+        return _去时区(值), None, None
     文本 = str(值).strip()
     if not 文本:
-        return None, None
+        return None, None, None
     try:
-        return _去时区(datetime.fromisoformat(文本)), None
+        return _去时区(datetime.fromisoformat(文本)), None, None
     except ValueError:
-        return None, f"时间值不是合法 ISO 时间串，已置 NULL：{文本[:40]}"
+        return (None, str(值),
+                f"时间值不是合法 ISO 时间串，已置 NULL（原始串已记入迁移结果，可修复）：{文本[:40]}")
 
 
 def _去时区(值: datetime) -> datetime:
@@ -284,6 +315,7 @@ def 迁移(源库路径, *, 清空目标: bool = False, dry_run: bool = False,
         f"{'（只报告，不写）' if dry_run else ''}")
 
     报告表: Dict[str, dict] = {}
+    转换失败汇总: List[dict] = []
     with _开源连接(源库路径) as 源:
         表清单 = 发现表清单(源)
         if dry_run:
@@ -295,10 +327,12 @@ def 迁移(源库路径, *, 清空目标: bool = False, dry_run: bool = False,
             with mysql_backend.get_conn() as 目标:
                 with 目标.cursor() as cur:
                     for 表名 in 表清单:
-                        报告表[表名] = _迁表(源, cur, 表名, 清空目标=清空目标,
-                                            include_df_json=include_df_json)
+                        报告表[表名], 表转换失败 = _迁表(源, cur, 表名, 清空目标=清空目标,
+                                                   include_df_json=include_df_json)
+                        转换失败汇总.extend(表转换失败)
 
-    结果 = 迁移结果(源库=源库路径, dry_run=dry_run, 清空目标=清空目标, 表=报告表)
+    结果 = 迁移结果(源库=源库路径, dry_run=dry_run, 清空目标=清空目标, 表=报告表,
+                 时间转换失败=转换失败汇总)
     for 表名, 表报 in 报告表.items():
         行 = (f"{前缀} {表名:<22} 源行数={表报['源行数']:<6} 迁入={表报['迁入']:<6} "
               f"列数={表报['列数']}")
@@ -311,6 +345,9 @@ def 迁移(源库路径, *, 清空目标: bool = False, dry_run: bool = False,
             say(f"{前缀}   ! {警告}")
         if len(表报["警告"]) > 5:
             say(f"{前缀}   ! …另有 {len(表报['警告']) - 5} 条警告")
+    for 记录 in 结果.时间转换失败:
+        say(f"{前缀}   ! 时间转换失败：{记录['表名']}.{记录['列名']} "
+            f"行={记录['行标识']} 原始串={记录['原始串']!r} 原因={记录['原因']}")
     say(f"{前缀} 合计 {len(报告表)} 张表，源行数 {结果.总源行数}"
         + (f"，实际迁入 {结果.总迁入} 行" if not dry_run else "（dry-run 不写库）"))
     return 结果
@@ -349,14 +386,20 @@ def _只统计(源: sqlite3.Connection, 表名: str, *, include_df_json: bool) -
 
 
 def _迁表(源: sqlite3.Connection, 游标, 表名: str, *, 清空目标: bool,
-          include_df_json: bool) -> dict:
-    """迁移单表：建表 → （可选）清空 → 批量 upsert。"""
+          include_df_json: bool) -> Tuple[dict, List[dict]]:
+    """迁移单表：建表 → （可选）清空 → 批量 upsert。
+
+    返回 ``(报告, 转换失败记录)``：后者是结构化时间转换失败列表，每项含
+    ``表名/列名/行标识(主键值)/原始串/原因``，由调用方合并进整体迁移结果
+    （落库为 NULL 但数据可恢复）。
+    """
     结构 = 表结构(源, 表名)
     跳过 = _跳过列(表名, include_df_json)
     迁列 = [c for c in 结构 if c["name"] not in 跳过]
     主键列 = [c["name"] for c in sorted(结构, key=lambda c: c["pk"]) if c["pk"]]
     时间列 = {c["name"] for c in 迁列 if _该列是时间(结构, c["name"])}
     警告: List[str] = []
+    转换失败: List[dict] = []
 
     游标.execute(_建表DDL(表名, 结构))
     if 清空目标:
@@ -369,16 +412,16 @@ def _迁表(源: sqlite3.Connection, 游标, 表名: str, *, 清空目标: bool,
         警告.append("源表无主键：无法用 ON DUPLICATE KEY UPDATE 保证幂等，整表跳过")
         报告["跳过"] = 源.execute(f'SELECT COUNT(*) FROM "{表名}"').fetchone()[0]
         报告["源行数"] = 报告["跳过"]
-        return 报告
+        return 报告, 转换失败
     if not 迁列:
         警告.append("迁入列为空（全部列被跳过），整表跳过")
-        return 报告
+        return 报告, 转换失败
 
     SQL = _upsertSQL(表名, 迁列, 主键列)
     列片段 = ", ".join(f'"{c["name"]}"' for c in 迁列)
     待写: List[tuple] = []
     待写字节 = 0
-    主键位 = [c["name"] for c in 迁列]
+    迁列名 = [c["name"] for c in 迁列]  # 全部迁移列的列名（M1：原「主键位」命名误导）
 
     def _落批():
         nonlocal 待写, 待写字节
@@ -396,12 +439,19 @@ def _迁表(源: sqlite3.Connection, 游标, 表名: str, *, 清空目标: bool,
             警告.append("主键含 NULL，该行已跳过（MySQL 主键不可为 NULL）")
             continue
         值 = []
-        for 名 in 主键位:
+        for 名 in 迁列名:
             原值 = 行[名]
             if 名 in 时间列:
-                转换值, 错 = 转时间值(原值)
+                转换值, 原始串, 错 = 转时间值(原值)
                 if 错:
                     警告.append(f"{名}：{错}")
+                    转换失败.append({
+                        "表名": 表名,
+                        "列名": 名,
+                        "行标识": {k: 行[k] for k in 主键列},
+                        "原始串": 原始串 if 原始串 is not None else str(原值),
+                        "原因": 错,
+                    })
                 原值 = 转换值
             值.append(原值)
         待写.append(tuple(值))
@@ -409,21 +459,26 @@ def _迁表(源: sqlite3.Connection, 游标, 表名: str, *, 清空目标: bool,
         if len(待写) >= _批行数 or 待写字节 >= _批字节:
             _落批()
     _落批()
-    return 报告
+    return 报告, 转换失败
 
 
 def _该列是时间(结构: Sequence[dict], 列名: str) -> bool:
-    """时间列判定（与 :func:`列类型映射` 第 3 条同一口径：仅 TEXT 族 + 时间列名）。"""
+    """时间列判定（与 :func:`列类型映射` 同一口径：文本族 + 时间列名）。"""
     列 = next((c for c in 结构 if c["name"] == 列名), None)
     if 列 is None or 列["pk"]:
         return False
     源类型 = (列["type"] or "").strip().upper()
-    是文本族 = ("TEXT" in 源类型 or "CHAR" in 源类型 or "CLOB" in 源类型 or not 源类型)
-    return 是文本族 and 是时间列名(列名)
+    return _是文本族(源类型) and 是时间列名(列名)
 
 
 def _upsertSQL(表名: str, 迁列: Sequence[dict], 主键列: Sequence[str]) -> str:
-    """``INSERT ... ON DUPLICATE KEY UPDATE``：重复运行覆盖旧值，不产生重复行。"""
+    """``INSERT ... ON DUPLICATE KEY UPDATE``：重复运行覆盖旧值，不产生重复行。
+
+    注意：更新子句沿用 ``VALUES(col)`` 写法——MySQL 8.0.20+ 已将其标记为弃用
+    （deprecated），当前环境 8.0.23 仍可用，为兼容 MySQL 5.7/8.0 保留；若将来
+    强制要求更高版本，可改用 ``AS new`` 别名写法
+    （``INSERT ... VALUES (...) AS new ON DUPLICATE KEY UPDATE col = new.col``）。
+    """
     列清单 = ", ".join(f"`{c['name']}`" for c in 迁列)
     占位 = ", ".join(["%s"] * len(迁列))
     非主键 = [c["name"] for c in 迁列 if c["name"] not in 主键列]
