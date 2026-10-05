@@ -202,3 +202,38 @@ class Test单份导出转义:
                 sheet1 = sub.get("xl/worksheets/sheet1.xml", "")
                 assert "<f>" not in sheet1, f"{n} 含公式标签"
                 assert any("'=SUM(A1:A2)" in t for t in sub.values()), f"{n} 未转义"
+
+
+# ============================================================================
+# 3. CSV 导出 BOM（真实走查 F2：无 BOM 时中文 Windows Excel 打开乱码）
+# ============================================================================
+
+class Test导出CSV带BOM:
+    def test_单份导出csv_带UTF8BOM(self, client):
+        """导出内容含中文（表头 '地区' 等），首字节必须是 UTF-8 BOM（EF BB BF）。"""
+        token = _注册(client, "bom1")
+        rid = _生成注入报表(client, token)  # 报表数据含中文（华东/华南）
+        r = client.get(f"/reports/{rid}/export?format=csv", headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 200, r.text
+        raw = r.content
+        assert raw[:3] == b"\xef\xbb\xbf", (
+            f"CSV 导出缺少 UTF-8 BOM（前 3 字节 {raw[:3]!r}），中文 Windows Excel 打开会乱码"
+        )
+        # BOM 之后内容仍可正常 UTF-8 解码且含中文
+        text = raw[3:].decode("utf-8")
+        assert "华东" in text, text
+
+    def test_导出全部zip_csv分支带BOM(self, client):
+        token = _注册(client, "bom2")
+        _生成注入报表(client, token)
+        r = client.get("/reports/export-all?format=csv", headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 200, r.text
+        with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+            csv_files = [n for n in z.namelist() if n.endswith(".csv")]
+        assert csv_files, "zip 内应有 csv"
+        with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+            for n in csv_files:
+                raw = z.read(n)
+                assert raw[:3] == b"\xef\xbb\xbf", f"{n} 缺 BOM（前 3 字节 {raw[:3]!r}）"
+                text = raw[3:].decode("utf-8")
+                assert "华东" in text, f"{n} 内容异常: {text[:50]}"

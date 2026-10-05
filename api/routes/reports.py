@@ -61,6 +61,39 @@ def _公式注入转义行(row: Dict[str, Any]) -> Dict[str, Any]:
     """整行转义：列名（表头）与单元格值全部走 _公式注入转义。"""
     return {_公式注入转义(k): _公式注入转义(v) for k, v in row.items()}
 
+# Fix 4（走查）：导出值格式化——ISO 日期截取 + 浮点去噪。
+# 报表数据已 JSON 序列化（日期为 ISO 字符串、浮点为二进制噪声），导出时
+# 直接 to_excel/to_csv 会把 '2024-01-01T00:00:00' 当字符串写进 Excel、
+# 把 6933736.7700000005 这种尾巴原样写出。
+_ISO日期前缀 = re.compile(r"^\d{4}-\d{2}-\d{2}T")
+
+
+def _导出值格式化(v: Any) -> Any:
+    """Fix 4：导出前格式化单个值——ISO 日期截取 + 浮点去噪，其余原样。
+
+    - 字符串匹配 ISO 日期模式 ^\\d{4}-\\d{2}-\\d{2}T → 截取 YYYY-MM-DD
+      （有 HH:MM 且 HH:MM != 00:00 时保留为 "YYYY-MM-DD HH:MM"）；
+    - float：abs(v - round(v)) < 1e-9 → 整数化（100.0 → 100）；
+      否则 round(v, 4) 去噪保留业务精度（6933736.7700000005 → 6933736.77）；
+    - 其余原样返回。
+    """
+    if isinstance(v, str) and _ISO日期前缀.match(v):
+        日期部分 = v[:10]
+        时分部分 = v[11:16] if len(v) >= 16 else ""
+        if 时分部分 and 时分部分 != "00:00":
+            return f"{日期部分} {时分部分}"
+        return 日期部分
+    if isinstance(v, float):
+        if abs(v - round(v)) < 1e-9:
+            return int(round(v))
+        return round(v, 4)
+    return v
+
+
+def _导出格式化行(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Fix 4：整行先 _导出值格式化，再走 _公式注入转义行（格式化 → 转义）。"""
+    return _公式注入转义行({k: _导出值格式化(v) for k, v in row.items()})
+
 # B1 修复：PDF 中文字体模块级一次性注册（多次导出不重复注册；非 Windows 无
 # C:/Windows/Fonts/msyh.ttc 时回退内置 Helvetica，避免导出必 500）
 _PDF_FONT = "Helvetica"
@@ -571,11 +604,13 @@ def export_all_reports(
             单份 = io.BytesIO()
             # Fix 1/2：批量导出同用 _公式注入转义行（值 + 表头 key）——
             # xlsx 原样写值会以真实 <f> 公式标签落入 zip 内 xlsx
+            # Fix 4（走查）：先 _导出值格式化（ISO 日期截取/浮点去噪）再转义
+            fmt_rows = [_导出格式化行(r) for r in rows]
             if format == "xlsx":
-                pd.DataFrame([_公式注入转义行(r) for r in rows]).to_excel(单份, index=False, engine="openpyxl")
+                pd.DataFrame(fmt_rows).to_excel(单份, index=False, engine="openpyxl")
             else:
-                esc_rows = [_公式注入转义行(r) for r in rows]
-                pd.DataFrame(esc_rows).to_csv(单份, index=False)
+                # F2（走查）：utf-8-sig 写 BOM——中文 Windows Excel 无 BOM 打开乱码
+                pd.DataFrame(fmt_rows).to_csv(单份, index=False, encoding="utf-8-sig")
             zf.writestr(基础名, 单份.getvalue())
     buf.seek(0)
     return StreamingResponse(
@@ -639,7 +674,8 @@ def export_report(
     if format == "xlsx":
         # Fix 1：xlsx 与 csv 共用 _公式注入转义行（含表头 key 转义）——
         # 此前 to_excel 原样写值，危险单元格以真实公式标签 <f> 落入 xlsx
-        pd.DataFrame([_公式注入转义行(r) for r in rows]).to_excel(buf, index=False, engine="openpyxl")
+        # Fix 4（走查）：先 _导出值格式化（ISO 日期截取/浮点去噪）再转义
+        pd.DataFrame([_导出格式化行(r) for r in rows]).to_excel(buf, index=False, engine="openpyxl")
         buf.seek(0)
         return StreamingResponse(
             buf,
@@ -649,8 +685,10 @@ def export_report(
     if format == "csv":
         # Fix 1/2：CSV 公式注入——= + - @（可含前导空白，堵 TAB/空格绕过）开头
         # 的单元格加前缀 '；xlsx/csv 共用 _公式注入转义行（表头 key 同样转义）
-        esc_rows = [_公式注入转义行(r) for r in rows]
-        pd.DataFrame(esc_rows).to_csv(buf, index=False)
+        # F2（走查）：utf-8-sig 写 BOM——中文 Windows Excel 无 BOM 打开乱码
+        # Fix 4（走查）：先 _导出值格式化（ISO 日期截取/浮点去噪）再转义
+        esc_rows = [_导出格式化行(r) for r in rows]
+        pd.DataFrame(esc_rows).to_csv(buf, index=False, encoding="utf-8-sig")
         buf.seek(0)
         return StreamingResponse(
             buf,
