@@ -109,6 +109,21 @@ class Test生成散点图数据:
         assert len(result) == 2, f"应回退分类计数（华东/华南 2 行），实际 {len(result)}:\n{result}"
         assert "记录数" in result.columns
 
+    def test_数值X_含分组字段_分组列保留(self):
+        """M1（审查）：数值 X 明细路径需保留有效分组字段——分组字段用于前端
+        chart_config['颜色'] 着色，缺失会导致该列引用失效。"""
+        df = pd.DataFrame({
+            "x": [1, 1, 2, 2],
+            "y": [1, 2, 3, 4],
+            "地区": ["华东", "华南", "华东", "华南"],
+        })
+        result = generator._生成散点图数据(df, "x", ["y"], 分组字段="地区")
+        # 明细 4 行保留
+        assert len(result) == 4, f"明细应 4 行，实际 {len(result)}:\n{result}"
+        # 分组字段列必须存在（前端颜色着色依赖）
+        assert "地区" in result.columns, f"分组字段列丢失:\n{result.columns.tolist()}"
+        assert list(result["地区"]) == ["华东", "华南", "华东", "华南"]
+
     def test_最大点数截断(self):
         """明细路径按 最大点数 截断（高基数防超大数据集）。"""
         df = pd.DataFrame({"x": range(50), "y": range(50)})

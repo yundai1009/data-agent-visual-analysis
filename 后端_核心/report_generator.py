@@ -672,7 +672,13 @@ def _生成散点图数据(
         if field in df.columns and pd.api.types.is_numeric_dtype(df[field])
     ]
     if x轴 and x轴 in df.columns and pd.api.types.is_numeric_dtype(df[x轴]) and valid_y:
-        return df[[x轴, *valid_y]].dropna().head(最大点数)
+        # M1（审查）：明细路径把有效分组字段一并纳入——分组字段用于前端
+        # chart_config["颜色"] 着色，缺失会导致该列引用失效（修复前走
+        # _聚合数据 会保留分组列）。
+        保留列 = [x轴, *valid_y]
+        if 分组字段 and 分组字段 in df.columns and 分组字段 != x轴:
+            保留列.append(分组字段)
+        return df[保留列].dropna().head(最大点数)
     return _聚合数据(df, x轴, y轴列表, 分组字段, 聚合方式)
 
 
