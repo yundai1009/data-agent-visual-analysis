@@ -277,7 +277,10 @@ export default function Analysis() {
               onKeyDown={(e) => { if (e.key === 'Enter') handleFollowUp(); }}
               placeholder="输入追问，如：那华南区呢？按月份对比呢？"
               className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent transition-colors" />
-            <button disabled={!followUp.trim()} onClick={handleFollowUp}
+            {/* Fix 2（阶段54-7）：不能直接 onClick={handleFollowUp}——onClick 会把
+             * 点击事件对象当 overrideText 传入，(overrideText ?? followUp).trim
+             * 抛 TypeError 崩溃。与 Enter 键一致用箭头函数无参调用。 */}
+            <button disabled={!followUp.trim()} onClick={() => handleFollowUp()}
               className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-deep transition-all disabled:opacity-40">
               <Zap className="w-3.5 h-3.5" /> 追问分析
             </button>

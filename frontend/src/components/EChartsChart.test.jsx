@@ -49,3 +49,25 @@ describe('EChartsChart buildOption · 饼图取值兜底', () => {
     expect(opt).toBeNull();
   });
 });
+
+// ---- Fix 4（阶段54-7）：标题超长渲染截断（前端展示兜底）----
+describe('EChartsChart buildOption · 标题截断', () => {
+  test('长标题（188 字需求原文）截断为 30 字 + 省略号，不铺满图形区', () => {
+    const longTitle = '图表类型:饼图 请分析数据中各个类别的分布情况并给出详细建议和后续改进方向。'.repeat(3);
+    expect(longTitle.length).toBeGreaterThan(100);
+    const opt = buildOption('bar', {
+      X轴: '地区', Y轴: ['销售额'], 标题: longTitle,
+      数据: [{ 地区: '华东', 销售额: 100 }],
+    });
+    expect(opt.title.text.length).toBeLessThanOrEqual(31);
+    expect(opt.title.text.endsWith('…')).toBe(true);
+  });
+
+  test('短标题保持原样不截断', () => {
+    const opt = buildOption('bar', {
+      X轴: '地区', Y轴: ['销售额'], 标题: '各地区销售额对比',
+      数据: [{ 地区: '华东', 销售额: 100 }],
+    });
+    expect(opt.title.text).toBe('各地区销售额对比');
+  });
+});

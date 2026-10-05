@@ -106,6 +106,47 @@ describe('Analysis 智能分析页', () => {
     expect(screen.getByText(/已达今日分析次数上限/)).toBeInTheDocument();
   });
 
+  // ---- Fix 1（阶段54-7）：SSE error 持久可见（live 面板消失后错误横幅仍在）----
+  it('Fix1 live 面板卸载后（generating=false），持久错误横幅仍显示', () => {
+    mockState.state.generating = false; // finally 已把 generating 复位 → 直播面板卸载
+    mockState.state.error = 'cannot insert SepalLength, already exists';
+    renderPage();
+    // 回归锁定：错误不能只存在于 live 面板内（面板没了错误也消失 → 静默失败）
+    expect(screen.getByText(/cannot insert SepalLength/)).toBeInTheDocument();
+    expect(screen.queryByText('Agent 决策流')).not.toBeInTheDocument();
+  });
+
+  it('Fix1 生成中 SSE 失败：live 面板与持久横幅同时显示错误', () => {
+    mockState.state.generating = true;
+    mockState.state.error = 'cannot insert SepalLength, already exists';
+    mockState.state.liveError = 'cannot insert SepalLength, already exists';
+    renderPage();
+    expect(screen.getByText('Agent 决策流')).toBeInTheDocument();
+    // 同一文案同时出现在：顶部持久错误横幅 + live 面板底部
+    expect(screen.getAllByText(/cannot insert SepalLength/).length).toBeGreaterThanOrEqual(2);
+  });
+
+  // ---- Fix 2（阶段54-7）：追问按钮 onClick 传事件对象崩溃 ----
+  it('Fix2 点击「追问分析」→ handleFollowUp 无参调用（不把 MouseEvent 当 overrideText）', () => {
+    mockState.state.liveDone = { 报表ID: 'r1', 标题: '地区销售构成' };
+    mockState.state.followUp = '那华南区呢？';
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: /追问分析/ }));
+    expect(mockState.state.handleFollowUp).toHaveBeenCalledTimes(1);
+    // 回归锁定：直接传事件对象 → (overrideText ?? followUp).trim is not a function
+    expect(mockState.state.handleFollowUp).toHaveBeenCalledWith();
+  });
+
+  it('Fix2 追问输入为空时按钮禁用（不触发请求）', () => {
+    mockState.state.liveDone = { 报表ID: 'r1', 标题: 'x' };
+    mockState.state.followUp = '';
+    renderPage();
+    const btn = screen.getByRole('button', { name: /追问分析/ });
+    expect(btn).toBeDisabled();
+    fireEvent.click(btn);
+    expect(mockState.state.handleFollowUp).not.toHaveBeenCalled();
+  });
+
   it('渲染决策流步骤卡片', () => {
     mockState.state.generating = true; // 分析直播区仅在生成中渲染
     mockState.state.liveSteps = [{ record: { 步骤: '工具调用', 工具名: '获取数据画像' }, status: 'active' }];

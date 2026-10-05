@@ -307,12 +307,52 @@ def _合并显式字段(selected: Dict[str, Any], first: Optional[str], second: 
 # 受控语句解析：图表关键词 + 【字段】模板 → 报表配置
 # ════════════════════════════════════════════════════════════
 
+# Fix 4（走查）：显式图表声明优先级列表——用户明确说了图表名就该尊重用户。
+# 只收"完整图表名"，避免"占比/分布"等语义词误入；长名在前（堆积柱状图 含 柱状图，
+# 需先匹配最长者）。
+_图表名称优先级 = [
+    "堆积柱状图", "柱状图", "折线图", "饼图", "环形图", "散点图", "直方图",
+    "热力图", "面积图", "雷达图", "词云图", "漏斗图", "桑基图", "箱线图",
+    "瀑布图", "旭日图", "K线图",
+]
+
+
+def _显式图表声明(文本: str) -> Optional[str]:
+    """识别用户显式声明的图表类型，命中返回图表名，未命中返回 None。
+
+    两种显式写法：
+      1. 模板语法「图表类型:饼图」/「图表类型：饼图」
+      2. 需求里直接出现完整图表名（"生成饼图"/"我要折线图"等）
+    命中即优先于任何语义推断（用户说了饼图就该是饼图）。
+    """
+    import re as _re
+
+    match = _re.search(r"图表类型\s*[:：]\s*([^\s，。；;，]+)", 文本)
+    if match:
+        declared = match.group(1)
+        for name in _图表名称优先级:
+            if declared.startswith(name):
+                return name
+    for name in _图表名称优先级:
+        if name in 文本:
+            return name
+    return None
+
+
 def _受控语句配置(画像: Dict[str, Any], 分析需求: str) -> Dict[str, Any]:
     文本 = 分析需求.strip()
     fields = _提取模板字段(文本)
 
     first = _合法字段(画像, fields[0] if fields else None)
     second = _合法字段(画像, fields[1] if len(fields) > 1 else None)
+
+    # Fix 4（走查 D3d）：显式图表声明必须优先于语义推断——「图表类型:饼图 请分析
+    # 数据中各个类别的分布情况…」曾被"分布情况"→直方图改写；「图表类型:饼图
+    # 按Name统计数量的占比」曾被"统计+数量"→柱状图改写。用户明确说了图表名
+    # 就尊重用户，命中后不再走下面的语义关键词匹配。
+    explicit = _显式图表声明(文本)
+    if explicit:
+        return _合并显式字段(自动选字段(画像, explicit), first, second)
 
     if "交叉分布" in 文本 or "热力图" in 文本 or "矩阵" in 文本 or "交叉分析" in 文本:
         return _合并显式字段(自动选字段(画像, "热力图"), first, second)

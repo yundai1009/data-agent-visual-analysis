@@ -101,7 +101,19 @@ export default function App() {
 // 内调用——之前的实现把 useApp() 写在 App() 顶层，context 为 null，
 // 解构 isAuthed 直接抛错导致整页白屏（阶段 33 修复的 P0）。
 function AppRouter() {
-  const [collapsed, setCollapsed] = useState(false);
+  // Fix 3（阶段54-7）：窄屏侧边栏默认折叠。修复前折叠态默认 false——
+  // 375px 手机上侧边栏固定 w-52（208px）占屏过半，内容区仅剩 ~160px。
+  // 视口 <768px 时初始即为折叠窄栏（w-14 图标栏）；进入窄视口时自动折叠。
+  const [collapsed, setCollapsed] = useState(
+    () => (typeof window !== 'undefined' && window.innerWidth < 768)
+  );
+  useEffect(() => {
+    const onResize = () => {
+      if (window.innerWidth < 768) setCollapsed(true);
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   // 阶段 32：新手引导——首次登录展示（localStorage 记忆，老用户无感）
   const { isAuthed } = useApp();
   const [showOnboard, setShowOnboard] = useState(false);
@@ -155,6 +167,10 @@ function AppRouter() {
                     {/* 懒加载 Suspense 仅覆盖内容区：页面代码未就绪时侧边栏布局常驻 */}
                     <Suspense fallback={<PageFallback />}>
                       <Routes>
+                        {/* Fix 5（阶段54-7）：根路径 "/" 此前落到 NotFound（应用壳 + 404 页）。
+                         * 登录态访问 http://127.0.0.1:5173/ 应直接进 /data（未登录时
+                         * 由 /data 的 ProtectedRoute 继续跳登录页）。 */}
+                        <Route path="/" element={<Navigate to="/data" replace />} />
                         <Route path="/data" element={<ProtectedRoute><DataManagement /></ProtectedRoute>} />
                         <Route path="/analysis" element={<ProtectedRoute><Analysis /></ProtectedRoute>} />
                         <Route path="/report" element={<ProtectedRoute><Report /></ProtectedRoute>} />
