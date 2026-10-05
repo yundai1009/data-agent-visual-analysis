@@ -113,6 +113,45 @@ describe('useAnalysis 智能分析 Hook', () => {
     expect(mockCtx.gen).not.toHaveBeenCalled();
   });
 
+  // ---- Fix 1（阶段54-7）：SSE error 必须进持久错误通道 ----
+  it('Fix1 SSE error 事件：写入持久 error（live 面板消失后仍可见）+ generating 复位', async () => {
+    mockCtx.gen.mockImplementation(async (_payload, opts) => {
+      opts.onEvent({ type: 'step', data: { 步骤: '获取数据画像' } });
+      opts.onEvent({ type: 'error', message: 'cannot insert SepalLength, already exists' });
+    });
+    const { result } = renderHook(() => useAnalysis(), { wrapper });
+    await act(async () => {
+      await result.current.handleGenerate();
+    });
+    // 回归锁定：错误不能只写 liveError（finally setGenerating(false) 后
+    // 直播面板被卸载，错误随之消失 → 用户看到"什么都没发生"）
+    expect(result.current.error).toBe('cannot insert SepalLength, already exists');
+    expect(result.current.liveError).toBe('cannot insert SepalLength, already exists');
+    expect(result.current.generating).toBe(false);
+  });
+
+  it('Fix1 SSE error 无 message 时给出兜底文案', async () => {
+    mockCtx.gen.mockImplementation(async (_payload, opts) => {
+      opts.onEvent({ type: 'error' });
+    });
+    const { result } = renderHook(() => useAnalysis(), { wrapper });
+    await act(async () => {
+      await result.current.handleGenerate();
+    });
+    expect(result.current.error).toBe('分析失败，请重试');
+  });
+
+  it('Fix1 成功生成后不残留错误（error 通道干净）', async () => {
+    mockCtx.gen.mockImplementation(async (_payload, opts) => {
+      opts.onEvent({ type: 'done', 报表ID: 'r2', 标题: 'ok' });
+    });
+    const { result } = renderHook(() => useAnalysis(), { wrapper });
+    await act(async () => {
+      await result.current.handleGenerate();
+    });
+    expect(result.current.error).toBe('');
+  });
+
   it('handleFollowUp 无前序结果：提示先完成分析', async () => {
     const { result } = renderHook(() => useAnalysis(), { wrapper });
     act(() => result.current.setFollowUp('那华南区呢？'));

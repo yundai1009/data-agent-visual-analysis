@@ -114,6 +114,18 @@ def _可选字段(value: Optional[str]) -> Optional[str]:
     return value
 
 
+def _截断标题(文本: str, 上限: int = 60) -> str:
+    """Fix 4（走查）：188 字需求原样作报表标题 → 截断到 上限 字 + 省略号。
+
+    ECharts 图上标题另有 30 字前端截断，但导出 HTML <title>/<h1>、分享、
+    文件名等都以后端 标题 为准——此处统一把"入库标题"截短，前端展示兜底不变。
+    """
+    文本 = (文本 or "").strip()
+    if len(文本) <= 上限:
+        return 文本
+    return 文本[:上限].rstrip() + "…"
+
+
 def _转换日期列(df: pd.DataFrame, columns: List[str]) -> pd.DataFrame:
     result = df.copy()
     for column in columns:
@@ -623,6 +635,11 @@ def _聚合数据(
         report = grouped.sort_values(group_fields).head(500)
     else:
         agg = 聚合映射.get(聚合方式, "sum")
+        # Fix 1（走查）：x==y 或 y 含分组字段时，agg 后 reset_index 抛
+        # "cannot insert X, already exists"（iris 按 SepalLength 统计 SepalLength
+        # 平均值 → 整份分析静默失败）。groupby 分组键不能同时作为聚合值列，
+        # 先排除；count 路径不经过 valid_y，天然不受影响（按分类计数仍有意义）。
+        valid_y = [field for field in valid_y if field not in group_fields]
         if not valid_y:
             # 阶段 34 修复（全图表"明细泄漏"）：空值列（LLM 漏填 y轴/聚合方式）时
             # 原实现返回 df.head(200) 原始明细——前端取值字段回退到第一个非名称列
@@ -929,7 +946,7 @@ def 生成报表数据(
     report_rows = _可_json行(report_df)
     chart_config: Dict[str, Any] = {
         "类型": plotly_type,
-        "标题": 分析需求.strip() or f"上传数据{effective_chart}",
+        "标题": _截断标题(分析需求) or f"上传数据{effective_chart}",
         "X轴": x轴 or (report_df.columns[0] if len(report_df.columns) else None),
         "Y轴": y轴列表,
         "颜色": 分组字段,

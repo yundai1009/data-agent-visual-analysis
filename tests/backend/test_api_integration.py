@@ -1271,6 +1271,32 @@ def test_generate_stream_生成失败走error事件(client):
     assert events[-1]["message"]
 
 
+def test_generate_x等于y聚合_不再静默失败(client):
+    """ Fix 1（阶段54-7 走查原样）：柱状图按 SepalLength 统计 SepalLength 平均值（x==y），
+    修复前 `df.groupby([x])[x].agg().reset_index()` 抛 "cannot insert SepalLength,
+    already exists" → SSE error / 500；修复后应 200 且返回分类计数的可渲染报表。"""
+    tok = _register(client, "f1xy")
+    content = (
+        "SepalLength,SepalWidth,PetalLength,PetalWidth,Name\n"
+        "5.1,3.5,1.4,0.2,setosa\n"
+        "4.9,3.0,1.4,0.2,setosa\n"
+        "5.0,3.6,1.4,0.2,versicolor\n"
+        "5.4,3.9,1.7,0.4,versicolor\n"
+        "5.6,3.4,1.5,0.3,virginica\n"
+        "5.2,3.1,1.2,0.3,virginica\n"
+    )
+    did = _did(_upload(client, tok, filename="iris.csv", content=content).json())
+    r = client.post("/reports/generate", json={
+        "数据集ID": did, "分析需求": "图表类型:柱状图 按SepalLength统计SepalLength的平均值",
+        "图表类型": "柱状图", "x轴": "SepalLength", "y轴": ["SepalLength"],
+        "分组字段": None, "聚合方式": "平均值", "agent_mode": "single",
+    }, headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200, f"x==y 聚合应返回 200，实际 {r.status_code}: {r.text[:300]}"
+    body = r.json()
+    assert body["报表数据"], "应返回分类计数的报表数据（非空）"
+    assert "记录数" in body["报表数据"][0]
+
+
 # ============================================================================
 # E：18 图表 × 自然语言关键词全矩阵回归（阶段 39）
 # ============================================================================

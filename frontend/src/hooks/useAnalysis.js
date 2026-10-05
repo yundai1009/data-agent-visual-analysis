@@ -258,7 +258,13 @@ export default function useAnalysis() {
             lastReportIdRef.current = ev.报表ID;
             return 'stop';
           } else if (ev.type === 'error') {
-            setLiveError(ev.message || '分析失败，请重试');
+            // Fix 1（阶段54-7）：SSE error 只写 liveError 会随 generating 面板卸载
+            // 一起消失（finally 里 setGenerating(false)）——分析失败后用户看不到
+            // 任何错误提示。同步写入持久错误通道 setError：live 面板消失后错误
+            // 横幅仍留在页面上（与网络/429 等错误行为一致）。
+            const msg = ev.message || '分析失败，请重试';
+            setLiveError(msg);
+            setError(msg);
             return 'stop';
           }
           return undefined;
