@@ -126,7 +126,7 @@ class ReportGenerateRequest(BaseModel):
     y轴: list[str] = Field(default_factory=list, max_length=8)
     分组字段: Optional[str] = Field(None, max_length=64)
     聚合方式: str = Field("求和", max_length=16)
-    agent_mode: str = Field("single", max_length=16)  # "single" | "multi"
+    agent_mode: str = Field("single", max_length=16, pattern="^(single|multi)$")  # Fix 6：枚举校验，非法值 422（此前 "hack" 静默回退 single）
     # 阶段 29：条件筛选 + TopN（业务高频分析）
     筛选条件: list[筛选条件模型] = Field(default_factory=list, max_length=10)  # AND 语义
     topN: Optional[int] = Field(None, ge=1, le=200)  # 聚合结果取数值最大的前 N 行

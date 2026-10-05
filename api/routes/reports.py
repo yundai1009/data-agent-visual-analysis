@@ -906,7 +906,9 @@ def 重放报表(
         topN=配置.get("TopN"),
         对比=配置.get("对比"),
         # 保留原生成模式（多智能体报表重放不再降级为单 Agent）
-        agent_mode=prev.get("agent_mode", "single"),
+        # Fix 6：旧数据 agent_mode 可能是枚举校验上线前的脏值（如 "hack"），
+        # 直接构造会 ValidationError 500——非法值兜底回 "single"
+        agent_mode=prev.get("agent_mode") if prev.get("agent_mode") in ("single", "multi") else "single",
     )
 
     # P0 加固：与流式共享并发信号量（replay 同样消耗 LLM/线程资源）

@@ -14,8 +14,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-# P0 加固：全局请求体上限（与上传 50MB 限制一致；超限直接 413，防超大 body 撑爆内存 DoS）
-MAX_BODY_BYTES = 50 * 1024 * 1024
+# Fix 4：两层体量职责分离——中间件按「整个 multipart 请求体」Content-Length
+# 拦截（含 boundary 头开销），上限给 1MB 余量（50MB+1MB）：总量防 DoS；
+# 单文件 50MB 业务限制由接口层 _MAX_UPLOAD_BYTES 执行（恰好 50MB 文件能穿透
+# 到这里，由接口层 413/解析处理；此前中间件 50MB 按整包拦截导致接口层分支死代码）
+MAX_BODY_BYTES = 51 * 1024 * 1024
 
 
 class RequestBodyLimitMiddleware(BaseHTTPMiddleware):

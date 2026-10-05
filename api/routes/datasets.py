@@ -49,6 +49,25 @@ _数据集操作锁 = threading.Lock()
 # M19：上传文件名长度上限（超长文件名会写盘/入库，需在源头拦截）
 _MAX_FILENAME_LEN = 120
 
+# Fix 4：业务级单文件上限——中间件按整包 Content-Length 防 DoS（50MB+1MB 余量，
+# 含 multipart boundary 开销），本层按单文件内容真正执行 50MB 业务限制（恰好
+# 50MB 文件能穿透中间件到达这里，由本层 413/解析决定；此前是中间件抢答的死代码）
+_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+# Fix 5：Windows 非法文件名字符（替换为 _）。pathlib 在 Windows 会把 ':' 当路径
+# 分隔符截断（a:b.csv → b.csv 静默改名入库），显式清洗堵住静默改名
+_WINDOWS_非法文件名字符 = set(':\\/*?"<>|')
+
+
+def _清洗文件名(raw: str) -> str:
+    """清洗上传文件名：取末段路径组件（防穿越）→ 替换 Windows 非法字符为 _ → 去首尾空白/点。"""
+    name = (raw or "upload").strip()
+    # 先按两种路径分隔符取末段，杜绝 ..\\..\\evil.csv 之类的穿越前缀进入库名
+    for sep in ("/", "\\"):
+        name = name.rsplit(sep, 1)[-1]
+    name = "".join("_" if ch in _WINDOWS_非法文件名字符 else ch for ch in name)
+    return name.strip().strip(".")
+
 
 # ---- 上传数据集：校验 → 落盘 → 解析 → 画像 → 入库 ------------------
 # 支持多文件上传：逐文件校验/解析/入库，返回成功列表 + 失败列表。
@@ -62,7 +81,6 @@ async def upload_dataset(
     每个文件独立校验（空/超大/非法格式/文件名过长）、独立解析入库；
     成功与失败分别返回，前端可展示「成功 N 个，失败 M 个」。
     """
-    _MAX_UPLOAD_BYTES = 50 * 1024 * 1024
     成功列表: List[Dict[str, Any]] = []
     失败列表: List[Dict[str, Any]] = []
 
@@ -100,14 +118,16 @@ async def _处理单个上传(
     if len(content) > max_bytes:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="文件超过 50MB 限制")
 
-    safe_name = (f.filename or "").lower()
-    if not safe_name.endswith(('.csv', '.xlsx', '.xls')):
+    # Fix 5：显式清洗文件名（Windows 非法字符→_ + 穿越防护 + 首尾空白/点），
+    # 替代 Path(f.filename).name——Windows 上 ':' 会被 pathlib 当路径分隔符
+    # 截断（a:b.csv → b.csv）导致静默改名入库
+    safe_name = _清洗文件名(f.filename or "upload")
+    if not safe_name.lower().endswith(('.csv', '.xlsx', '.xls')):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="仅支持 .csv / .xlsx / .xls 格式")
-    if len(Path(f.filename or "upload").name) > _MAX_FILENAME_LEN:
+    if len(safe_name) > _MAX_FILENAME_LEN:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"文件名过长（最多 {_MAX_FILENAME_LEN} 字符）")
 
     dataset_id = uuid4().hex
-    safe_name = Path(f.filename or "upload").name
     stored_name = f"{dataset_id}_{safe_name}"
     stored_path = _UPLOAD_DIR / stored_name
     stored_path.write_bytes(content)
