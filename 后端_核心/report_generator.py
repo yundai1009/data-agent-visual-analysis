@@ -620,24 +620,60 @@ def _聚合数据(
 
     if 聚合方式 == "count" or 聚合方式 == "计数":
         grouped = df.groupby(group_fields, dropna=False).size().reset_index(name="记录数")
-        return grouped.sort_values(group_fields).head(500)
+        report = grouped.sort_values(group_fields).head(500)
+    else:
+        agg = 聚合映射.get(聚合方式, "sum")
+        if not valid_y:
+            # 阶段 34 修复（全图表"明细泄漏"）：空值列（LLM 漏填 y轴/聚合方式）时
+            # 原实现返回 df.head(200) 原始明细——前端取值字段回退到第一个非名称列
+            # （往往是日期/文本）→ Number()=NaN → 柱状图/折线图等同样出现"全 0"。
+            # 兜底为"按 x轴 分类计数"：分类出现次数是空值列下唯一合理语义。
+            report = (
+                df.groupby([x轴], dropna=False)
+                .size()
+                .reset_index(name="记录数")
+                .sort_values(x轴)
+                .head(500)
+            )
+        else:
+            grouped = df.groupby(group_fields, dropna=False)[valid_y].agg(agg).reset_index()
+            report = grouped.sort_values(group_fields).head(500)
 
-    agg = 聚合映射.get(聚合方式, "sum")
-    if not valid_y:
-        # 阶段 34 修复（全图表"明细泄漏"）：空值列（LLM 漏填 y轴/聚合方式）时
-        # 原实现返回 df.head(200) 原始明细——前端取值字段回退到第一个非名称列
-        # （往往是日期/文本）→ Number()=NaN → 柱状图/折线图等同样出现"全 0"。
-        # 兜底为"按 x轴 分类计数"：分类出现次数是空值列下唯一合理语义。
-        return (
-            df.groupby([x轴], dropna=False)
-            .size()
-            .reset_index(name="记录数")
-            .sort_values(x轴)
-            .head(500)
-        )
+    # Fix 5（走查）：dropna=False 分组保留的 NaN 组是 null 桶（ECharts 渲染无名柱条、
+    # 松鼠普查 {"Primary Fur Color": null, "记录数": 55}）。分组后把 x轴/分组字段列的
+    # NaN 替换为「（缺失）」标签——只在聚合结果上做，不影响明细路径；无缺失时列不变。
+    for col in group_fields:
+        if col in report.columns and report[col].isna().any():
+            report[col] = report[col].fillna("（缺失）")
+    return report
 
-    grouped = df.groupby(group_fields, dropna=False)[valid_y].agg(agg).reset_index()
-    return grouped.sort_values(group_fields).head(500)
+
+def _生成散点图数据(
+    df: pd.DataFrame,
+    x轴: Optional[str],
+    y轴列表: List[str],
+    分组字段: Optional[str] = None,
+    聚合方式: str = "求和",
+    最大点数: int = 2000,
+) -> pd.DataFrame:
+    """Fix 3（走查）：散点图专用数据——数值 X 走明细路径，不按 X 分组求和。
+
+    走查缺陷：tips.csv（244 行）散点图 x=total_bill y=tip → 报表数据 229 行，
+    pandas 按 X 精确分组求和把重复 X 的原始点静默合并，相关性/分布观察失真。
+
+    规则：
+      - 数值 X 轴（is_numeric_dtype）且存在有效数值 y → 明细路径：
+        df[[x轴, *valid_y]].dropna().head(最大点数)，保留每个原始点（不聚合）；
+      - 分类 X 轴 → 保持 _聚合数据 原聚合语义（分类 X 聚合合理）；
+      - y 轴缺省/无有效数值列 → 回退 _聚合数据 原逻辑（分类计数）。
+    """
+    valid_y = [
+        field for field in y轴列表
+        if field in df.columns and pd.api.types.is_numeric_dtype(df[field])
+    ]
+    if x轴 and x轴 in df.columns and pd.api.types.is_numeric_dtype(df[x轴]) and valid_y:
+        return df[[x轴, *valid_y]].dropna().head(最大点数)
+    return _聚合数据(df, x轴, y轴列表, 分组字段, 聚合方式)
 
 
 def _生成结论(
@@ -850,6 +886,10 @@ def 生成报表数据(
         report_df = _生成旭日图数据(df, x轴, 分组字段, y轴列表, 聚合方式)
     elif effective_chart == "K线图":
         report_df = _生成K线数据(df, x轴, y轴列表)
+    elif effective_chart == "散点图":
+        # Fix 3（走查）：散点图数值 X 走明细路径（重复 X 的原始点不聚合），
+        # 分类 X 或无有效 y 回退 _聚合数据（行为不变）
+        report_df = _生成散点图数据(df, x轴, y轴列表, 分组字段, 聚合方式)
     else:
         # 阶段 33 修复（饼图全 0.0% bug）：饼图/环形图是"占比"语义，若 LLM 意图
         # 未给出值字段（y轴 为空）且聚合方式非计数，_聚合数据 会命中"无有效值列"
