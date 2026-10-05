@@ -378,11 +378,16 @@ def _生成报表流式(
 
 
 @router.post("/generate", response_model=ReportGenerateResponse)
-async def generate_report(
+def generate_report(
     payload: ReportGenerateRequest,
     request: Request,
     user: dict = Depends(get_current_user),
 ) -> ReportGenerateResponse:
+    # Fix 3：sync 端点（FastAPI 自动 run_in_threadpool）——此前 async def 在事件
+    # 循环内同步调用 _准备上下文（读库/画像）+ _生成报表流式（LLM 网络 I/O），
+    # 整个事件循环停摆（服务级 DoS：实测 1万×300 表生成时 /healthz 延迟 2241ms、
+    # 8 并发完全串行 20.7s）。改 def 后阻塞落入线程池，/healthz 等异步请求不受影响；
+    # 签名/响应不变，并发信号量 _流式并发配额 语义不变（仍 503）。
     # P0 加固：与流式共享并发信号量，超出立即 503（非流式端点曾不受限，可并发刷爆）
     with _流式并发配额("当前分析任务已满（并发上限 4），请稍后重试"):
         df, llm_config = _准备上下文(payload, request, user)
