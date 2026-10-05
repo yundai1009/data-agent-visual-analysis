@@ -19,6 +19,7 @@ from starlette.responses import JSONResponse
 # 单文件 50MB 业务限制由接口层 _MAX_UPLOAD_BYTES 执行（恰好 50MB 文件能穿透
 # 到这里，由接口层 413/解析处理；此前中间件 50MB 按整包拦截导致接口层分支死代码）
 MAX_BODY_BYTES = 51 * 1024 * 1024
+# 中间件 413 文案对齐实际常量（防 DoS 总量 51MB；单文件 50MB 限制由接口层文案给出）
 
 
 class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
@@ -36,7 +37,7 @@ class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
                 if int(cl) > MAX_BODY_BYTES:
                     return JSONResponse(
                         status_code=413,
-                        content={"code": "PAYLOAD_TOO_LARGE", "message": "请求体过大（上限 50MB）", "request_id": ""},
+                        content={"code": "PAYLOAD_TOO_LARGE", "message": "请求体过大（上限 51MB，防 DoS 总量）", "request_id": ""},
                     )
             except ValueError:
                 pass
@@ -53,7 +54,7 @@ class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
                 if msg["type"] == "http.request":
                     _received += len(msg.get("body", b""))
                     if _received > MAX_BODY_BYTES:
-                        raise ValueError("body exceeds 50MB limit (chunked)")
+                        raise ValueError("body exceeds 51MB limit (chunked)")
                 return msg
 
             request._receive = _counted_receive
@@ -61,10 +62,10 @@ class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
         try:
             return await call_next(request)
         except ValueError as e:
-            if "50MB" in str(e) or "chunked" in str(e):
+            if "51MB" in str(e) or "chunked" in str(e):
                 return JSONResponse(
                     status_code=413,
-                    content={"code": "PAYLOAD_TOO_LARGE", "message": "请求体过大（上限 50MB）", "request_id": ""},
+                    content={"code": "PAYLOAD_TOO_LARGE", "message": "请求体过大（上限 51MB，防 DoS 总量）", "request_id": ""},
                 )
             raise
 
