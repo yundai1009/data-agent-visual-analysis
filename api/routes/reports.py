@@ -24,6 +24,7 @@ import logging
 import math
 import os
 import queue
+import re
 import threading
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Iterator, Optional, Tuple
@@ -42,6 +43,23 @@ from config.settings import EnvConfig, LLMRequestConfig
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/reports", tags=["reports"])
+
+# Fix 1/2：CSV/XLSX 公式注入共享转义。正则 ^[\s]*[=+\-@] 含前导空白——
+# TAB/空格开头的 = + - @ 同样转义（堵绕过）；key（DataFrame 表头）与 value
+# 都要转义：pd.DataFrame(rows) 的列名来自 dict key，漏转表头同样注入。
+_公式注入前缀 = re.compile(r"^[\s]*[=+\-@]")
+
+
+def _公式注入转义(值: Any) -> Any:
+    """str 且以（可含前导空白） = + - @ 开头的单元格加 ' 前缀，防 Excel 公式注入。"""
+    if isinstance(值, str) and _公式注入前缀.match(值):
+        return "'" + 值
+    return 值
+
+
+def _公式注入转义行(row: Dict[str, Any]) -> Dict[str, Any]:
+    """整行转义：列名（表头）与单元格值全部走 _公式注入转义。"""
+    return {_公式注入转义(k): _公式注入转义(v) for k, v in row.items()}
 
 # B1 修复：PDF 中文字体模块级一次性注册（多次导出不重复注册；非 Windows 无
 # C:/Windows/Fonts/msyh.ttc 时回退内置 Helvetica，避免导出必 500）
@@ -516,7 +534,6 @@ def export_all_reports(
 ) -> StreamingResponse:
     """阶段 53 · D：批量导出——把本人全部报表打包成一个 ZIP（路由须早于 /{report_id} 声明）。"""
     import io
-    import re as _re
     import zipfile
     from urllib.parse import quote
 
@@ -547,14 +564,12 @@ def export_all_reports(
             else:
                 已用名[基础名] = 1
             单份 = io.BytesIO()
+            # Fix 1/2：批量导出同用 _公式注入转义行（值 + 表头 key）——
+            # xlsx 原样写值会以真实 <f> 公式标签落入 zip 内 xlsx
             if format == "xlsx":
-                pd.DataFrame(rows).to_excel(单份, index=False, engine="openpyxl")
+                pd.DataFrame([_公式注入转义行(r) for r in rows]).to_excel(单份, index=False, engine="openpyxl")
             else:
-                _危险前缀 = _re.compile(r"^[=+\-@]")
-                esc_rows = [
-                    {k: ("'" + v if isinstance(v, str) and _危险前缀.match(v) else v) for k, v in row.items()}
-                    for row in rows
-                ]
+                esc_rows = [_公式注入转义行(r) for r in rows]
                 pd.DataFrame(esc_rows).to_csv(单份, index=False)
             zf.writestr(基础名, 单份.getvalue())
     buf.seek(0)
@@ -617,7 +632,9 @@ def export_report(
     buf = io.BytesIO()
 
     if format == "xlsx":
-        pd.DataFrame(rows).to_excel(buf, index=False, engine="openpyxl")
+        # Fix 1：xlsx 与 csv 共用 _公式注入转义行（含表头 key 转义）——
+        # 此前 to_excel 原样写值，危险单元格以真实公式标签 <f> 落入 xlsx
+        pd.DataFrame([_公式注入转义行(r) for r in rows]).to_excel(buf, index=False, engine="openpyxl")
         buf.seek(0)
         return StreamingResponse(
             buf,
@@ -625,13 +642,9 @@ def export_report(
             headers={"Content-Disposition": f"attachment; filename=report.xlsx; filename*=UTF-8''{quote(f'{标题}.xlsx')}"},
         )
     if format == "csv":
-        # P1 加固：CSV 公式注入——以 = + - @ 开头的单元格加前缀 '（防 Excel 打开执行公式）
-        import re as _re
-        _危险前缀 = _re.compile(r"^[=+\-@]")
-        esc_rows = [
-            {k: ("'" + v if isinstance(v, str) and _危险前缀.match(v) else v) for k, v in row.items()}
-            for row in rows
-        ]
+        # Fix 1/2：CSV 公式注入——= + - @（可含前导空白，堵 TAB/空格绕过）开头
+        # 的单元格加前缀 '；xlsx/csv 共用 _公式注入转义行（表头 key 同样转义）
+        esc_rows = [_公式注入转义行(r) for r in rows]
         pd.DataFrame(esc_rows).to_csv(buf, index=False)
         buf.seek(0)
         return StreamingResponse(
