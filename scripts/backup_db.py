@@ -141,6 +141,12 @@ def main() -> None:
             shutil.copy2(ENV_PATH, tmp / ".env")
             print("  [OK] .env")
 
+        # 4) 【阶段54】数据本体 parquet 目录（df_json 清空后是唯一数据副本，必须随备份走）
+        PARQUET_DIR = PROJECT_ROOT / "data" / "parquet"
+        if PARQUET_DIR.exists():
+            shutil.copytree(PARQUET_DIR, tmp / "parquet", dirs_exist_ok=True)
+            print(f"  [OK] parquet/（{sum(1 for _ in PARQUET_DIR.rglob('*.parquet'))} 个文件）")
+
         # 打 zip
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for item in tmp.rglob("*"):
