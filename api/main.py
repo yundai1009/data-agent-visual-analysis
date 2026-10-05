@@ -229,6 +229,29 @@ async def health_check() -> HealthResponse:
         timestamp=datetime.now(),
     )
 
+# 【函数】深度健康检查：后端类型 + 数据库连通性（部署探活升级版）。
+# 返回：{"status", "db_backend", "db_ok"} —— status=ok 表示进程与库都健康；
+#       degraded 表示进程活着但库连不上（供负载均衡摘除/告警）。
+@app.get("/healthz")
+async def healthz():
+    from 后端_核心.存储 import backend as 存储后端
+    后端名 = 存储后端.当前后端()
+    db_ok = False
+    try:
+        if 后端名 == "mysql":
+            from 后端_核心.存储 import mysql_backend
+            with mysql_backend.get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+        else:
+            from 后端_核心.存储 import sqlite_backend
+            with sqlite_backend.get_conn() as conn:
+                conn.execute("SELECT 1")
+        db_ok = True
+    except Exception:
+        db_ok = False
+    return {"status": "ok" if db_ok else "degraded", "db_backend": 后端名, "db_ok": db_ok}
+
 # 注册 9 个业务路由模块：顺序即 /docs 文档中的展示顺序；FastAPI 按注册顺序
 # 匹配请求，具体路由总是先于末尾的 SPA 回退路由命中，互不干扰
 app.include_router(datasets.router)

@@ -5,6 +5,7 @@
     python scripts/backup_db.py --keep 30  # 最多保留 30 个备份，超出删除最旧
 
 包含：daa.db（SQLite 在线备份，免停机）、data/chroma_db/（Agent 记忆）、.env（配置）。
+DB_BACKEND=mysql 时改走 mysqldump（生成 mysql-<时间戳>.sql，SQL 文本备份）。
 建议加入系统计划任务每天执行一次。
 """
 from __future__ import annotations
@@ -39,12 +40,53 @@ def _backup_sqlite(src: Path, dst: Path) -> bool:
         return False
 
 
+def _备份MySQL() -> bool:
+    """mysqldump 备份 MySQL（DB_BACKEND=mysql 时用）。返回是否成功。
+
+    密码安全说明：``-p{密码}`` 会短暂出现在进程命令行里，对本地脚本可接受；
+    生产环境建议改用 ``--defaults-extra-file=xxx.cnf``，避免密码暴露在进程列表。
+    无论哪种方式，密码绝不 print 到输出。
+    """
+    import subprocess
+    from config.settings import EnvConfig
+    时间戳 = datetime.now().strftime("%Y%m%d-%H%M%S")
+    dump_path = BACKUP_DIR / f"mysql-{时间戳}.sql"
+    cmd = [
+        "mysqldump",
+        "-h", EnvConfig.MYSQL_HOST,
+        "-P", str(EnvConfig.MYSQL_PORT),
+        "-u", EnvConfig.MYSQL_USER,
+        f"-p{EnvConfig.MYSQL_PASSWORD}",
+        "--single-transaction",
+        EnvConfig.MYSQL_DATABASE,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if result.returncode != 0:
+            print(f"[warn] mysqldump 失败: {result.stderr[:300]}")
+            return False
+        dump_path.write_text(result.stdout, encoding="utf-8")
+        print(f"[OK] MySQL 备份: {dump_path}")
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warn] MySQL 备份异常: {exc}")
+        return False
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="数据备份")
     parser.add_argument("--keep", type=int, default=20, help="保留最近 N 个备份")
     args = parser.parse_args()
 
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+
+    # 【阶段54】DB_BACKEND=mysql 时改走 mysqldump（SQL 文本备份）；
+    # SQLite 仍走下方 zip 打包逻辑，行为完全不变。
+    from 后端_核心.存储.backend import 当前后端
+    if 当前后端() == "mysql":
+        _备份MySQL()
+        return
+
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     zip_path = BACKUP_DIR / f"backup-{timestamp}.zip"
 

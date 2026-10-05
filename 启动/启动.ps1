@@ -30,7 +30,9 @@ if(-not (Test-Path (Join-Path $fd "node_modules"))){w "Installing Node deps...";
 o "Deps ready"
 if($BackendPort -ne 8000 -or $FrontendPort -ne 5173){w "Ports in use, using Backend=$BackendPort Frontend=$FrontendPort"}
 s "Starting backend"
-$bp=Start-Process -PassThru -WindowStyle Hidden -FilePath "python" -ArgumentList "-m","uvicorn","api.main:app","--host","127.0.0.1","--port","$BackendPort","--log-level","warning" -WorkingDirectory $r
+# 【阶段54】SQLite 写锁是进程内 threading.Lock：多 worker 会撞 database is locked，
+# 故 SQLite 模式必须 --workers 1。切换 MySQL（DB_BACKEND=mysql）后可按需放开 workers。
+$bp=Start-Process -PassThru -WindowStyle Hidden -FilePath "python" -ArgumentList "-m","uvicorn","api.main:app","--host","127.0.0.1","--port","$BackendPort","--workers","1","--log-level","warning" -WorkingDirectory $r
 Start-Sleep -Seconds 3
 if(-not (Get-Process -Id $bp.Id -ErrorAction SilentlyContinue)){e "Backend failed"}
 o "Backend: http://127.0.0.1:$BackendPort (PID $($bp.Id))"
