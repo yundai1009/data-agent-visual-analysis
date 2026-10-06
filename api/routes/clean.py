@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from api.contracts import CleanDatasetResponse
 from api.dependencies import get_current_user
-from api.routes.datasets import _仓储, _数据集操作锁
+from api.routes.datasets import _仓储, _数据集操作锁, _清洗文件名, _MAX_FILENAME_LEN
 from 后端_核心.data_cleaner import 清洗数据集
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
@@ -28,7 +28,7 @@ _FILL_STRATEGIES = ("auto", "mean", "median", "mode", "zero")
 
 
 @router.post("/{dataset_id}/clean", response_model=CleanDatasetResponse)
-async def clean_dataset(
+def clean_dataset(
     dataset_id: str,
     deduplicate: bool = Query(False, description="是否去重"),
     fill_missing: bool = Query(False, description="是否填充缺失值"),
@@ -70,10 +70,15 @@ async def clean_dataset(
         dst_id = dataset_id
         if 新文件名:
             dst_id = uuid.uuid4().hex
+        # Fix D（阶段54-8 · XSS Important）：另存文件名同样过 _清洗文件名（对齐
+        # 上传路径）——恶意名 `<img onerror>` 等此前原样入库，属存储层纵深缺口。
+        # 清洗后为空的极端输入回退「原名（已清洗）」；长度上限同上传（清洗只减不增，
+        # 回退名截断防旧库超长名 + 后缀越界）。
+        最终名 = _清洗文件名(新文件名) or _清洗文件名((item["文件名"] + "（已清洗）")[:_MAX_FILENAME_LEN])
         _仓储.保存(
             user_id=user["user_id"],
             dataset_id=dst_id,
-            文件名=新文件名 or (item["文件名"] + "（已清洗）"),
+            文件名=最终名,
             存储路径=item.get("路径", ""),  # B11 修复：仓储返回键为"路径"（原"存储路径"取不到 → 溯源元数据被清空）
             df=cleaned_df,
             画像=new_profile,

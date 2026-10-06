@@ -72,7 +72,7 @@ def _清洗文件名(raw: str) -> str:
 # ---- 上传数据集：校验 → 落盘 → 解析 → 画像 → 入库 ------------------
 # 支持多文件上传：逐文件校验/解析/入库，返回成功列表 + 失败列表。
 @router.post("/upload")
-async def upload_dataset(
+def upload_dataset(
     file: List[UploadFile] = File(...),
     user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
@@ -89,7 +89,7 @@ async def upload_dataset(
 
     for f in file:
         try:
-            result = await _处理单个上传(f, user["user_id"], _MAX_UPLOAD_BYTES)
+            result = _处理单个上传(f, user["user_id"], _MAX_UPLOAD_BYTES)
             成功列表.append(result)
         except HTTPException as exc:
             失败列表.append({"文件名": f.filename or "未知", "错误": exc.detail})
@@ -108,11 +108,17 @@ async def upload_dataset(
     return {"上传成功": 成功列表, "上传失败": 失败列表, "成功数": len(成功列表), "失败数": len(失败列表)}
 
 
-async def _处理单个上传(
+def _处理单个上传(
     f: UploadFile, user_id: str, max_bytes: int
 ) -> Dict[str, Any]:
-    """单文件上传流程：读取 → 校验 → 落盘 → 解析 → 画像 → 入库 → 返回响应字典。"""
-    content = await f.read(max_bytes + 1)
+    """单文件上传流程：读取 → 校验 → 落盘 → 解析 → 画像 → 入库 → 返回响应字典。
+
+    Fix A（阶段54-8 · 压测 P0）：async def → def——pandas 解析/画像/parquet
+    写入/SQLite 保存全是同步重活，async 形态会把它们压到事件循环上串行执行
+    （与 datasets 读取系端点同源，一并修）。sync 端点由 FastAPI 自动丢线程池，
+    UploadFile 底层 SpooledTemporaryFile 用 f.file.read() 同步读取。
+    """
+    content = f.file.read(max_bytes + 1)
     if not content:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="上传文件为空")
     if len(content) > max_bytes:
@@ -171,7 +177,7 @@ async def _处理单个上传(
 
 
 @router.post("/merge")
-async def merge_datasets(payload: dict, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
+def merge_datasets(payload: dict, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     """优化③：合并多个数据集为一份（列对齐 union + 行追加），返回新数据集。
 
     body: {"数据集ID列表": [...], "文件名": "可选新名称"}
@@ -179,12 +185,14 @@ async def merge_datasets(payload: dict, user: dict = Depends(get_current_user)) 
     """
     import pandas as pd
     ids = payload.get("数据集ID列表") or []
-    新文件名 = (payload.get("文件名") or "").strip()
+    # Fix D（阶段54-8 · XSS Important）：merge 输出名同样过 _清洗文件名（对齐上传路径）——
+    # 恶意名 `<script>` 等此前原样入库，属存储层纵深缺口。
+    新文件名 = _清洗文件名(str(payload.get("文件名") or ""))
     if not isinstance(ids, list) or len(ids) < 2:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="至少选择 2 个数据集进行合并")
     if len(ids) > 20:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="一次最多合并 20 个数据集")
-    if len(新文件名) > 120:
+    if len(新文件名) > _MAX_FILENAME_LEN:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="文件名过长（最多 120 字符）")
 
     dfs: List[pd.DataFrame] = []
@@ -226,7 +234,7 @@ async def merge_datasets(payload: dict, user: dict = Depends(get_current_user)) 
 
 
 @router.get("/{dataset_id}", response_model=DatasetPreviewResponse)
-async def get_dataset(dataset_id: str, user: dict = Depends(get_current_user)) -> DatasetPreviewResponse:
+def get_dataset(dataset_id: str, user: dict = Depends(get_current_user)) -> DatasetPreviewResponse:
     item = _仓储.读取(user["user_id"], dataset_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在")
@@ -243,7 +251,7 @@ async def get_dataset(dataset_id: str, user: dict = Depends(get_current_user)) -
 
 
 @router.get("/{dataset_id}/rows")
-async def get_dataset_rows(
+def get_dataset_rows(
     dataset_id: str,
     offset: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=200),
@@ -267,7 +275,7 @@ async def get_dataset_rows(
 
 
 @router.get("/", response_model=Dict[str, Any])
-async def list_datasets(
+def list_datasets(
     limit: int = Query(200, ge=1, le=500),
     q: str = Query("", max_length=100, description="文件名搜索"),
     sort: str = Query("created_at_desc", pattern="^(created_at_desc|rows_desc|file_name_asc)$"),
@@ -280,7 +288,7 @@ async def list_datasets(
 
 
 @router.delete("/{dataset_id}")
-async def delete_dataset(dataset_id: str, user: dict = Depends(get_current_user)) -> Dict[str, str]:
+def delete_dataset(dataset_id: str, user: dict = Depends(get_current_user)) -> Dict[str, str]:
     """删除一个数据集（仅限归属用户）。"""
     if not _仓储.删除(user["user_id"], dataset_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在")
@@ -290,10 +298,13 @@ async def delete_dataset(dataset_id: str, user: dict = Depends(get_current_user)
 
 
 @router.patch("/{dataset_id}")
-async def rename_dataset(dataset_id: str, payload: dict, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
+def rename_dataset(dataset_id: str, payload: dict, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     """重命名一个数据集（仅限归属用户）。"""
-    新名 = str(payload.get("文件名") or "").strip()
-    if not 新名 or len(新名) > 120:
+    # Fix D（阶段54-8 · XSS Important）：重命名同样过 _清洗文件名（对齐上传路径）——
+    # 恶意名 `x<img onerror=...>.csv` 此前原样入库（被 React 转义兜住不可执行，
+    # 属存储层纵深缺口：任何把文件名拼进 HTML/邮件/第三方回调的路径都会变真注入）。
+    新名 = _清洗文件名(str(payload.get("文件名") or ""))
+    if not 新名 or len(新名) > _MAX_FILENAME_LEN:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="文件名需 1-120 字符")
     # M21：与 clean 共用数据集级锁，防读-改-写并发交错
     with _数据集操作锁:
