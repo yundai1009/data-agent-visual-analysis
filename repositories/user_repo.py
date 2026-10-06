@@ -38,10 +38,25 @@ def _ensure_status_column() -> None:
             logger.info("users 表已迁移：新增 status 列")
 
 
-def 初始化用户表() -> None:
-    """幂等创建 users 表，并对旧库做 email 列幂等迁移。"""
-    if _后端() == "mysql":
-        return  # 阶段 54-8：表结构由 mysql_repo.初始化数据库 统一管理（sqlite DDL 在 MySQL 下语义校验即报错）
+# Fix E1（阶段54-9 · 压测 P1-4）：初始化由「每次调用都跑 DDL 检查」改为
+# 「进程级一次性 + 按 DB 路径分键缓存」——认证链 get_current_user 每次调用本函数，
+# 旧的每次调用 = 2 连接 + 5 条 DDL 幂等检查 ≈ 10ms 固定请求地板。
+# 关键（最大坑）：缓存键必须绑 DB 路径——隔离测试同进程用 tmp_path 新建库时，
+# 模块级单标志会让后续测试跳过建表导致连不上库；按 (db路径)→已初始化 分键后
+# 每个库各自首次初始化。失败不缓存（异常向上抛、下次调用重试），启动时表故障
+# 不被永久掩盖；threading.Lock 双重检查防并发重复建表。
+_用户表已初始化: Dict[str, bool] = {}
+_用户表初始化锁 = threading.Lock()
+
+
+def _当前db键() -> str:
+    """初始化缓存键：SQLite 文件路径（MySQL 分支提前 return，不参与缓存）。"""
+    from 后端_核心.存储.sqlite_backend import 解析db路径
+    return str(解析db路径())
+
+
+def _初始化用户表全量() -> None:
+    """完整执行 users 表 DDL + 幂等迁移（仅首次/失败重试时调用）。"""
     _ensure_status_column()
     with _get_conn() as conn:
         conn.execute(
@@ -94,6 +109,25 @@ def 初始化用户表() -> None:
         _sql = _建索引SQL(_后端(), "idx_users_email", "users", "email", 唯一=True)
         if _sql:
             conn.execute(_sql)
+
+
+def 初始化用户表() -> None:
+    """幂等创建 users 表，并对旧库做 email 列幂等迁移。
+
+    Fix E1：进程级一次性——首次调用（或上次失败后重试）完整执行 DDL，
+    之后按 DB 路径直接 return，省掉每请求 ~10ms 固定认证开销。
+    """
+    if _后端() == "mysql":
+        return  # 阶段 54-8：表结构由 mysql_repo.初始化数据库 统一管理（sqlite DDL 在 MySQL 下语义校验即报错）
+    key = _当前db键()
+    if _用户表已初始化.get(key):
+        return
+    with _用户表初始化锁:
+        if _用户表已初始化.get(key):
+            return
+        # 失败回退：异常向上抛且不置标志，下次调用重试（表故障不被永久掩盖）
+        _初始化用户表全量()
+        _用户表已初始化[key] = True
 
 
 def 创建用户(username: str, password_hash: str, role: str = "analyst", email: Optional[str] = None) -> Dict[str, Any]:

@@ -23,10 +23,21 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def 初始化报表表() -> None:
-    """幂等创建 reports 表。"""
-    if _后端() == "mysql":
-        return  # 阶段 54-8：表结构由 mysql_repo.初始化数据库 统一管理（sqlite DDL 在 MySQL 下语义校验即报错）
+# Fix E1（阶段54-9 · 压测 P1-4）：初始化报表表 与 初始化用户表 同批改造——
+# 进程级一次性 + 按 DB 路径分键缓存（隔离测试各 tmp_path 各自首次初始化），
+# 失败不缓存下次重试；threading.Lock 双重检查防并发重复建表。
+_报表表已初始化: Dict[str, bool] = {}
+_报表表初始化锁 = threading.Lock()
+
+
+def _当前db键() -> str:
+    """初始化缓存键：SQLite 文件路径（MySQL 分支提前 return，不参与缓存）。"""
+    from 后端_核心.存储.sqlite_backend import 解析db路径
+    return str(解析db路径())
+
+
+def _初始化报表表全量() -> None:
+    """完整执行 reports 表 DDL（仅首次/失败重试时调用）。"""
     with _get_conn() as conn:
         conn.execute(
             """
@@ -44,6 +55,25 @@ def 初始化报表表() -> None:
         _sql = _建索引SQL(_后端(), "idx_reports_user_created_at", "reports", "(user_id, created_at)")
         if _sql:
             conn.execute(_sql)
+
+
+def 初始化报表表() -> None:
+    """幂等创建 reports 表。
+
+    Fix E1：进程级一次性——首次调用（或上次失败后重试）完整执行 DDL，
+    之后按 DB 路径直接 return（报表读/写前不再每次跑 DDL 检查）。
+    """
+    if _后端() == "mysql":
+        return  # 阶段 54-8：表结构由 mysql_repo.初始化数据库 统一管理（sqlite DDL 在 MySQL 下语义校验即报错）
+    key = _当前db键()
+    if _报表表已初始化.get(key):
+        return
+    with _报表表初始化锁:
+        if _报表表已初始化.get(key):
+            return
+        # 失败回退：异常向上抛且不置标志，下次调用重试
+        _初始化报表表全量()
+        _报表表已初始化[key] = True
 
 
 def 保存报表(user_id: str, dataset_id: str, title: str, chart_type: str, report: Dict[str, Any]) -> str:

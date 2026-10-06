@@ -22,6 +22,7 @@ from __future__ import annotations
 import inspect
 import os
 import sys
+import threading
 
 import pytest
 
@@ -91,13 +92,20 @@ def test_generate_report_是同步端点_不阻塞事件循环():
 
 
 def test_信号量并发配额_占满后仍503(client):
-    """前置保护：改 def 后 _流式并发配额 作用不变——并发占满立即 503。"""
-    from api.routes.reports import _STREAM_SEMAPHORE
+    """前置保护：改 def 后 _流式并发配额 作用不变——并发占满立即 503。
+
+    Fix E3（阶段54-9）：默认并发上限改为 max(4, CPU核数)（本机可能 >4），
+    占满名额数不再固定——测试显式把信号量替换为 BoundedSemaphore(4)，
+    验证「并发上限存在、占满仍 503」语义不因上限值上调而破坏。
+    """
+    from api.routes import reports as _routes
     token = _注册(client, "sem5fix")
+    _原信号量 = _routes._STREAM_SEMAPHORE
+    _routes._STREAM_SEMAPHORE = threading.BoundedSemaphore(4)
     held = []
     try:
         for _ in range(4):
-            assert _STREAM_SEMAPHORE.acquire(blocking=False), "应能占满 4 个并发名额"
+            assert _routes._STREAM_SEMAPHORE.acquire(blocking=False), "应能占满 4 个并发名额"
             held.append(True)
         r = client.post(
             "/reports/generate",
@@ -107,4 +115,5 @@ def test_信号量并发配额_占满后仍503(client):
         assert r.status_code == 503, r.text
     finally:
         for _ in held:
-            _STREAM_SEMAPHORE.release()
+            _routes._STREAM_SEMAPHORE.release()
+        _routes._STREAM_SEMAPHORE = _原信号量

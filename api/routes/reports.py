@@ -13,7 +13,8 @@
 #     payload.agent_mode 切换，共用 _生成报表流式 编排；
 #   - 多轮追问：_注入追问上下文 回溯最近 3 轮报表，带 1500 字符
 #     token 预算控制上下文膨胀（详情见该函数 docstring）；
-#   - 并发防线：BoundedSemaphore(4) 同时限流同步/流式端点，超限 503；
+#   - 并发防线：generate 信号量（默认 max(4, CPU核数)，env DAA_GENERATE_CONCURRENCY
+#     可配）限流同步/流式/重放，超限 503；导出独立信号量（F2）限流 export 系列。
 #   - 安全细节：BYOK Key 不落库不进日志、自定义供应商 URL 过 SSRF
 #     校验、CSV 公式注入转义、PDF 内容 HTML 转义、导出/删除记审计。
 # ============================================================
@@ -108,7 +109,39 @@ except Exception:  # noqa: BLE001
 
 # SSE 直播全局并发上限：每个流式请求 spawn 一个后台线程做 LLM 分析，
 # 无限制并发会占满 FastAPI 线程池（DoS）。超出上限直接 503 拒绝。
-_STREAM_SEMAPHORE = threading.BoundedSemaphore(4)
+# Fix E3（阶段54-9 · 压测 P2-6）：并发上限不再硬编码 4——默认 max(4, CPU核数)
+# （压测建议 8-12），env DAA_GENERATE_CONCURRENCY 可覆盖；503 语义不变（并发
+# 上限仍存在，只是更高，容量规划按新值）。
+def _生成并发上限() -> int:
+    """generate 并发上限：env DAA_GENERATE_CONCURRENCY 覆盖；默认 max(4, cpu_count)。
+
+    非法/非正数 env 回落默认（不因配置错误静默崩服务）。每次调用都重读 env——
+    便于测试用 env 验证可配；模块加载时仅创建一次信号量。
+    """
+    raw = os.getenv("DAA_GENERATE_CONCURRENCY", "").strip()
+    if raw:
+        try:
+            n = int(raw)
+            if n >= 1:
+                return n
+            logger.warning("DAA_GENERATE_CONCURRENCY=%r 非法（须 >=1），回落默认", raw)
+        except ValueError:
+            logger.warning("DAA_GENERATE_CONCURRENCY=%r 非数字，回落默认", raw)
+    return max(4, os.cpu_count() or 4)
+
+
+def _创建生成信号量() -> threading.BoundedSemaphore:
+    """按当前配置创建生成信号量（模块加载建一次；测试用 env 重建验证可配）。"""
+    return threading.BoundedSemaphore(_生成并发上限())
+
+
+_STREAM_SEMAPHORE = _创建生成信号量()
+# 导出并发上限（Fix E2 · 压测 P1-5）：导出是 CPU/IO 重活（openpyxl/PDF/ZIP 打包 +
+# 大响应），此前无信号量/限流，与 generate 争抢线程池和写锁（压测 50 并发导出
+# P95 17.8s、30s 前端超时逼近）。独立信号量隔离——占满立即 503，不排队堆积。
+# 容量规划：N=4 与 generate 历史上限对齐；export-all 打包 200 份、PDF 全量报告
+# 都很重，4 并发已是保守上限，按机器能力可经代码常量上调。
+_EXPORT_SEMAPHORE = threading.BoundedSemaphore(4)
 # SSE 事件队列上限：trace 单请求最多 ~20 条 + done/error/sentinel，64 足够且防堆积
 _STREAM_QUEUE_MAX = 64
 
@@ -125,6 +158,21 @@ def _流式并发配额(detail: str = "分析任务繁忙，请稍后重试") ->
         yield
     finally:
         _STREAM_SEMAPHORE.release()
+
+
+@contextmanager
+def _导出并发配额(detail: str = "系统繁忙，请稍后重试") -> Iterator[None]:
+    """Fix E2：导出并发名额 contextmanager——占满立即 503，退出保证 release。
+
+    业务文案「系统繁忙，请稍后重试」对齐 generate 的 503 语义；try/finally
+    释放防 BoundedSemaphore 双释放 ValueError（参考 _流式并发配额 用法）。
+    """
+    if not _EXPORT_SEMAPHORE.acquire(blocking=False):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
+    try:
+        yield
+    finally:
+        _EXPORT_SEMAPHORE.release()
 
 
 def _json_safe(obj: Any) -> Any:
@@ -429,7 +477,7 @@ def generate_report(
     # 8 并发完全串行 20.7s）。改 def 后阻塞落入线程池，/healthz 等异步请求不受影响；
     # 签名/响应不变，并发信号量 _流式并发配额 语义不变（仍 503）。
     # P0 加固：与流式共享并发信号量，超出立即 503（非流式端点曾不受限，可并发刷爆）
-    with _流式并发配额("当前分析任务已满（并发上限 4），请稍后重试"):
+    with _流式并发配额(f"当前分析任务已满（并发上限 {_生成并发上限()}），请稍后重试"):
         df, llm_config = _准备上下文(payload, request, user)
         try:
             from services.tracking import 推断发起入口
@@ -577,54 +625,58 @@ def export_all_reports(
     format: str = Query("xlsx", pattern="^(xlsx|csv)$"),
     user: dict = Depends(get_current_user),
 ) -> StreamingResponse:
-    """阶段 53 · D：批量导出——把本人全部报表打包成一个 ZIP（路由须早于 /{report_id} 声明）。"""
-    import io
-    import zipfile
-    from urllib.parse import quote
+    """阶段 53 · D：批量导出——把本人全部报表打包成一个 ZIP（路由须早于 /{report_id} 声明）。
 
-    import pandas as pd
+    Fix E2：与单份导出共享导出信号量，占满立即 503（不再无上限争抢线程池/写锁）。
+    """
+    with _导出并发配额():
+        import io
+        import zipfile
+        from urllib.parse import quote
 
-    from repositories import audit_repo, report_repo
+        import pandas as pd
 
-    items = report_repo.列出报表(user["user_id"], limit=200, offset=0)
-    if not items:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="暂无报表可导出，请先生成报表")
-    audit_repo.记录(user["user_id"], "批量导出报表", target_type="report", target_id="", detail=f"format={format}")
+        from repositories import audit_repo, report_repo
 
-    buf = io.BytesIO()
-    已用名: Dict[str, int] = {}
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for it in items:
-            item = report_repo.读取报表(user["user_id"], it["报表ID"])
-            if not item:
-                continue
-            rows = (item["报表"] or {}).get("报表数据", [])
-            标题 = (item["标题"] or "报表").replace('"', '').replace('\\', '_').replace('/', '_')
-            基础名 = f"{标题}.{format}"
-            # 重名去重：同名第 N 份加 (2)/(3)…，保证 ZIP 内不互相覆盖
-            if 基础名 in 已用名:
-                已用名[基础名] += 1
-                根, ext = os.path.splitext(基础名)
-                基础名 = f"{根}({已用名[基础名]}){ext}"
-            else:
-                已用名[基础名] = 1
-            单份 = io.BytesIO()
-            # Fix 1/2：批量导出同用 _公式注入转义行（值 + 表头 key）——
-            # xlsx 原样写值会以真实 <f> 公式标签落入 zip 内 xlsx
-            # Fix 4（走查）：先 _导出值格式化（ISO 日期截取/浮点去噪）再转义
-            fmt_rows = [_导出格式化行(r) for r in rows]
-            if format == "xlsx":
-                pd.DataFrame(fmt_rows).to_excel(单份, index=False, engine="openpyxl")
-            else:
-                # F2（走查）：utf-8-sig 写 BOM——中文 Windows Excel 无 BOM 打开乱码
-                pd.DataFrame(fmt_rows).to_csv(单份, index=False, encoding="utf-8-sig")
-            zf.writestr(基础名, 单份.getvalue())
-    buf.seek(0)
-    return StreamingResponse(
-        buf,
-        media_type="application/zip",
-        headers={"Content-Disposition": f"attachment; filename=reports.zip; filename*=UTF-8''{quote('全部报表.zip')}"},
-    )
+        items = report_repo.列出报表(user["user_id"], limit=200, offset=0)
+        if not items:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="暂无报表可导出，请先生成报表")
+        audit_repo.记录(user["user_id"], "批量导出报表", target_type="report", target_id="", detail=f"format={format}")
+
+        buf = io.BytesIO()
+        已用名: Dict[str, int] = {}
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for it in items:
+                item = report_repo.读取报表(user["user_id"], it["报表ID"])
+                if not item:
+                    continue
+                rows = (item["报表"] or {}).get("报表数据", [])
+                标题 = (item["标题"] or "报表").replace('"', '').replace('\\', '_').replace('/', '_')
+                基础名 = f"{标题}.{format}"
+                # 重名去重：同名第 N 份加 (2)/(3)…，保证 ZIP 内不互相覆盖
+                if 基础名 in 已用名:
+                    已用名[基础名] += 1
+                    根, ext = os.path.splitext(基础名)
+                    基础名 = f"{根}({已用名[基础名]}){ext}"
+                else:
+                    已用名[基础名] = 1
+                单份 = io.BytesIO()
+                # Fix 1/2：批量导出同用 _公式注入转义行（值 + 表头 key）——
+                # xlsx 原样写值会以真实 <f> 公式标签落入 zip 内 xlsx
+                # Fix 4（走查）：先 _导出值格式化（ISO 日期截取/浮点去噪）再转义
+                fmt_rows = [_导出格式化行(r) for r in rows]
+                if format == "xlsx":
+                    pd.DataFrame(fmt_rows).to_excel(单份, index=False, engine="openpyxl")
+                else:
+                    # F2（走查）：utf-8-sig 写 BOM——中文 Windows Excel 无 BOM 打开乱码
+                    pd.DataFrame(fmt_rows).to_csv(单份, index=False, encoding="utf-8-sig")
+                zf.writestr(基础名, 单份.getvalue())
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename=reports.zip; filename*=UTF-8''{quote('全部报表.zip')}"},
+        )
 
 
 @router.put("/{report_id}/favorite")
@@ -659,56 +711,61 @@ def export_report(
     format: str = Query("xlsx", pattern="^(xlsx|csv|pdf)$"),
     user: dict = Depends(get_current_user),
 ) -> StreamingResponse:
-    """导出报表：xlsx / csv / pdf（仅限归属用户）。"""
-    from repositories import report_repo
-    item = report_repo.读取报表(user["user_id"], report_id)
-    if not item:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报表不存在")
-    # M14：审计写在存在性校验之后——此前先审计后校验，不存在的报表也会
-    # 被灌审计记录（可被用于污染审计日志）
-    from repositories import audit_repo
-    audit_repo.记录(user["user_id"], "导出报表", target_type="report", target_id=report_id, detail=f"format={format}")
-    import io
-    from urllib.parse import quote
+    """导出报表：xlsx / csv / pdf（仅限归属用户）。
 
-    import pandas as pd
+    Fix E2：与批量导出共享导出信号量，占满立即 503（压测 50 并发导出 P95 17.8s、
+    前端 30s 超时逼近——导出必须有限流）。
+    """
+    with _导出并发配额():
+        from repositories import report_repo
+        item = report_repo.读取报表(user["user_id"], report_id)
+        if not item:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报表不存在")
+        # M14：审计写在存在性校验之后——此前先审计后校验，不存在的报表也会
+        # 被灌审计记录（可被用于污染审计日志）
+        from repositories import audit_repo
+        audit_repo.记录(user["user_id"], "导出报表", target_type="report", target_id=report_id, detail=f"format={format}")
+        import io
+        from urllib.parse import quote
 
-    report = item["报表"]
-    rows = report.get("报表数据", [])
-    标题 = (item["标题"] or "报表").replace('"', '').replace('\\', '_')
-    buf = io.BytesIO()
+        import pandas as pd
 
-    if format == "xlsx":
-        # Fix 1：xlsx 与 csv 共用 _公式注入转义行（含表头 key 转义）——
-        # 此前 to_excel 原样写值，危险单元格以真实公式标签 <f> 落入 xlsx
-        # Fix 4（走查）：先 _导出值格式化（ISO 日期截取/浮点去噪）再转义
-        pd.DataFrame([_导出格式化行(r) for r in rows]).to_excel(buf, index=False, engine="openpyxl")
-        buf.seek(0)
+        report = item["报表"]
+        rows = report.get("报表数据", [])
+        标题 = (item["标题"] or "报表").replace('"', '').replace('\\', '_')
+        buf = io.BytesIO()
+
+        if format == "xlsx":
+            # Fix 1：xlsx 与 csv 共用 _公式注入转义行（含表头 key 转义）——
+            # 此前 to_excel 原样写值，危险单元格以真实公式标签 <f> 落入 xlsx
+            # Fix 4（走查）：先 _导出值格式化（ISO 日期截取/浮点去噪）再转义
+            pd.DataFrame([_导出格式化行(r) for r in rows]).to_excel(buf, index=False, engine="openpyxl")
+            buf.seek(0)
+            return StreamingResponse(
+                buf,
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": f"attachment; filename=report.xlsx; filename*=UTF-8''{quote(f'{标题}.xlsx')}"},
+            )
+        if format == "csv":
+            # Fix 1/2：CSV 公式注入——= + - @（可含前导空白，堵 TAB/空格绕过）开头
+            # 的单元格加前缀 '；xlsx/csv 共用 _公式注入转义行（表头 key 同样转义）
+            # F2（走查）：utf-8-sig 写 BOM——中文 Windows Excel 无 BOM 打开乱码
+            # Fix 4（走查）：先 _导出值格式化（ISO 日期截取/浮点去噪）再转义
+            esc_rows = [_导出格式化行(r) for r in rows]
+            pd.DataFrame(esc_rows).to_csv(buf, index=False, encoding="utf-8-sig")
+            buf.seek(0)
+            return StreamingResponse(
+                buf,
+                media_type="text/csv; charset=utf-8",
+                headers={"Content-Disposition": f"attachment; filename=report.csv; filename*=UTF-8''{quote(f'{标题}.csv')}"},
+            )
+        # PDF（reportlab + 中文字体；字体模块级注册 _PDF_FONT，多次导出不重复注册）
+        buf = _构建PDF报告(report, 标题)
         return StreamingResponse(
             buf,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f"attachment; filename=report.xlsx; filename*=UTF-8''{quote(f'{标题}.xlsx')}"},
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename=report.pdf; filename*=UTF-8''{quote(f'{标题}.pdf')}"},
         )
-    if format == "csv":
-        # Fix 1/2：CSV 公式注入——= + - @（可含前导空白，堵 TAB/空格绕过）开头
-        # 的单元格加前缀 '；xlsx/csv 共用 _公式注入转义行（表头 key 同样转义）
-        # F2（走查）：utf-8-sig 写 BOM——中文 Windows Excel 无 BOM 打开乱码
-        # Fix 4（走查）：先 _导出值格式化（ISO 日期截取/浮点去噪）再转义
-        esc_rows = [_导出格式化行(r) for r in rows]
-        pd.DataFrame(esc_rows).to_csv(buf, index=False, encoding="utf-8-sig")
-        buf.seek(0)
-        return StreamingResponse(
-            buf,
-            media_type="text/csv; charset=utf-8",
-            headers={"Content-Disposition": f"attachment; filename=report.csv; filename*=UTF-8''{quote(f'{标题}.csv')}"},
-        )
-    # PDF（reportlab + 中文字体；字体模块级注册 _PDF_FONT，多次导出不重复注册）
-    buf = _构建PDF报告(report, 标题)
-    return StreamingResponse(
-        buf,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=report.pdf; filename*=UTF-8''{quote(f'{标题}.pdf')}"},
-    )
 
 
 def _构建PDF报告(report: Dict[str, Any], 标题: str, chart_png: Optional[str] = None) -> io.BytesIO:
@@ -820,23 +877,26 @@ def 导出完整报告(
 
     与 GET /{report_id}/export?format=pdf 的区别：前端把 ECharts 渲染的图表图片
     （base64 dataURL）一并传上来，产出"图文并茂"的单文件报告。
+
+    Fix E2：与单份/批量导出共享导出信号量（PDF 全量报告渲染同样耗 CPU/IO）。
     """
-    from urllib.parse import quote
+    with _导出并发配额():
+        from urllib.parse import quote
 
-    from repositories import audit_repo
-    audit_repo.记录(user["user_id"], "导出报表", target_type="report", target_id=report_id, detail="format=pdf-full")
-    from repositories import report_repo
+        from repositories import audit_repo
+        audit_repo.记录(user["user_id"], "导出报表", target_type="report", target_id=report_id, detail="format=pdf-full")
+        from repositories import report_repo
 
-    item = report_repo.读取报表(user["user_id"], report_id)
-    if not item:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报表不存在")
-    标题 = (item["标题"] or "报表").replace('"', '').replace('\\', '_')
-    buf = _构建PDF报告(item["报表"], 标题, chart_png=body.chart_png)
-    return StreamingResponse(
-        buf,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=report.pdf; filename*=UTF-8''{quote(f'{标题}.pdf')}"},
-    )
+        item = report_repo.读取报表(user["user_id"], report_id)
+        if not item:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报表不存在")
+        标题 = (item["标题"] or "报表").replace('"', '').replace('\\', '_')
+        buf = _构建PDF报告(item["报表"], 标题, chart_png=body.chart_png)
+        return StreamingResponse(
+            buf,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename=report.pdf; filename*=UTF-8''{quote(f'{标题}.pdf')}"},
+        )
 
 
 @router.delete("/{report_id}")
@@ -957,7 +1017,7 @@ def 重放报表(
     )
 
     # P0 加固：与流式共享并发信号量（replay 同样消耗 LLM/线程资源）
-    with _流式并发配额("当前分析任务已满（并发上限 4），请稍后重试"):
+    with _流式并发配额(f"当前分析任务已满（并发上限 {_生成并发上限()}），请稍后重试"):
         df, llm_config = _准备上下文(payload, request, user)
         try:
             new_id, new_report = _生成报表流式(payload, df, llm_config, user)
