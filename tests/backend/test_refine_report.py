@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """阶段 55 · Task1 标识符/编码字段识别器测试。
 
 约束 2 的基石：标识符/编码 ID 类字段严禁作 Y 轴/数值度量，仅可作分类 X 轴。
@@ -70,3 +70,34 @@ def test_唯一值数缺失时_仅按字段名模式():
     识别 = refine_report.标识符字段(画像)
     assert "ID" in 识别
     assert "金额" not in 识别
+
+def test_编辑校验_标识符Y轴被拒():
+    画像 = {"字段列表": ["订单ID", "金额", "地区"], "数值字段": ["金额"],
+            "分类字段": ["地区"], "文本字段": []}
+    ok, reason = refine_report.编辑校验({"动作": "换Y轴", "Y轴": ["订单ID"]}, 画像)
+    assert not ok
+    assert "标识符" in reason
+
+def test_编辑校验_标识符可作X轴():
+    画像 = {"字段列表": ["订单ID", "金额", "地区"], "数值字段": ["金额"],
+            "分类字段": ["地区"], "文本字段": []}
+    ok, reason = refine_report.编辑校验({"动作": "换X轴", "X轴": "订单ID"}, 画像)
+    assert ok and reason is None
+
+def test_编辑校验_不存在的字段拒绝():
+    画像 = {"字段列表": ["地区"], "数值字段": [], "分类字段": ["地区"], "文本字段": []}
+    ok, reason = refine_report.编辑校验({"动作": "换X轴", "X轴": "不存在的列"}, 画像)
+    assert not ok
+    assert "不存在" in reason
+
+def test_应用编辑_改标题与颜色():
+    cfg = {"类型": "bar", "标题": "旧", "X轴": "地区", "Y轴": ["金额"], "颜色": "", "数据": []}
+    new = refine_report.应用编辑(cfg, {"动作": "改标题", "标题": "新标题"})
+    assert new["标题"] == "新标题"
+    assert new["X轴"] == "地区"
+
+def test_应用编辑_切类型保持数据不动():
+    cfg = {"类型": "bar", "标题": "t", "X轴": "行业", "Y轴": ["金额"], "数据": [{"行业": "A", "金额": 1}]}
+    new = refine_report.应用编辑(cfg, {"动作": "切图表类型", "图表类型": "饼图"})
+    assert new["类型"] == "pie"   # plotly 值
+    assert new["数据"] == cfg["数据"]  # 纯 spec 层，数据由 Task4 重算
