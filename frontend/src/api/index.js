@@ -11,7 +11,7 @@ export {
   listTemplates, saveTemplate, deleteTemplate, runTemplate,
   listSchedules, createSchedule, deleteSchedule, globalSearch, fetchFailedSchedules,
   listReports, getReport, exportReport, exportFullReport, exportAllReports, deleteReport,
-  createShare, toggleFavorite, listShares, revokeShare, getSharedReport, replayReport,
+  createShare, toggleFavorite, listShares, revokeShare, getSharedReport, replayReport, refineReport,
   listDashboards, getDashboard, createDashboard, updateDashboard, deleteDashboard, shareDashboard,
   fetchStatistics, fetchAdminUsers, fetchAuditLog, fetchUsage, fetchMetrics, exportEvents,
   banUser, unbanUser, healthCheck, submitFeedback, exportUserData, deleteAccount,

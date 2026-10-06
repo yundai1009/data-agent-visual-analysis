@@ -13,11 +13,12 @@
  * ============================================================================= */
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Download, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, RotateCcw, GitBranch, Filter, Star, Search } from 'lucide-react';
+import { Download, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, RotateCcw, GitBranch, Filter, Star, Search, Pencil } from 'lucide-react';
 import { listReports, getReport, deleteReport, exportReport, exportFullReport, exportAllReports, replayReport, toggleFavorite, createDashboard } from '../api';
 import EChartsChart from '../components/EChartsChart';
 import ExportDialog from '../components/ExportDialog';
 import ShareDialog from '../components/ShareDialog';
+import ChartRefinePanel from '../components/ChartRefinePanel';
 import { 计算数据依据 } from '../utils/结论依据';
 
 // Report 报表历史页主组件
@@ -46,6 +47,8 @@ export default function Report() {
   const [isFav, setIsFav] = useState(false);
   const [favOnly, setFavOnly] = useState(false);
   const [searchQ, setSearchQ] = useState('');
+  // 阶段 55：图表局部精细化编辑抽屉
+  const [showRefine, setShowRefine] = useState(false);
   const chartContainerRef = useRef(null); // 图表容器 DOM 引用：用于导出当前图表为 PNG
   // 下载弹窗状态（供 ExportDialog 组件使用）
   const [showDl, setShowDl] = useState(false);
@@ -659,6 +662,12 @@ export default function Report() {
       <div className="flex flex-wrap gap-2 justify-end mt-4 items-center">
         <button
           className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all"
+          onClick={() => setShowRefine(true)}
+        >
+          <Pencil className="w-3.5 h-3.5" /> 编辑图表
+        </button>
+        <button
+          className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all"
           onClick={() => { setDlFmt('xlsx'); dlReportIdRef.current = currentReportId; setShowDl(true); }}
         >
           <Download className="w-3.5 h-3.5" /> 导出
@@ -686,6 +695,18 @@ export default function Report() {
 
       {/* 分享弹窗：生成/撤销/复制链接（已拆分为 ShareDialog 组件） */}
       <ShareDialog showShare={showShare} onClose={() => setShowShare(false)} currentReportId={currentReportId} />
+
+      {/* 阶段 55：图表局部精细化编辑抽屉（编辑成功后另存新报表并跳转渲染） */}
+      <ChartRefinePanel
+        show={showRefine}
+        onClose={() => setShowRefine(false)}
+        reportId={currentReportId}
+        画像={dataProfile}
+        onRefined={(spec, newId) => {
+          if (newId) navigate(`/report/${newId}`);  // 跳转新报表页，复用加载渲染
+          setShowRefine(false);
+        }}
+      />
     </div>
   );
 }

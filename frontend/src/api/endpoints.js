@@ -424,6 +424,14 @@ export async function replayReport(reportId) {
   return request(`/reports/${reportId}/replay`, { method: 'POST' });
 }
 
+// 阶段 55 · 图表局部精细化编辑：NL 指令或结构化编辑模型 → 新 spec + 变更对比
+// 请求体：{ 指令?: string } 或 { 编辑?: {动作, ...} }
+// 响应：{ 新报表ID, 新spec, 变更清单[], 需确认, 拒绝原因 }
+
+export async function refineReport(reportId, body) {
+  return request(`/reports/${reportId}/refine`, { method: 'POST', body: JSON.stringify(body) });
+}
+
 // ---- 图表看板（批次 4：多报表并排对比）----
 
 export async function listDashboards() {
