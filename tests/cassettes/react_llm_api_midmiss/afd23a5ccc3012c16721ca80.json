@@ -11,44 +11,6 @@
         {
           "role": "user",
           "content": "帮我看看这份数据整体怎么样"
-        },
-        {
-          "role": "assistant",
-          "content": null,
-          "tool_calls": [
-            {
-              "id": "call_1",
-              "type": "function",
-              "function": {
-                "name": "获取数据画像",
-                "arguments": "{}"
-              }
-            }
-          ]
-        },
-        {
-          "role": "tool",
-          "tool_call_id": "call_1",
-          "content": "数据集共 6 行、4 列。\n字段列表：月份, 地区, 销售额, 订单数\n数值字段：销售额, 订单数\n日期字段：月份\n分类字段：地区\n数据质量评级：良好 - 完整无缺失\n字段示例值（帮助理解语义，非完整数据）：\n月份: 2026-01, 2026-01, 2026-02 | 地区: 华东, 华南, 华东 | 销售额: 100, 80, 120 | 订单数: 10, 8, 12"
-        },
-        {
-          "role": "assistant",
-          "content": null,
-          "tool_calls": [
-            {
-              "id": "call_2",
-              "type": "function",
-              "function": {
-                "name": "聚合分析",
-                "arguments": "{\"X轴\": \"地区\", \"Y轴\": [\"销售额\"], \"聚合方式\": \"求和\", \"前N行\": 5}"
-              }
-            }
-          ]
-        },
-        {
-          "role": "tool",
-          "tool_call_id": "call_2",
-          "content": "聚合方式：求和，返回 2 行\n  地区: 华东, 销售额: 330\n  地区: 华南, 销售额: 265\n"
         }
       ],
       "temperature": 0.0,
@@ -236,7 +198,7 @@
   },
   "status_code": 200,
   "json": {
-    "id": "chatcmpl-call_3",
+    "id": "chatcmpl-call_1",
     "object": "chat.completion",
     "created": 0,
     "model": "deepseek-chat",
@@ -248,11 +210,11 @@
           "content": null,
           "tool_calls": [
             {
-              "id": "call_3",
+              "id": "call_1",
               "type": "function",
               "function": {
-                "name": "推荐图表",
-                "arguments": "{\"图表类型\": \"饼图\", \"理由\": \"地区销售构成适合饼图展示\"}"
+                "name": "获取数据画像",
+                "arguments": "{}"
               }
             }
           ]

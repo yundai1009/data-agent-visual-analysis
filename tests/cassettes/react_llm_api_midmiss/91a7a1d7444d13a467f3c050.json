@@ -1,0 +1,75 @@
+{
+  "request": {
+    "url": "https://api.deepseek.com/v1/chat/completions",
+    "json": {
+      "model": "deepseek-chat",
+      "messages": [
+        {
+          "role": "system",
+          "content": "你是数据分析 Agent，任务是根据给定的画像、聚合结果、推荐依据，写一段中文 Markdown 分析结论。\n\n【硬性规则】\n1. 仅基于提供的事实，不要编造数字；\n2. 结构为：先一句话总结，再 2-4 点「关键发现」（用 `-` 列表），再 1-2 点「需关注」（如果有风险提示），最后 1-2 点「建议」（基于关键发现给出可执行的下一步行动，例如关注领先项、排查垫底原因，不要泛泛而谈）；\n3. 不要使用代码块，不要输出解释性开场白；\n4. 控制在 200-400 字之间；\n5. 必须调用 ``生成结论`` 工具，把结论作为参数传入；不要直接输出文本。\n6. 【阶段 52】关于排名的铁律：聚合预览里的行**已按数值降序排好，第 1 行就是最大值**，\n   \"谁最高/首位\"只能照抄第 1 行，**禁止凭感觉重排**；\n   若预览里声明\"未排序/行序不代表排名\"，则**一个名次都不要断言**，只说趋势与差异，\n   所有数字必须原样引用，不得四舍五入到改变量级。"
+        },
+        {
+          "role": "user",
+          "content": "分析需求: 帮我看看这份数据整体怎么样\n数据画像: 行数 6，列数 4，数据质量等级 优秀\n推荐的图表类型: 表格\n推荐依据:\n- 系统根据字段类型自动选择 `表格`\n聚合结果预览:\n列名: ['月份', '地区', '销售额', '订单数']\n已按数值（销售额/订单数）降序排列，第 1 行即为最大值：\n前3行:\n  - 月份: 2026-02-01T00:00:00, 地区: 华东, 销售额: 120, 订单数: 12\n  - 月份: 2026-03-01T00:00:00, 地区: 华东, 销售额: 110, 订单数: 11\n  - 月份: 2026-01-01T00:00:00, 地区: 华东, 销售额: 100, 订单数: 10\n风险提示:\n- 无\n"
+        }
+      ],
+      "temperature": 0.0,
+      "stream": false,
+      "max_tokens": 2048,
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "生成结论",
+            "description": "把生成的分析结论作为工具参数返回",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "结论": {
+                  "type": "string",
+                  "description": "Markdown 中文分析结论"
+                }
+              },
+              "required": [
+                "结论"
+              ]
+            }
+          }
+        }
+      ],
+      "tool_choice": "auto"
+    }
+  },
+  "status_code": 200,
+  "json": {
+    "id": "chatcmpl-call_x",
+    "object": "chat.completion",
+    "created": 0,
+    "model": "deepseek-chat",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "call_x",
+              "type": "function",
+              "function": {
+                "name": "推荐图表",
+                "arguments": "{\"图表类型\": \"饼图\", \"理由\": \"润色占位\"}"
+              }
+            }
+          ]
+        },
+        "finish_reason": "tool_calls"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 10,
+      "completion_tokens": 5,
+      "total_tokens": 15
+    }
+  }
+}

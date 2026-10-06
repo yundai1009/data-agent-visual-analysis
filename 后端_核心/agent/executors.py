@@ -32,12 +32,34 @@
 
 from __future__ import annotations
 
+import datetime
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
 from 后端_核心.agent.tools import register_tool_executor
 from 后端_核心.profile import 生成数据画像 as _生成数据画像
+
+
+def _示例值文本(value: Any) -> str:
+    """画像示例值的确定性渲染：同一数据不同会话逐字节一致。
+
+    Fix L3（阶段54-9 · LLM P2-3）：此前直接 ``str(v)``——
+    - pandas datetime 序列化成 ``2026-01-01 00:00:00``，随 dtype/会话变化；
+    - 整型 float 渲染成 ``100.0``，与 int 列 ``100`` 不一致；
+    → 同一数据集不同会话的画像摘要字节不同，VCR 轮 2 请求指纹必 miss。
+    现在：datetime 统一 ``YYYY-MM-DD`` 文本、整型 float 去 ``.0``、其余原样 str。
+    """
+    try:
+        if value is None or pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, (pd.Timestamp, datetime.datetime, datetime.date)):
+        return pd.Timestamp(value).strftime("%Y-%m-%d")
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
 
 
 def _可读画像摘要(画像: Dict[str, Any], df=None) -> str:
@@ -69,7 +91,10 @@ def _可读画像摘要(画像: Dict[str, Any], df=None) -> str:
         f"数值字段：{', '.join(数值字段)}",
         f"日期字段：{', '.join(日期字段)}",
         f"分类字段：{', '.join(分类字段)}",
-        f"数据质量评级：{质量.get('评级', '?')} - {质量.get('等级说明', '')}",
+        # Fix L3（阶段54-9 · LLM P2-3）：质量评级只保留稳定枚举（A/B/C 等级字母，
+        # 无评级时回退「等级」标签），去掉动态「- 等级说明」文案——评级由数据
+        # 决定且确定，说明文案任何会话差异都会让 VCR 轮 2 请求指纹 miss。
+        f"数据质量评级：{质量.get('评级') or 质量.get('等级') or '?'}",
     ]
     # 每字段真实示例值（前 3 个非空），帮 LLM 理解字段语义
     if df is not None and not df.empty:
@@ -77,7 +102,7 @@ def _可读画像摘要(画像: Dict[str, Any], df=None) -> str:
         for field in 字段列表:
             if field not in df.columns:
                 continue
-            samples = [str(v) for v in df[field].dropna().head(3).tolist()]
+            samples = [_示例值文本(v) for v in df[field].dropna().head(3).tolist()]
             if samples:
                 sample_lines.append(f"{field}: {', '.join(samples)}")
         if sample_lines:
