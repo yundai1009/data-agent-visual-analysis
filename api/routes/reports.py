@@ -975,6 +975,87 @@ def 撤销分享链接(
 # ── 重放（批次 7：分析历史重放）───────────────────────────────────────────────
 
 
+# ── 图表局部精细化编辑（阶段 55）──────────────────────────────────────────
+# 对已生成报表做图表层局部修改：不重新执行 Agent ReAct、不调外部工具/LLM，
+# 复用报表关联数据集（parquet + 画像）本地 pandas 重算，另存新报表并返回
+# 「旧→新」变更对比清单。NL 指令与结构化面板归一化为同一编辑模型。
+
+
+@router.post("/{report_id}/refine")
+def 精细化编辑报表(
+    report_id: str,
+    body: dict,
+    user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """图表局部精细化编辑。
+
+    请求体：
+      - ``指令``：自然语言编辑指令（如「把X轴换成地区」「标题改为…」）
+      - ``编辑``：结构化编辑模型（面板直传）
+    响应：
+      - ``需确认`` true → 需向用户确认目标/参数（约束 3）
+      - ``拒绝原因`` 非空 → 校验失败（如标识符禁作 Y 轴），不落库
+      - 成功 → ``新报表ID`` / ``新spec`` / ``变更清单[]``（旧→新）
+    """
+    from 后端_核心 import refine_report as rr
+    from repositories import report_repo
+    from api.routes.datasets import _仓储
+
+    报表 = report_repo.读取报表(user["user_id"], report_id)
+    if not 报表:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报表不存在")
+
+    ds = _仓储.读取(user["user_id"], 报表["数据集ID"])
+    if not ds:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="关联数据集不存在")
+    画像 = ds["数据画像"]
+    df = ds["数据"]
+    原配置 = (报表["报表"] or {}).get("图表配置") or {}
+
+    # 1) 编辑指令：NL 或 结构化
+    指令 = body.get("指令")
+    编辑模型 = body.get("编辑")
+    if 指令:
+        编辑模型, 需确认, 提示 = rr.解析编辑指令(指令, 画像)
+        if 需确认:
+            return {"需确认": True, "候选": [], "拒绝原因": 提示,
+                    "新报表ID": None, "新spec": None, "变更清单": []}
+    elif not 编辑模型:
+        return {"需确认": True, "候选": [], "拒绝原因": "请提供 指令 或 编辑 参数",
+                "新报表ID": None, "新spec": None, "变更清单": []}
+
+    # 2) 校验（标识符禁作 Y 轴 / 字段存在性 / 图表类型）
+    ok, reason = rr.编辑校验(编辑模型, 画像)
+    if not ok:
+        return {"需确认": False, "拒绝原因": reason,
+                "新报表ID": None, "新spec": None, "变更清单": []}
+
+    # 3) 应用：重算类动作走本地重算；纯展示走 spec 修改
+    if 编辑模型.get("动作") in rr._重算动作:
+        新配置, _ = rr.重算图表数据(画像, df, 编辑模型, 原配置)
+    else:
+        新配置 = rr.应用编辑(原配置, 编辑模型)
+        新配置["数据"] = 原配置.get("数据", [])  # 纯展示不动数据
+
+    # 4) 变更对比 + 另存新报表
+    from repositories import audit_repo
+    变更清单 = rr.生成变更对比(原配置, 新配置)
+    新报表内容 = dict(报表["报表"] or {})
+    新报表内容["图表配置"] = 新配置
+    新报表内容["标题"] = 新配置.get("标题") or 报表["标题"]
+    新报表内容["来源报表ID"] = report_id
+    # chart_type 存储中文（对齐 _生成报表流式 L444 语义）
+    中文类型 = rr._类型plotly转中文(新配置.get("类型")) or 报表["图表类型"]
+    新报表id = report_repo.保存报表(
+        user["user_id"], 报表["数据集ID"],
+        新报表内容["标题"], 中文类型, 新报表内容,
+    )
+    audit_repo.记录(user["user_id"], "精细化编辑图表", target_type="report",
+                    target_id=新报表id, detail=f"来源报表={report_id}")
+    return {"需确认": False, "拒绝原因": None,
+            "新报表ID": 新报表id, "新spec": 新配置, "变更清单": 变更清单}
+
+
 @router.post("/{report_id}/replay", response_model=ReportGenerateResponse)
 def 重放报表(
     report_id: str,
