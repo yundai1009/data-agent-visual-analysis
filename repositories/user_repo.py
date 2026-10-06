@@ -308,14 +308,29 @@ def 删除用户及数据(user_id: str) -> None:
     with _write_lock, _get_conn() as conn:
         # 确保所有表存在（用户可能从未使用某功能，表未初始化时 DELETE 报 no such table）
         from 后端_核心.存储.连接 import 初始化数据库
-        from repositories import audit_repo, dashboard_repo, feedback_repo, report_repo, share_repo
+        from repositories import (
+            audit_repo, dashboard_repo, event_repo, favorite_repo, feedback_repo,
+            report_repo, schedule_repo, share_repo, template_repo, usage_repo,
+        )
         初始化数据库()
         report_repo.初始化报表表()
         dashboard_repo.初始化看板表()
         share_repo.初始化分享表()
         feedback_repo.初始化反馈表()
         audit_repo.初始化审计表()
-        for table in ("datasets", "reports", "dashboards", "share_links", "feedback", "audit_log", "users"):
+        # Fix E4（阶段54-9 · 多用户 P3-1）：注销删除清单补全含 user_id 表——
+        # 走查实测原清单（datasets/reports/dashboards/share_links/feedback/audit_log/users）
+        # 不含 event_*/favorites/llm_usage/report_templates/scheduled_jobs，注销后
+        # event_register 残留 1 行。补这 8 张（全部按 user_id 删除；event_* 埋点表
+        # 由 event_repo 独立于业务表初始化，purchase 订单走 order_id 幂等、user_id 在列）。
+        event_repo.初始化事件表()
+        favorite_repo.初始化收藏表()
+        usage_repo.初始化用量表()
+        template_repo.初始化模板表()
+        schedule_repo.初始化任务表()
+        for table in ("datasets", "reports", "dashboards", "share_links", "feedback", "audit_log",
+                       "favorites", "llm_usage", "report_templates", "scheduled_jobs",
+                       "event_register", "event_gen", "event_payment", "event_paywall", "users"):
             if table == "datasets":
                 # P0 修复：级联删除数据集时同步清理 data/uploads/ 物理文件副本
                 for row in conn.execute("SELECT stored_path FROM datasets WHERE user_id = ?", (user_id,)):
