@@ -238,6 +238,10 @@ def login(payload: LoginRequest, request: Request) -> AuthResponse:
         audit_repo.记录((user or {}).get("user_id", ""), "登录失败", username=payload.username.strip(), detail="密码错误")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
     # 封禁拦截：被封账号即使密码正确也拒绝登录（管理后台封号后立即生效）
+    # Fix M3（阶段54-9 · 多用户 P3-2 确认）：登录接口对 banned 账户返回 403 是
+    # **明确告知本人**「账号已存在但被封禁」（用户凭自己凭据登录，无探测风险）；
+    # 与旧 token 请求的 401 语义互补——旧 token 走 token_version 对账 401（吊销、
+    # 不泄露账号状态差异），新登录尝试走本处 403（本人知情权）。行为不改，仅补注释。
     if user_repo.读取账号状态(user["user_id"]) == "banned":
         from repositories import audit_repo
         audit_repo.记录(user["user_id"], "登录失败", username=user["username"], detail="账号已封禁")

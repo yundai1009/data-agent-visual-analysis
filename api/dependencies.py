@@ -109,6 +109,10 @@ def get_current_user(
     # 为什么：JWT 无状态、签发后服务端无法主动作废，只能靠版本号对账实现"改密码/改名后旧 token 全部失效"。
     # 删除后果：改密码后旧 token 依然有效，被泄露的 token 永久可用，会话吊销形同虚设。
     # 替代方案：Redis 黑名单/白名单缓存（性能更好但引入外部依赖）；当前"每请求查库比对"在单机场景够用且零依赖。
+    # Fix M3（阶段54-9 · 多用户 P3-2 确认）：封禁 = status→banned + token_version+1 → 已签发
+    # 旧 token 在这里（第 4 关对账）即 401「认证令牌已失效」——**401 而非 403 是刻意设计**：
+    # 对 API 调用方不泄露「账号存在但被封禁」的状态差异（与未认证/无效 token 不可区分），
+    # 避免被封者据此探测账号存在性；这不是缺陷，封禁即吊销会话是更强的行为。
     from repositories import user_repo as _repo
     # S4 修复：用户不存在（读取token版本返回 None）时旧 JWT 一律失效——
     # 删号后 ver=0 的旧 token 不得继续通过对账（旧实现 None→0 与 ver=0 相等，
@@ -121,8 +125,14 @@ def get_current_user(
         )
 
     # ---- 第 5 关：封禁拦截（管理后台超级权限）----
-    # 管理后台可封禁违规账号；被封用户任何请求都 403，且封禁即吊销旧 token
-    # （封禁时 token_version +1，配合上一关对账拦截，已登录会话也立即失效）。
+    # 管理后台可封禁违规账号；封禁动作本身在 user_repo.封禁用户 里做两件事：
+    # status→banned + token_version+1。配合上一关对账（401）与登录接口封禁拦截（403），
+    # 被封用户的所有会话立即失效。
+    # Fix M3（阶段54-9 · 多用户 P3-2 确认）语义说明：
+    # - 旧 token 从来走不到本关——第 4 关 token_version 对账先 401（刻意：不泄露账号状态差异）；
+    # - 本关是防御纵深（banned 状态在 token 对账通过后仍再兜一层 403），
+    #   实际只有「被封期间重新登录」才会走到，而 auth.py 登录接口对 banned 账号直接 403，
+    #   因此日常路径的语义是：旧 token → 401（吊销），新登录尝试 → 403（明确告知本人被封）。
     if _repo.读取账号状态(payload.get("sub", "")) == "banned":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

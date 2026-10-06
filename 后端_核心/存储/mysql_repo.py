@@ -136,7 +136,7 @@ _建表DDL: List[str] = [
         `action`      VARCHAR(255) NOT NULL,
         `target_type` VARCHAR(64) NOT NULL DEFAULT '',
         `target_id`   VARCHAR(255) NOT NULL DEFAULT '',
-        `detail`      VARCHAR(512) NOT NULL DEFAULT '',
+        `detail`      TEXT NOT NULL,
         `created_at`  VARCHAR(64) NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """,
@@ -146,7 +146,7 @@ _建表DDL: List[str] = [
         `user_id`    VARCHAR(255) NOT NULL,
         `task_id`    VARCHAR(255) NOT NULL DEFAULT '',
         `score`      INT NOT NULL,
-        `correction` VARCHAR(1024) NOT NULL DEFAULT '',
+        `correction` TEXT NOT NULL,
         `sync_kb`    INT NOT NULL DEFAULT 0,
         `created_at` VARCHAR(64) NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -272,6 +272,13 @@ _宽列改: dict = {
     "favorites": ["user_id", "report_id"],
 }
 
+# 文本列升级：audit_log.detail / feedback.correction 存任意长度（SQLite TEXT 无限），
+# MySQL 窄 VARCHAR（512/1024）有截断风险 → 统一升 TEXT（对齐 llm_custom_providers 先例）
+_文本列改: dict = {
+    "audit_log": ["detail"],
+    "feedback": ["correction"],
+}
+
 
 def _列信息(cur, 表: str, 列: str):
     """返回 (DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH)；列不存在返回 None。"""
@@ -309,6 +316,23 @@ def _确保时间列(cur, 表: str, 列: str) -> None:
     logger.info("MySQL schema 升级：%s.%s %s → VARCHAR(64)", 表, 列, data_type)
 
 
+def _确保文本列(cur, 表: str, 列: str) -> None:
+    """窄 VARCHAR 文本列升级为 TEXT（Fix M2：audit_log.detail / feedback.correction
+    存任意长度，防截断；对齐 SQLite TEXT 无限语义与 llm_custom_providers 的 TEXT 先例）。
+
+    已是 text 家族（text/mediumtext/longtext）则不动——不把已扩容列降级，避免截断既有长内容。
+    """
+    row = _列信息(cur, 表, 列)
+    if row is None:
+        return
+    data_type = (row[0] or "").lower()
+    if data_type in ("text", "mediumtext", "longtext"):
+        return
+    extra = "" if row[1] == "YES" else "NOT NULL"
+    cur.execute(f"ALTER TABLE `{表}` MODIFY COLUMN `{列}` TEXT {extra}".strip())
+    logger.info("MySQL schema 升级：%s.%s %s → TEXT", 表, 列, data_type)
+
+
 def _确保索引(cur, 表: str, 索引名: str, 列片段: str, 唯一: bool) -> None:
     cur.execute(
         "SELECT COUNT(*) FROM information_schema.STATISTICS "
@@ -344,6 +368,9 @@ def 初始化数据库() -> None:
             for 表, 列清单 in _宽列改.items():
                 for 列 in 列清单:
                     _确保列宽(cur, 表, 列)
+            for 表, 列清单 in _文本列改.items():
+                for 列 in 列清单:
+                    _确保文本列(cur, 表, 列)
             for 表, 列清单 in _时间列.items():
                 for 列 in 列清单:
                     _确保时间列(cur, 表, 列)

@@ -375,6 +375,12 @@ def 读取账号状态(user_id: str) -> str:
 def 封禁用户(user_id: str, reason: str = "") -> None:
     """封禁用户：status → 'banned'，并吊销全部旧 token（token_version +1）。
 
+    Fix M3（阶段54-9 · 多用户 P3-2 确认，行为不改仅补注释）：
+    「封禁 = token_version+1 即吊销会话」——已签发旧 JWT 在 get_current_user 第 4 关
+    token 版本对账处返回 **401**（刻意：不向 API 调用方泄露「账号存在但被封」的
+    状态差异，与未认证/无效 token 不可区分）；登录接口对 banned 账户返回 403
+    （明确告知本人被封）。故日常语义：旧 token → 401（吊销），新登录尝试 → 403。
+
     用户不存在抛 ValueError（防假成功）；被封用户下一次请求即被认证拦截。
     """
     初始化用户表()

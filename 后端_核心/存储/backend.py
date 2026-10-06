@@ -71,17 +71,21 @@ def 插入忽略(后端: str, 表名: str, 列清单: str, 值清单: str) -> st
 
 def 冲突更新SQL(后端: str, 表名: str, 列清单: str, 值清单: str, 冲突列: str, 更新列: list) -> str:
     """upsert（冲突覆盖更新）：SQLite 用 ``ON CONFLICT(col) DO UPDATE SET x = excluded.x``，
-    MySQL 用 ``ON DUPLICATE KEY UPDATE x = VALUES(x)``。
+    MySQL 用 ``ON DUPLICATE KEY UPDATE x = new.x``（8.0.19+ 行别名语法）。
+
+    Fix M1（阶段54-9 · MySQL 审查 Minor-2）：MySQL 8.0.20+ 弃用 ``VALUES(col)``
+    别名（8.4 移除；8.0.23 仍可用但已 deprecated）——改用 ``VALUES (...) AS new
+    ON DUPLICATE KEY UPDATE c = new.c``（8.0.19+ 支持，需 MySQL ≥ 8.0.19）。
 
     参数
     ----
     - 表名/列清单/值清单：INSERT 的三段（repo 层原有写法原样传入）
     - 冲突列：触发 upsert 的键列（唯一/主键；MySQL 分支不使用，仅保持签名一致）
-    - 更新列：冲突时需覆盖的列名列表（sqlite → ``excluded.列``；mysql → ``VALUES(列)``）
+    - 更新列：冲突时需覆盖的列名列表（sqlite → ``excluded.列``；mysql → ``new.列``）
     """
     if 后端 == "mysql":
-        更新 = ", ".join(f"{c} = VALUES({c})" for c in 更新列)
-        return f"INSERT INTO {表名} {列清单} VALUES {值清单} ON DUPLICATE KEY UPDATE {更新}"
+        更新 = ", ".join(f"{c} = new.{c}" for c in 更新列)
+        return f"INSERT INTO {表名} {列清单} VALUES {值清单} AS new ON DUPLICATE KEY UPDATE {更新}"
     更新 = ", ".join(f"{c} = excluded.{c}" for c in 更新列)
     return f"INSERT INTO {表名} {列清单} VALUES {值清单} ON CONFLICT({冲突列}) DO UPDATE SET {更新}"
 

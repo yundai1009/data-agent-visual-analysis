@@ -41,7 +41,7 @@ def test_冲突更新SQL_sqlite_用ON_CONFLICT与excluded():
     assert "last_sent_at = excluded.last_sent_at" in sql
 
 
-def test_冲突更新SQL_mysql_用ON_DUPLICATE_KEY与VALUES():
+def test_冲突更新SQL_mysql_用ON_DUPLICATE_KEY与行别名():
     sql = backend.冲突更新SQL(
         "mysql", "email_codes",
         "(email, code_hash, expires_at, used, verify_attempts, last_sent_at, created_at)",
@@ -51,8 +51,12 @@ def test_冲突更新SQL_mysql_用ON_DUPLICATE_KEY与VALUES():
     )
     assert "INSERT INTO email_codes" in sql
     assert "ON DUPLICATE KEY UPDATE" in sql
-    assert "code_hash = VALUES(code_hash)" in sql
+    # 阶段 54-9（M1）：MySQL 8.0.20+ 弃用 VALUES(col)，8.4 移除——改用
+    # 8.0.19+ 的行别名语法 VALUES (...) AS new ... UPDATE c = new.c
+    assert " AS new ON DUPLICATE KEY UPDATE" in sql, "mysql 分支应使用行别名语法"
+    assert "code_hash = new.code_hash" in sql
     assert "excluded." not in sql, "mysql 分支不得出现 sqlite 的 excluded 语法"
+    assert "VALUES(" not in sql, "mysql 分支不得再用弃用的 VALUES(col) 语法"
 
 
 # ---- 插入忽略 -----------------------------------------------------------------
