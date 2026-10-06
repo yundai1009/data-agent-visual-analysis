@@ -67,3 +67,78 @@ def 插入忽略(后端: str, 表名: str, 列清单: str, 值清单: str) -> st
     """冲突忽略插入：SQLite 是 ``INSERT OR IGNORE``，MySQL 是 ``INSERT IGNORE``。"""
     关键字 = "INSERT IGNORE" if 后端 == "mysql" else "INSERT OR IGNORE"
     return f"{关键字} INTO {表名} {列清单} VALUES {值清单}"
+
+
+def 冲突更新SQL(后端: str, 表名: str, 列清单: str, 值清单: str, 冲突列: str, 更新列: list) -> str:
+    """upsert（冲突覆盖更新）：SQLite 用 ``ON CONFLICT(col) DO UPDATE SET x = excluded.x``，
+    MySQL 用 ``ON DUPLICATE KEY UPDATE x = VALUES(x)``。
+
+    参数
+    ----
+    - 表名/列清单/值清单：INSERT 的三段（repo 层原有写法原样传入）
+    - 冲突列：触发 upsert 的键列（唯一/主键；MySQL 分支不使用，仅保持签名一致）
+    - 更新列：冲突时需覆盖的列名列表（sqlite → ``excluded.列``；mysql → ``VALUES(列)``）
+    """
+    if 后端 == "mysql":
+        更新 = ", ".join(f"{c} = VALUES({c})" for c in 更新列)
+        return f"INSERT INTO {表名} {列清单} VALUES {值清单} ON DUPLICATE KEY UPDATE {更新}"
+    更新 = ", ".join(f"{c} = excluded.{c}" for c in 更新列)
+    return f"INSERT INTO {表名} {列清单} VALUES {值清单} ON CONFLICT({冲突列}) DO UPDATE SET {更新}"
+
+
+def 表存在SQL(后端: str) -> str:
+    """枚举全部业务表：SQLite 查 ``sqlite_master``；MySQL 查 information_schema。
+    两种后端结果行都含 ``name`` 键（对齐：TABLE_NAME AS name / name）。
+    """
+    if 后端 == "mysql":
+        return (
+            "SELECT TABLE_NAME AS name FROM information_schema.TABLES "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'"
+        )
+    return "SELECT name FROM sqlite_master WHERE type='table'"
+
+
+def 表结构SQL(后端: str, 表名: str) -> str:
+    """取一张表的列名集合：SQLite 用 ``PRAGMA table_info``；MySQL 用 information_schema。
+    两种后端结果行都含 ``name`` 键（对齐：COLUMN_NAME AS name / name）。
+
+    ``表名`` 只允许代码常量（项目纪律：SQL 中禁止用户输入作标识符），直接内联。
+    """
+    if 后端 == "mysql":
+        return (
+            f"SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS "
+            f"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{表名}'"
+        )
+    return f"PRAGMA table_info({表名})"
+
+
+def 创建索引SQL(后端: str, 索引名: str, 表名: str, 列: str, 唯一: bool = False) -> str:
+    """repo 层创建索引的 SQL：SQLite 返回 ``CREATE [UNIQUE] INDEX IF NOT EXISTS ...``；
+    MySQL 返回空串——索引由 ``mysql_repo.初始化数据库`` 统一管理
+    （MySQL 8 不支持 ``CREATE INDEX IF NOT EXISTS``，重复建会 1061）。
+
+    调用方约定：``sql = 创建索引SQL(...); if sql: conn.execute(sql)``。
+    ``列`` 传单列名（如 ``email``）或括号片段（如 ``(user_id, created_at)``）。
+    """
+    if 后端 == "mysql":
+        return ""
+    前缀 = "CREATE UNIQUE INDEX" if 唯一 else "CREATE INDEX"
+    if 列.startswith("("):
+        return f"{前缀} IF NOT EXISTS {索引名} ON {表名} {列}"      # 多列片段：ON reports (a, b)
+    return f"{前缀} IF NOT EXISTS {索引名} ON {表名}({列})"          # 单列：ON users(email)（与既有 DDL 逐字一致）
+
+
+def 唯一冲突(异常: Exception) -> bool:
+    """识别「唯一约束冲突」异常：SQLite 报 ``UNIQUE constraint failed``；
+    MySQL（pymysql）报 ``(1062, \"Duplicate entry ...\")``——消息里没有 UNIQUE 字样，
+    必须按 errno/关键字识别，否则重复注册/改名在 MySQL 下会变成 500 而非 400。
+    """
+    消息 = str(异常) or ""
+    if "UNIQUE" in 消息:
+        return True
+    if "Duplicate entry" in 消息 or "1062" in 消息:
+        return True
+    参数 = getattr(异常, "args", None)
+    if 参数 and str(参数[0]) == "1062":
+        return True
+    return False

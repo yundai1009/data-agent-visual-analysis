@@ -13,7 +13,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from 后端_核心.存储.backend import 写锁 as _write_lock
-from 后端_核心.存储.sqlite_repo import _get_conn   # 连接暂仍由 SQLite 实现提供
+from 后端_核心.存储.backend import 创建索引SQL as _建索引SQL, 表存在SQL as _表存在SQL, 当前后端 as _后端
+from 后端_核心.存储.连接 import _get_conn   # 阶段 54-8：统一连接入口（按 DB_BACKEND 分发）
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,8 @@ def _now_iso() -> str:
 
 def 初始化报表表() -> None:
     """幂等创建 reports 表。"""
+    if _后端() == "mysql":
+        return  # 阶段 54-8：表结构由 mysql_repo.初始化数据库 统一管理（sqlite DDL 在 MySQL 下语义校验即报错）
     with _get_conn() as conn:
         conn.execute(
             """
@@ -38,12 +41,9 @@ def 初始化报表表() -> None:
             )
             """
         )
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_reports_user_created_at
-            ON reports (user_id, created_at)
-            """
-        )
+        _sql = _建索引SQL(_后端(), "idx_reports_user_created_at", "reports", "(user_id, created_at)")
+        if _sql:
+            conn.execute(_sql)
 
 
 def 保存报表(user_id: str, dataset_id: str, title: str, chart_type: str, report: Dict[str, Any]) -> str:
@@ -161,8 +161,8 @@ def 删除报表(user_id: str, report_id: str) -> bool:
     """删除一份报表（仅限归属用户）。"""
     初始化报表表()
     with _write_lock, _get_conn() as conn:
-        # M8 修复：级联清理收藏/分享，防悬空引用（表可能尚未初始化，先查存在性）
-        tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        # M8 修复：级联清理收藏/分享，防悬空引用（表可能尚未初始化，先查存在性；方言收敛：sqlite_master/information_schema）
+        tables = {r["name"] for r in conn.execute(_表存在SQL(_后端())).fetchall()}
         if "favorites" in tables:
             conn.execute("DELETE FROM favorites WHERE report_id = ? AND user_id = ?", (report_id, user_id))
         if "share_links" in tables:

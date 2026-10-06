@@ -13,7 +13,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from 后端_核心.存储.backend import 写锁 as _write_lock
-from 后端_核心.存储.sqlite_repo import _get_conn   # 连接暂仍由 SQLite 实现提供
+from 后端_核心.存储.backend import 创建索引SQL as _建索引SQL, 表结构SQL as _表结构SQL, 当前后端 as _后端
+from 后端_核心.存储.连接 import _get_conn   # 阶段 54-8：统一连接入口（按 DB_BACKEND 分发）
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,8 @@ def _now_iso() -> str:
 
 def 初始化分享表() -> None:
     """幂等创建 share_links 表（含 password 列；旧表自动迁移补列）。"""
+    if _后端() == "mysql":
+        return  # 阶段 54-8：表结构由 mysql_repo.初始化数据库 统一管理（sqlite DDL 在 MySQL 下语义校验即报错）
     with _get_conn() as conn:
         conn.execute(
             """
@@ -37,14 +40,11 @@ def 初始化分享表() -> None:
             )
             """
         )
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_share_links_report
-            ON share_links (report_id)
-            """
-        )
+        _sql = _建索引SQL(_后端(), "idx_share_links_report", "share_links", "(report_id)")
+        if _sql:
+            conn.execute(_sql)
         # 迁移：旧表没有 password 列时补列（ALTER TABLE 幂等由列检查保证）
-        cols = {row["name"] for row in conn.execute("PRAGMA table_info(share_links)").fetchall()}
+        cols = {row["name"] for row in conn.execute(_表结构SQL(_后端(), "share_links")).fetchall()}
         if "password" not in cols:
             conn.execute("ALTER TABLE share_links ADD COLUMN password TEXT")
         # 阶段 31：协作者白名单（JSON 数组：允许访问的 username 列表；空 = 公开/仅密码）

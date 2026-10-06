@@ -23,7 +23,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 from 后端_核心.存储.backend import 写锁 as _write_lock
-from 后端_核心.存储.sqlite_repo import _get_conn   # 连接暂仍由 SQLite 实现提供
+from 后端_核心.存储.backend import 插入忽略 as _插入忽略, 当前后端 as _后端
+from 后端_核心.存储.连接 import _get_conn   # 阶段 54-8：统一连接入口（按 DB_BACKEND 分发）
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,8 @@ def _转导出时间(value: Optional[str]) -> str:
 
 def 初始化事件表() -> None:
     """幂等创建四张预测事件表。重复调用安全。"""
+    if _后端() == "mysql":
+        return  # 阶段 54-8：表结构由 mysql_repo.初始化数据库 统一管理（sqlite DDL 在 MySQL 下语义校验即报错）
     with _get_conn() as conn:
         conn.execute(
             """
@@ -212,12 +215,12 @@ def 记录支付事件(
     amount: float,
     pay_time: Optional[str] = None,
 ) -> None:
-    """支付回调成功时调用：记录一笔支付事件。order_id 冲突时忽略（幂等）。"""
+    """支付回调成功时调用：记录一笔支付事件。order_id 冲突时忽略（幂等；方言：sqlite OR IGNORE / mysql INSERT IGNORE）。"""
     初始化事件表()
     with _write_lock, _get_conn() as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO event_payment (order_id, user_id, pay_time, product_type, amount) "
-            "VALUES (?, ?, ?, ?, ?)",
+            _插入忽略(_后端(), "event_payment", "(order_id, user_id, pay_time, product_type, amount)",
+                     "(?, ?, ?, ?, ?)"),
             (order_id, user_id, pay_time or _now_cn(), product_type, float(amount)),
         )
 

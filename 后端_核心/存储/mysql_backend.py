@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from typing import Iterator, List, Tuple
 from urllib.parse import quote_plus
 
+import pymysql
 from sqlalchemy import create_engine
 
 _引擎 = None
@@ -85,3 +86,131 @@ def 建表语句(表名: str, 列定义: List[Tuple[str, str]]) -> str:
         f"CREATE TABLE IF NOT EXISTS `{表名}` ({列清单}) "
         f"ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     )
+
+
+# ---------------------------------------------------------------------------
+# 阶段 54-8：连接行风格对齐（MySQL 假开关修复的最大坑）
+# ---------------------------------------------------------------------------
+# 仓储层通行写法是 ``row["列名"]``（sqlite3.Row 语义），而 pymysql 默认 cursor
+# 返回 tuple——一旦把连接切到 mysql，``row["列名"]`` 全部 TypeError。
+# 这里提供三层包装，把 pymysql 连接对齐成 sqlite3 连接的使用方式：
+#   - `_MySQLRow`     ：结果行，既支持 ``row["列名"]`` 也支持 ``row[下标]``（同 sqlite3.Row）
+#   - `_MySQL游标`    ：包装 DictCursor，fetchone/fetchall 返回 _MySQLRow，
+#                      rowcount/lastrowid/description 透传，支持 for 迭代
+#   - `_MySQL连接包装`：conn.execute(sql, params) 直接可用（内部 ? → %s 运行期转换）
+# 统一入口 `连接._get_conn()` 在 mysql 分支借出连接时套上 `_MySQL连接包装`。
+# ---------------------------------------------------------------------------
+
+
+class _MySQLRow(dict):
+    """对齐 sqlite3.Row 语义的结果行：``row["列名"]`` 与 ``row[下标]`` 都可用。"""
+
+    __slots__ = ("_列序",)
+
+    def __init__(self, 映射: dict, 列序: tuple) -> None:
+        super().__init__(映射)
+        self._列序 = 列序
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            key = self._列序[key]          # 位置访问 → 列名（对齐 sqlite3.Row）
+        return dict.__getitem__(self, key)
+
+
+class _MySQL游标:
+    """包装 pymysql DictCursor：行统一包装为 :class:`_MySQLRow`。"""
+
+    __slots__ = ("_cur", "_列序")
+
+    def __init__(self, cur) -> None:
+        self._cur = cur
+        self._列序 = tuple(c[0] for c in (cur.description or ()))
+
+    def _包装(self, row):
+        return _MySQLRow(row, self._列序) if row is not None else None
+
+    def _关闭(self) -> None:
+        try:
+            self._cur.close()
+        except Exception:
+            pass
+
+    def fetchone(self):
+        row = self._cur.fetchone()
+        if row is None:
+            self._关闭()
+            return None
+        return self._包装(row)
+
+    def fetchall(self):
+        rows = [self._包装(r) for r in self._cur.fetchall()]
+        self._关闭()
+        return rows
+
+    @property
+    def rowcount(self):
+        return self._cur.rowcount
+
+    @property
+    def lastrowid(self):
+        return self._cur.lastrowid
+
+    @property
+    def description(self):
+        return self._cur.description
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        row = self.fetchone()
+        if row is None:
+            self._关闭()
+            raise StopIteration
+        return row
+
+
+class _MySQL连接包装:
+    """把 pymysql 连接包装成 sqlite3 风格：``conn.execute(sql, params)`` 直接可用。
+
+    - ``?`` 占位符在**运行期**经 ``backend.转换SQL`` 转成 ``%s``（方言适配生效）；
+    - 行风格对齐 sqlite3.Row（见 :class:`_MySQLRow`）；
+    - ``conn.cursor()`` 返回 DictCursor（兼容既有直接 cursor 写法）。
+    """
+
+    __slots__ = ("_conn",)
+
+    def __init__(self, conn) -> None:
+        self._conn = conn
+
+    def execute(self, sql: str, params=None):
+        from 后端_核心.存储.backend import 转换SQL
+        sql = 转换SQL(sql, "mysql")          # ? → %s（运行期方言适配的唯一收敛点）
+        cur = self._conn.cursor(pymysql.cursors.DictCursor)
+        try:
+            cur.execute(sql, params)
+        except Exception:
+            try:
+                cur.close()
+            except Exception:
+                pass
+            raise
+        return _MySQL游标(cur)
+
+    def cursor(self):
+        return self._conn.cursor(pymysql.cursors.DictCursor)
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        self._conn.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False

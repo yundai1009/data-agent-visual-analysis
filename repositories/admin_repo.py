@@ -10,7 +10,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
-from 后端_核心.存储.sqlite_repo import _get_conn
+from 后端_核心.存储.连接 import _get_conn   # 阶段 54-8：统一连接入口（按 DB_BACKEND 分发）
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ def _now_iso() -> str:
 
 def _确保表存在() -> None:
     """幂等确保统计涉及的表已创建（各仓储的初始化）。"""
-    from 后端_核心.存储.sqlite_repo import 初始化数据库  # noqa: E402
+    from 后端_核心.存储.连接 import 初始化数据库  # noqa: E402
     from repositories.dashboard_repo import 初始化看板表
     from repositories.report_repo import 初始化报表表
     from repositories.user_repo import 初始化用户表

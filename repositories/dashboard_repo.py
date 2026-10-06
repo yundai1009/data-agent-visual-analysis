@@ -14,7 +14,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from 后端_核心.存储.backend import 写锁 as _write_lock
-from 后端_核心.存储.sqlite_repo import _get_conn   # 连接暂仍由 SQLite 实现提供
+from 后端_核心.存储.backend import 创建索引SQL as _建索引SQL, 当前后端 as _后端
+from 后端_核心.存储.连接 import _get_conn   # 阶段 54-8：统一连接入口（按 DB_BACKEND 分发）
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,8 @@ def _now_iso() -> str:
 
 def 初始化看板表() -> None:
     """幂等创建 dashboards 表。"""
+    if _后端() == "mysql":
+        return  # 阶段 54-8：表结构由 mysql_repo.初始化数据库 统一管理（sqlite DDL 在 MySQL 下语义校验即报错）
     with _get_conn() as conn:
         conn.execute(
             """
@@ -38,12 +41,9 @@ def 初始化看板表() -> None:
             )
             """
         )
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_dashboards_user_created_at
-            ON dashboards (user_id, created_at)
-            """
-        )
+        _sql = _建索引SQL(_后端(), "idx_dashboards_user_created_at", "dashboards", "(user_id, created_at)")
+        if _sql:
+            conn.execute(_sql)
 
 
 def 保存看板(user_id: str, name: str, report_ids: List[str]) -> str:

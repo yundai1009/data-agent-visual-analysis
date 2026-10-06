@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from 后端_核心.存储.backend import 写锁 as _write_lock
-from 后端_核心.存储.sqlite_repo import _get_conn   # 连接暂仍由 SQLite 实现提供
+from 后端_核心.存储.backend import 创建索引SQL as _建索引SQL, 表结构SQL as _表结构SQL, 唯一冲突 as _唯一冲突, 当前后端 as _后端
+from 后端_核心.存储.连接 import _get_conn   # 阶段 54-8：统一连接入口（按 DB_BACKEND 分发）
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +26,9 @@ def _now_iso() -> str:
 
 def _ensure_status_column() -> None:
     """幂等确保 users 表含 status 列（active/banned）。"""
-    from 后端_核心.存储.sqlite_repo import _get_conn as _conn
+    from 后端_核心.存储.连接 import _get_conn as _conn   # 阶段 54-8：统一连接入口（按 DB_BACKEND 分发）
     with _conn() as conn:
-        columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+        columns = {row["name"] for row in conn.execute(_表结构SQL(_后端(), "users"))}
         if "status" not in columns:
             try:
                 conn.execute("ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
@@ -39,6 +40,8 @@ def _ensure_status_column() -> None:
 
 def 初始化用户表() -> None:
     """幂等创建 users 表，并对旧库做 email 列幂等迁移。"""
+    if _后端() == "mysql":
+        return  # 阶段 54-8：表结构由 mysql_repo.初始化数据库 统一管理（sqlite DDL 在 MySQL 下语义校验即报错）
     _ensure_status_column()
     with _get_conn() as conn:
         conn.execute(
@@ -56,7 +59,7 @@ def 初始化用户表() -> None:
             """
         )
         # 旧库幂等迁移：缺 email 列则补列
-        columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+        columns = {row["name"] for row in conn.execute(_表结构SQL(_后端(), "users"))}
         if "email" not in columns:
             try:
                 conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
@@ -87,9 +90,10 @@ def 初始化用户表() -> None:
                 if "duplicate column" not in str(exc).lower():
                     raise
             logger.info("users 表已迁移：新增 llm_custom_providers 列")
-        conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)"
-        )
+        # 唯一索引：sqlite 真建；mysql 由 mysql_repo.初始化数据库 统一管理（MySQL 8 不支持 IF NOT EXISTS）
+        _sql = _建索引SQL(_后端(), "idx_users_email", "users", "email", 唯一=True)
+        if _sql:
+            conn.execute(_sql)
 
 
 def 创建用户(username: str, password_hash: str, role: str = "analyst", email: Optional[str] = None) -> Dict[str, Any]:
@@ -108,7 +112,8 @@ def 创建用户(username: str, password_hash: str, role: str = "analyst", email
             )
     except Exception as exc:
         message = str(exc)
-        if "UNIQUE" in message:
+        if _唯一冲突(exc):
+            # 唯一冲突识别：sqlite 报 UNIQUE constraint failed；mysql 报 Duplicate entry/1062
             if "email" in message:
                 raise ValueError(f"邮箱已被注册：{email}") from exc
             raise ValueError(f"用户名已存在：{username}") from exc
@@ -268,7 +273,7 @@ def 删除用户及数据(user_id: str) -> None:
         logger.warning("删除记忆失败（不影响主库删除）: %s", _exc)
     with _write_lock, _get_conn() as conn:
         # 确保所有表存在（用户可能从未使用某功能，表未初始化时 DELETE 报 no such table）
-        from 后端_核心.存储.sqlite_repo import 初始化数据库
+        from 后端_核心.存储.连接 import 初始化数据库
         from repositories import audit_repo, dashboard_repo, feedback_repo, report_repo, share_repo
         初始化数据库()
         report_repo.初始化报表表()
@@ -370,7 +375,7 @@ def 更新用户名(user_id: str, new_username: str) -> None:
                 (new_username, _now_iso(), user_id),
             )
     except Exception as exc:
-        if "UNIQUE" in str(exc):
+        if _唯一冲突(exc):
             raise ValueError(f"用户名已存在：{new_username}") from exc
         raise
     # UPDATE 影响 0 行 = 用户不存在（此前静默"假成功"，演示模式 demo 用户改名即此场景）

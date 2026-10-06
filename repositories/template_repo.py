@@ -14,7 +14,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from 后端_核心.存储.backend import 写锁 as _write_lock
-from 后端_核心.存储.sqlite_repo import _get_conn   # 连接暂仍由 SQLite 实现提供
+from 后端_核心.存储.backend import 冲突更新SQL as _冲突更新SQL, 创建索引SQL as _建索引SQL, 当前后端 as _后端
+from 后端_核心.存储.连接 import _get_conn   # 阶段 54-8：统一连接入口（按 DB_BACKEND 分发）
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,8 @@ def _now_iso() -> str:
 
 def 初始化模板表() -> None:
     """幂等创建 report_templates 表。"""
+    if _后端() == "mysql":
+        return  # 阶段 54-8：表结构由 mysql_repo.初始化数据库 统一管理（sqlite DDL 在 MySQL 下语义校验即报错）
     with _get_conn() as conn:
         conn.execute(
             """
@@ -39,12 +42,9 @@ def 初始化模板表() -> None:
             )
             """
         )
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_templates_user_created
-            ON report_templates (user_id, created_at)
-            """
-        )
+        _sql = _建索引SQL(_后端(), "idx_templates_user_created", "report_templates", "(user_id, created_at)")
+        if _sql:
+            conn.execute(_sql)
 
 
 def 保存模板(user_id: str, name: str, payload: Dict[str, Any], template_id: Optional[str] = None) -> str:
@@ -55,17 +55,16 @@ def 保存模板(user_id: str, name: str, payload: Dict[str, Any], template_id: 
     payload_json = json.dumps(payload, ensure_ascii=False, default=str)
     with _write_lock, _get_conn() as conn:
         # M12：SELECT-then-INSERT 存在 TOCTOU——并发同 id 保存时两个连接都查不到
-        # 记录 → 双 INSERT 撞主键。改用单语句 UPSERT（ON CONFLICT DO UPDATE）原子化。
+        # 记录 → 双 INSERT 撞主键。改用单语句 UPSERT 原子化（方言收敛：sqlite ON CONFLICT / mysql ON DUPLICATE KEY）。
         conn.execute(
-            """
-            INSERT INTO report_templates (template_id, user_id, name, dataset_id, payload_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(template_id) DO UPDATE SET
-                name = excluded.name,
-                dataset_id = excluded.dataset_id,
-                payload_json = excluded.payload_json,
-                updated_at = excluded.updated_at
-            """,
+            _冲突更新SQL(
+                _后端(),
+                "report_templates",
+                "(template_id, user_id, name, dataset_id, payload_json, created_at, updated_at)",
+                "(?, ?, ?, ?, ?, ?, ?)",
+                "template_id",
+                ["name", "dataset_id", "payload_json", "updated_at"],
+            ),
             (tid, user_id, name, payload.get("数据集ID", ""), payload_json, now, now),
         )
     logger.info("保存模板 %s（用户 %s）", tid, user_id)

@@ -45,6 +45,7 @@ import pandas as pd
 
 from 后端_核心.存储 import sqlite_backend
 from 后端_核心.存储.backend import 写锁 as _write_lock   # 阶段 54：写锁统一到抽象层
+from 后端_核心.存储.backend import 冲突更新SQL, 当前后端   # 阶段 54-8：upsert 方言收敛
 
 logger = logging.getLogger(__name__)
 
@@ -53,13 +54,20 @@ logger = logging.getLogger(__name__)
 _PARQUET_DIR = Path("data/parquet")
 
 
-# 阶段 54：连接管理与写锁委托给存储后端（向后兼容别名，现有调用方零改动）
-_get_conn = sqlite_backend.get_conn
+# 阶段 54-8：连接获取改指统一入口（按 DB_BACKEND 分发 sqlite/mysql），
+# 向后兼容别名，现有调用方零改动；mysql 分支行风格在统一入口已对齐。
+from 后端_核心.存储.连接 import _get_conn  # noqa: E402  连接分发（sqlite/mysql）
 _resolve_db_path = sqlite_backend.解析db路径
 
 
 def 初始化数据库() -> None:
-    """创建表 schema。幂等，重复调用安全。"""
+    """创建表 schema。幂等，重复调用安全。
+
+    MySQL 后端下不做任何事：表结构由 ``mysql_repo.初始化数据库`` 统一管理
+    （本函数的 sqlite DDL / PRAGMA 迁移在 MySQL 下会直接报错）。
+    """
+    if 当前后端() == "mysql":
+        return
     with _get_conn() as conn:
         conn.execute(
             """
@@ -226,24 +234,18 @@ def 保存数据集(
             df_json = _df_to_json_split(df)
 
     with _write_lock, _get_conn() as conn:
-        # upsert: 存在则更新，不存在则插入
+        # upsert: 存在则更新，不存在则插入（方言收敛：sqlite ON CONFLICT / mysql ON DUPLICATE KEY）
         conn.execute(
-            """
-            INSERT INTO datasets
-                (dataset_id, user_id, file_name, stored_path, rows_count, cols_count,
-                 df_json, profile_json, created_at, updated_at, parent_id, data_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(dataset_id) DO UPDATE SET
-                user_id       = excluded.user_id,
-                file_name     = excluded.file_name,
-                stored_path   = excluded.stored_path,
-                rows_count    = excluded.rows_count,
-                cols_count    = excluded.cols_count,
-                df_json       = excluded.df_json,
-                profile_json  = excluded.profile_json,
-                updated_at    = excluded.updated_at,
-                data_path     = excluded.data_path
-            """,
+            冲突更新SQL(
+                当前后端(),
+                "datasets",
+                "(dataset_id, user_id, file_name, stored_path, rows_count, cols_count, "
+                "df_json, profile_json, created_at, updated_at, parent_id, data_path)",
+                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "dataset_id",
+                ["user_id", "file_name", "stored_path", "rows_count", "cols_count",
+                 "df_json", "profile_json", "updated_at", "data_path"],
+            ),
             (dataset_id, user_id, 文件名, 存储路径, rows_count, cols_count,
              df_json, profile_json, now, now, parent_id, data_path),
         )

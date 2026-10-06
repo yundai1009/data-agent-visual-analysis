@@ -11,7 +11,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from 后端_核心.存储.backend import 写锁 as _write_lock
-from 后端_核心.存储.sqlite_repo import _get_conn   # 连接暂仍由 SQLite 实现提供
+from 后端_核心.存储.backend import 冲突更新SQL as _冲突更新SQL, 当前后端 as _后端
+from 后端_核心.存储.连接 import _get_conn   # 阶段 54-8：统一连接入口（按 DB_BACKEND 分发）
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,8 @@ def _now_iso() -> str:
 
 def 初始化验证码表() -> None:
     """幂等创建 email_codes 表。"""
+    if _后端() == "mysql":
+        return  # 阶段 54-8：表结构由 mysql_repo.初始化数据库 统一管理（sqlite DDL 在 MySQL 下语义校验即报错）
     with _get_conn() as conn:
         conn.execute(
             """
@@ -43,17 +46,16 @@ def 保存验证码(email: str, code_hash: str, expires_at: str) -> None:
     初始化验证码表()
     now = _now_iso()
     with _write_lock, _get_conn() as conn:
+        # upsert（同邮箱覆盖旧码）：方言收敛——sqlite ON CONFLICT / mysql ON DUPLICATE KEY UPDATE
         conn.execute(
-            """
-            INSERT INTO email_codes (email, code_hash, expires_at, used, verify_attempts, last_sent_at, created_at)
-            VALUES (?, ?, ?, 0, 0, ?, ?)
-            ON CONFLICT(email) DO UPDATE SET
-                code_hash = excluded.code_hash,
-                expires_at = excluded.expires_at,
-                used = 0,
-                verify_attempts = 0,
-                last_sent_at = excluded.last_sent_at
-            """,
+            _冲突更新SQL(
+                _后端(),
+                "email_codes",
+                "(email, code_hash, expires_at, used, verify_attempts, last_sent_at, created_at)",
+                "(?, ?, ?, 0, 0, ?, ?)",
+                "email",
+                ["code_hash", "expires_at", "used", "verify_attempts", "last_sent_at"],
+            ),
             (email, code_hash, expires_at, now, now),
         )
 
