@@ -71,3 +71,49 @@ describe('EChartsChart buildOption · 标题截断', () => {
     expect(opt.title.text).toBe('各地区销售额对比');
   });
 });
+// ---- 阶段55 修复：展示类编辑键真正生效（前后端契约对齐）----
+describe('EChartsChart buildOption · 展示类编辑键消费', () => {
+  const base = { X轴: '行业', Y轴: ['金额'], 数据: [{ 行业: 'A', 金额: 10 }, { 行业: 'B', 金额: 20 }] };
+
+  test('子标题 → title.subtext', () => {
+    const opt = buildOption('bar', { ...base, 标题: '主标题', 子标题: '副标题' });
+    expect(opt.title.subtext).toBe('副标题');
+  });
+
+  test('X轴别名/Y轴别名 → 轴 name', () => {
+    const opt = buildOption('bar', { ...base, X轴别名: '行业名称', Y轴别名: '金额(元)' });
+    expect(opt.xAxis.name).toBe('行业名称');
+    expect(opt.yAxis.name).toBe('金额(元)');
+  });
+
+  test('坐标范围 → yAxis min/max', () => {
+    const opt = buildOption('bar', { ...base, 坐标范围: [0, 100] });
+    expect(opt.yAxis.min).toBe(0);
+    expect(opt.yAxis.max).toBe(100);
+  });
+
+  test('改系列颜色 → series itemStyle.color 生效', () => {
+    const opt = buildOption('bar', { ...base, 系列颜色: ['#ff0000'] });
+    expect(opt.series[0].itemStyle.color).toBe('#ff0000');
+  });
+
+  test('显示数据标签=false → label.show=false；true → true', () => {
+    const off = buildOption('bar', { ...base, 显示数据标签: false });
+    expect(off.series[0].label.show).toBe(false);
+    const on = buildOption('bar', { ...base, 显示数据标签: true });
+    expect(on.series[0].label.show).toBe(true);
+  });
+
+  test('改图例位置 → legend.top/bottom', () => {
+    const opt = buildOption('bar', { ...base, 分组字段: '城市', 图例位置: 'top',
+      数据: [{ 行业: 'A', 城市: 'X', 金额: 10 }, { 行业: 'B', 城市: 'Y', 金额: 20 }] });
+    expect(opt.legend.top).toBe(0);
+    expect(opt.legend.bottom).toBeUndefined();
+  });
+
+  test('改图例名称 → legend.data 用映射名', () => {
+    const opt = buildOption('bar', { ...base, 分组字段: '城市', 图例名称: { X: '华东组', Y: '华南组' },
+      数据: [{ 行业: 'A', 城市: 'X', 金额: 10 }, { 行业: 'B', 城市: 'Y', 金额: 20 }] });
+    expect(opt.legend.data).toEqual(['华东组', '华南组']);
+  });
+});

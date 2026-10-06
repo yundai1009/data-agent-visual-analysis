@@ -143,8 +143,7 @@ def 应用编辑(chart_config: Dict, 编辑: Dict) -> Dict:
         new["显示数据标签"] = bool(编辑.get("显示", True))
     elif 动作 == "改图例位置":
         new["图例位置"] = 编辑.get("位置")
-    elif 动作 == "切图表类型":
-        new["类型"] = _类型中文转plotly(编辑.get("图表类型") or new.get("类型"))
+    # 注意：切图表类型 属 _重算动作，由 重算图表数据 处理（此处不再写 类型，防死代码双轨）
     return new
 
 
@@ -269,6 +268,12 @@ def 重算图表数据(画像: Dict, df, 编辑: Dict, 原_chart: Dict):
         if 字段 and 字段 in df.columns:
             目标值 = _类型转换值(df[字段], 值)
             df = df[df[字段] == 目标值]
+            # 阶段55 P2：同步筛选说明（人读）+ 筛选条件（结构化，供 replay/导出回显）
+            # 与生成器 data_filter.应用筛选 的输出格式对齐
+            新["筛选说明"] = list(新.get("筛选说明") or []) + [f"{字段} 等于 {值}"]
+            新["筛选条件"] = list(新.get("筛选条件") or []) + [
+                {"字段": 字段, "操作": "等于", "值": 值}
+            ]
 
     # ---- 3. 占比模式（样本计数 / 数值加权） ----
     占比 = "数值"
@@ -301,12 +306,15 @@ def 重算图表数据(画像: Dict, df, 编辑: Dict, 原_chart: Dict):
     else:
         target = _类型中文转plotly(新.get("类型"))
     新["类型"] = target
-    # 饼类：补 名称/值
+    # 饼类：补 名称/值；非饼类：清除残留（从饼图切走时名称/值已失效）
     if target in _饼类:
         if 新.get("X轴"):
             新["名称"] = 新["X轴"]
         if 新.get("Y轴"):
             新["值"] = 新["Y轴"][0]
+    else:
+        新.pop("名称", None)
+        新.pop("值", None)
 
     说明 = f"已按 {新.get('X轴')} + {'、'.join(str(j) for j in 新.get('Y轴', []))} 本地重算"
     return 新, 说明

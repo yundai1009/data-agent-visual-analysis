@@ -188,6 +188,47 @@ export function buildOption(chartType, config) {
   const title = config.标题 || '';
   const nameField = config.名称;
   const valueField = config.值;
+  // 阶段55 修复：展示类编辑键消费（前后端契约对齐——后端 refine 写这些键，前端必须渲染）
+  const 子标题 = config.子标题;
+  const 系列颜色 = config.系列颜色;
+  const 显示标签 = config.显示数据标签;
+  const 图例位置 = config.图例位置;
+  const 图例名称映射 = config.图例名称;
+  const 坐标范围 = Array.isArray(config.坐标范围) ? config.坐标范围 : null;
+  const X轴别名 = config.X轴别名;
+  const Y轴别名 = config.Y轴别名;
+
+  // 轴配置工厂：别名 + 范围 + 数值轴公共设置（阶段55 键消费）
+  function 轴(name, extra = {}) {
+    return { ...extra, name, nameTextStyle: { color: '#475569' } };
+  }
+  // 系列样式工厂：颜色 + 数据标签（阶段55 键消费）
+  function 系列样式(series, labelOverride) {
+    if (Array.isArray(系列颜色) && 系列颜色.length > 0) {
+      series.itemStyle = { ...(series.itemStyle || {}), color: 系列颜色[0] };
+    }
+    series.label = {
+      ...(series.label || {}),
+      show: 显示标签 === undefined ? (series.label ? series.label.show : false) : 显示标签,
+      ...(labelOverride || {}),
+    };
+    return series;
+  }
+  // 图例配置工厂：位置 + 名称映射（阶段55 键消费）
+  function 图例(legend = {}) {
+    const lg = { ...legend };
+    if (图例位置) {
+      delete lg.top;
+      delete lg.bottom;
+      if (图例位置 === 'top') lg.top = 0;
+      else if (图例位置 === 'bottom') lg.bottom = 0;
+      else lg[图例位置] = 0; // left/right 等直接按字符串键设位
+    }
+    if (图例名称映射 && lg.data) {
+      lg.data = lg.data.map(d => 图例名称映射[d] || d);
+    }
+    return lg;
+  }
 
   const base = {
     // 标题移出图形区顶部（top:0 固定），超长截断——避免长需求文本（如追问句子）
@@ -196,6 +237,7 @@ export function buildOption(chartType, config) {
       text: title.length > 30 ? `${title.slice(0, 30)}…` : title,
       left: 'center', top: 0,
       textStyle: { fontSize: 13, fontWeight: 600, color: '#1e293b' },
+      ...(子标题 ? { subtext: 子标题, subtextStyle: { fontSize: 10, color: '#94a3b8' } } : {}),
     },
     color: COLORS,
     textStyle: CHART_TEXT_STYLE,
@@ -226,6 +268,13 @@ export function buildOption(chartType, config) {
       }
       pieData = [...countMap.entries()].map(([name, value]) => ({ name, value }));
     }
+    const pieSeries = {
+      type: 'pie', radius: type === 'donut' ? ['45%', '70%'] : ['0%', '60%'],
+      data: pieData,
+      // 优化：label 同样转义 p.name（名称来自上传数据，统一走 escapeHtml）
+      label: { formatter: (p) => `${escapeHtml(p.name)}\n${(p.percent ?? 0).toFixed(1)}%` },
+    };
+    const styledPie = 系列样式(pieSeries);
     return {
       ...base,
       // 用 formatter 函数手动算百分比（不依赖 {d} 占位符，避免显示 0%）
@@ -234,35 +283,31 @@ export function buildOption(chartType, config) {
         // P0 加固：p.name 来自上传数据，转义防存储型 XSS
         formatter: (p) => `${escapeHtml(p.name)}: ${p.value} (${(p.percent ?? 0).toFixed(1)}%)`,
       },
-      series: [{
-        type: 'pie', radius: type === 'donut' ? ['45%', '70%'] : ['0%', '60%'],
-        data: pieData,
-        // 优化：label 同样转义 p.name（名称来自上传数据，统一走 escapeHtml）
-        label: { formatter: (p) => `${escapeHtml(p.name)}\n${(p.percent ?? 0).toFixed(1)}%` },
-      }],
+      series: [styledPie],
     };
   }
 
   if (type === 'line' || type === 'area') {
     const yf = resolveKey(rows[0], yFields[0], [xField]);
-    return {
+    const lineOpt = {
       ...base, tooltip: { trigger: 'axis' },
-      xAxis: { type: 'category', data: rows.map(r => String(r[xField] ?? '')) },
-      yAxis: { type: 'value' },
-      series: [{
+      xAxis: 轴(X轴别名 || '', { type: 'category', data: rows.map(r => String(r[xField] ?? '')) }),
+      yAxis: 轴(Y轴别名 || '', { type: 'value', ...(坐标范围 ? { min: 坐标范围[0], max: 坐标范围[1] } : {}) }),
+      series: [系列样式({
         type: 'line', data: rows.map(r => Number(r[yf]) || 0),
         smooth: true, areaStyle: type === 'area' ? { opacity: 0.4 } : undefined,
-      }],
+      })],
     };
+    return lineOpt;
   }
 
   if (type === 'scatter') {
     const yf = resolveKey(rows[0], yFields[0], [xField]);
     return {
       ...base,
-      xAxis: { type: 'value', name: xField },
-      yAxis: { type: 'value', name: yf },
-      series: [{ type: 'scatter', data: rows.map(r => [Number(r[xField]) || 0, Number(r[yf]) || 0]), symbolSize: 8 }],
+      xAxis: { type: 'value', name: X轴别名 || xField, ...(坐标范围 ? { min: 坐标范围[0], max: 坐标范围[1] } : {}) },
+      yAxis: { type: 'value', name: Y轴别名 || yf },
+      series: [系列样式({ type: 'scatter', data: rows.map(r => [Number(r[xField]) || 0, Number(r[yf]) || 0]), symbolSize: 8 })],
     };
   }
 
@@ -302,17 +347,17 @@ export function buildOption(chartType, config) {
     const yf = resolveKey(rows[0], yFields[0], [xField, groupField]);
     return {
       ...base, tooltip: { ...CHART_TOOLTIP, trigger: 'axis', axisPointer: { type: 'shadow' } },
-      legend: { data: groups, bottom: 0 },
-      xAxis: {
+      legend: 图例({ data: groups, bottom: 0 }),
+      xAxis: 轴(X轴别名 || '', {
         type: 'category', data: xVals,
         // X 轴标签过长时旋转 + 截断（如股票代码/长部门名），避免标签重叠覆盖图形
         axisLabel: { rotate: xVals.some(v => v.length > 6) ? 35 : 0, overflow: 'truncate', width: 80 },
-      },
-      yAxis: { type: 'value' },
+      }),
+      yAxis: 轴(Y轴别名 || '', { type: 'value', ...(坐标范围 ? { min: 坐标范围[0], max: 坐标范围[1] } : {}) }),
       series: groups.map((g, i) => ({
-        name: g, type: 'bar', stack: 'total',
+        name: (图例名称映射 && 图例名称映射[g]) || g, type: 'bar', stack: 'total',
         data: xVals.map(xv => { const m = rows.find(r => String(r[xField] ?? '') === xv && String(r[groupField] ?? '') === g); return m ? Number(m[yf]) || 0 : 0; }),
-        itemStyle: { color: COLORS[i % COLORS.length] },
+        itemStyle: { color: (Array.isArray(系列颜色) && 系列颜色[i % 系列颜色.length]) || COLORS[i % COLORS.length] },
         animationDelay: (idx) => idx * 50,
       })),
     };
@@ -323,8 +368,10 @@ export function buildOption(chartType, config) {
     return {
       ...base, tooltip: { ...CHART_TOOLTIP, trigger: 'axis', axisPointer: { type: 'shadow' } },
       xAxis: { type: 'category', data: rows.map(r => String(r[xField] ?? '')), axisLabel: { rotate: 45 } },
-      yAxis: { type: 'value' },
-      series: [{ type: 'bar', data: rows.map(r => Number(r[yf]) || 0), barWidth: '99%', itemStyle: { color: '#6366f1' }, animationDelay: (idx) => idx * 60 }],
+      yAxis: 轴(Y轴别名 || '', { type: 'value', ...(坐标范围 ? { min: 坐标范围[0], max: 坐标范围[1] } : {}) }),
+      series: [系列样式({
+        type: 'bar', data: rows.map(r => Number(r[yf]) || 0), barWidth: '99%', itemStyle: { color: '#6366f1' }, animationDelay: (idx) => idx * 60,
+      })],
     };
   }
 
@@ -444,8 +491,8 @@ export function buildOption(chartType, config) {
   const yf = yFields[0] || Object.keys(rows[0]).find(k => k !== xField) || '';
   return {
     ...base, tooltip: { trigger: 'axis' },
-    xAxis: { type: 'category', data: rows.map(r => String(r[xField] ?? '')) },
-    yAxis: { type: 'value' },
-    series: [{ type: 'bar', data: rows.map(r => Number(r[yf]) || 0), animationDelay: (idx) => idx * 60 }],
+    xAxis: 轴(X轴别名 || '', { type: 'category', data: rows.map(r => String(r[xField] ?? '')) }),
+    yAxis: 轴(Y轴别名 || '', { type: 'value', ...(坐标范围 ? { min: 坐标范围[0], max: 坐标范围[1] } : {}) }),
+    series: [系列样式({ type: 'bar', data: rows.map(r => Number(r[yf]) || 0), animationDelay: (idx) => idx * 60 })],
   };
 }
