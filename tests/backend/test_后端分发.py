@@ -190,3 +190,45 @@ def test_mysql分支_时区读写不偏移(monkeypatch):
     归一 = stored.replace("T", " ").replace("+00:00", "")
     assert 归一.startswith("2026-10-06 07:07:00"), (
         f"时区读写不一致：写入 2026-10-06T07:07:00+00:00 读回 {stored!r}（被会话时区平移了）")
+
+
+# ---- 阶段54-10：users.username/email 大小写敏感（utf8mb4_bin，对齐 SQLite） ----
+
+
+@_需真实库
+def test_mysql分支_用户名大小写敏感(monkeypatch):
+    """username/email 列应为 utf8mb4_bin（大小写敏感）——对齐 SQLite \b'Alice'/'alice' 互斥互等。"""
+    from config import settings
+    monkeypatch.setattr(settings.EnvConfig, "DB_BACKEND", "mysql", raising=False)
+
+    from 后端_核心.存储.连接 import _get_conn
+
+    collations = {}
+    with _get_conn() as conn:
+        cur = conn.execute(
+            "SELECT COLUMN_NAME, COLLATION_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' "
+            "AND COLUMN_NAME IN ('username','email')")
+        for row in cur.fetchall():
+            collations[row[0]] = row[1]
+    assert collations.get("username", "").endswith("_bin"), (
+        f"users.username collation={collations.get('username')!r}，应为 *_bin（大小写敏感）")
+    assert collations.get("email", "").endswith("_bin"), (
+        f"users.email collation={collations.get('email')!r}，应为 *_bin（大小写敏感）")
+
+
+@_需真实库
+def test_mysql分支_大小写敏感行为(monkeypatch):
+    """行为级：utf8mb4_bin 下 'Alice' 与 'alice' 是不同用户名（对齐 SQLite）。"""
+    from config import settings
+    monkeypatch.setattr(settings.EnvConfig, "DB_BACKEND", "mysql", raising=False)
+
+    from 后端_核心.存储.连接 import _get_conn
+    with _get_conn() as conn:
+        cur = conn.execute(
+            "SELECT username FROM users "
+            "WHERE username = %s", ("Alice",))
+        # 表当前应空；若含 'alice'，大小写敏感查询 'Alice' 不应命中（ci 下会命中）
+        rows = cur.fetchall()
+    assert all(r[0] == "Alice" for r in rows), (
+        f"大小写敏感失效：查 'Alice' 命中了非精确行 {[r[0] for r in rows]}")

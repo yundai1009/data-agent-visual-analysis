@@ -430,7 +430,9 @@ def 编排Agent(
         "推荐理由": intent_override.get("推荐理由", ""),
         "Agent_Trace": trace.to_list(),
         # LLM 失败原因：降级时透传给用户（避免静默回退规则让用户困惑）
-        "LLM失败原因": (llm_config.llm_fail_reason if llm_config else "") or 最近LLM失败().get("reason", ""),
+        # 阶段 54-10：仅 llm_config is None（纯规则/无请求级配置路径）才回退全局——
+        # 否则 LLM 成功的请求会把别的前序请求的失败原因串进来（全局 `_last_llm_fail` 串扰）
+        "LLM失败原因": _LLM失败原因(llm_config),
         # Fix B（阶段54-8 · LLM P1-1）：LLM 路径补三键——_从消息提取意图 已解析出
         # 筛选条件/TopN/对比（含字段白名单校验），此前 return 时被丢 → 省略式追问
         # 「那华南呢？」（筛选条件=华南）生成全地区报表。对齐规则路径 L153-162 的形状：
@@ -589,6 +591,18 @@ def _执行一轮(
                       输出摘要=result_text[:200], 耗时_ms=timer.elapsed_ms,
                       状态="成功")
     return True
+
+
+def _LLM失败原因(llm_config: Optional[LLMRequestConfig]) -> str:
+    """组装返回给用户的 LLM 失败原因。
+
+    阶段 54-10：**仅当 llm_config is None（纯规则/无请求级配置路径）才回退全局**
+    ``最近LLM失败()``——有请求级配置时只信请求级字段，避免 LLM 成功的请求把
+    别的前序请求的失败原因串进响应（全局 ``_last_llm_fail`` 串扰通道）。
+    """
+    if llm_config is not None:
+        return llm_config.llm_fail_reason or ""
+    return 最近LLM失败().get("reason", "")
 
 
 def _结果转文本(result: Dict[str, Any]) -> str:

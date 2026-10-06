@@ -1061,7 +1061,12 @@ def test_LLM失败原因_透传到报表(client):
     orig_cc = orc_mod.chat_completion
 
     def fake_chat(messages, **kw):
-        llm_mod._record_llm_fail("LLM 调用失败：LLM 账号欠费或额度用尽（HTTP 402），请到服务商平台充值")
+        # 阶段 54-10：真实失败路径把原因写请求级（llm_config），不再只写全局；
+        # fake 需同语义（取 kwargs 里的 llm_config 透传），否则 L433 兜底
+        # （仅 llm_config is None 才回退全局）会取不到原因
+        llm_mod._record_llm_fail(
+            "LLM 调用失败：LLM 账号欠费或额度用尽（HTTP 402），请到服务商平台充值",
+            kw.get("llm_config"))
         return None
 
     orc_mod.chat_completion = fake_chat

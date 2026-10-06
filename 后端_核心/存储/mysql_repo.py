@@ -44,10 +44,10 @@ _建表DDL: List[str] = [
     """
     CREATE TABLE IF NOT EXISTS `users` (
         `user_id`            VARCHAR(255) NOT NULL,
-        `username`           VARCHAR(255) NOT NULL,
+        `username`           VARCHAR(255) NOT NULL COLLATE utf8mb4_bin,
         `password_hash`      VARCHAR(255) NOT NULL,
         `role`               VARCHAR(64) NOT NULL,
-        `email`              VARCHAR(255),
+        `email`              VARCHAR(255) COLLATE utf8mb4_bin,
         `created_at`         VARCHAR(64) NOT NULL,
         `updated_at`         VARCHAR(64) NOT NULL,
         `status`             VARCHAR(32) NOT NULL DEFAULT 'active',
@@ -333,6 +333,36 @@ def _确保文本列(cur, 表: str, 列: str) -> None:
     logger.info("MySQL schema 升级：%s.%s %s → TEXT", 表, 列, data_type)
 
 
+def _确保大小写敏感列(cur, 表: str, 列: str) -> None:
+    """把 varchar 列 collation 升为 utf8mb4_bin（大小写敏感），对齐 SQLite 语义。
+
+    Fix F2（阶段 54-10）：MySQL utf8mb4_unicode_ci 大小写不敏感——'Alice'/'alice'
+    互斥互等，注册更严/登录匹配更宽，与 SQLite 不同。产品确认后统一走
+    utf8mb4_bin：唯一约束与等值比较都大小写敏感（'Alice' 与 'alice' 可并存）。
+    **必须先确保列是 VARCHAR(255) 再改 collation**（ALTER MODIFY 会重置 collation），
+    故本函数在列宽升级之后调用（见 初始化数据库 顺序）。
+    """
+    row = _列信息(cur, 表, 列)
+    if row is None:
+        return
+    data_type = (row[0] or "").lower()
+    # _列信息 返回 (DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH)，不含 collation——单独查
+    cur.execute(
+        "SELECT COLLATION_NAME FROM information_schema.COLUMNS "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = %s",
+        (表, 列))
+    row2 = cur.fetchone()
+    collation = row2[0] if row2 else None
+    if data_type != "varchar":
+        logger.info("MySQL schema 跳过大小写敏感升级：%s.%s 非 varchar（%s）", 表, 列, data_type)
+        return
+    if collation and collation.endswith("_bin"):
+        return
+    extra = "" if row[1] == "YES" else "NOT NULL"
+    cur.execute(f"ALTER TABLE `{表}` MODIFY COLUMN `{列}` VARCHAR(255) COLLATE utf8mb4_bin {extra}".strip())
+    logger.info("MySQL schema 升级：%s.%s collation → utf8mb4_bin（大小写敏感）", 表, 列)
+
+
 def _确保索引(cur, 表: str, 索引名: str, 列片段: str, 唯一: bool) -> None:
     cur.execute(
         "SELECT COUNT(*) FROM information_schema.STATISTICS "
@@ -371,6 +401,10 @@ def 初始化数据库() -> None:
             for 表, 列清单 in _文本列改.items():
                 for 列 in 列清单:
                     _确保文本列(cur, 表, 列)
+            # 阶段 54-10 F2：users.username/email 大小写敏感（对齐 SQLite）——
+            # 必须在列宽升级之后（ALTER MODIFY 会重置 collation）
+            for 列 in ("username", "email"):
+                _确保大小写敏感列(cur, "users", 列)
             for 表, 列清单 in _时间列.items():
                 for 列 in 列清单:
                     _确保时间列(cur, 表, 列)
