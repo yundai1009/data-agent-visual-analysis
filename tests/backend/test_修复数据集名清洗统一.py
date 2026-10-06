@@ -189,3 +189,42 @@ def test_rename_正常中文名不受影响(client):
                       headers={"Authorization": f"Bearer {token}"})
     assert r2.status_code == 200, r2.text
     assert r2.json()["文件名"] == "evil.csv"
+
+
+# ═══ 补修 D1/D2（阶段 54-8 审查）：clean 原位 / merge 默认名 被 _清洗文件名
+#    空输入回退 "upload" 劫持 ═══
+
+
+def test_clean原位_数据集名保持原名已清洗(client):
+    """D1 红：clean 原位清洗（不传 新文件名）——修复前
+    `最终名 = _清洗文件名('') or _清洗文件名(原名+'（已清洗）')`，
+    `_清洗文件名('')` 因 (raw or "upload") 返回 "upload"（真值）→ `or`
+    短路 → 数据集被原地改名 "upload"；修复后原位清洗名 = 「原名（已清洗）」。"""
+    token = _注册(client, "xss9")
+    up = _上传(client, token, "销售数据.csv")
+    did = up["数据集ID"]
+    assert up["文件名"] == "销售数据.csv"
+
+    r = client.post(f"/datasets/{did}/clean", headers={"Authorization": f"Bearer {token}"},
+                    params={"deduplicate": "true"})
+    assert r.status_code == 200, r.text
+    # 原位清洗：数据集ID 不变（未另存）
+    assert r.json()["数据集ID"] == did
+    name = _读名(client, token, did)
+    assert name == "销售数据.csv（已清洗）", f"原位清洗名应为「原名（已清洗）」，实际 {name!r}"
+
+
+def test_merge_不传文件名_默认名合并数据集N个(client):
+    """D2 红：merge 不传 文件名——修复前 `_清洗文件名(str("" or ""))`
+    返回 "upload"（真值）→ L190 起 `新文件名 or f'合并数据集（N 个）'`
+    兜底永不到达 → 合并产物名 "upload"；修复后默认名 = 「合并数据集（2 个）」。"""
+    token = _注册(client, "xss10")
+    a = _上传(client, token, "a.csv")["数据集ID"]
+    b = _上传(client, token, "b.csv", "地区,销售额\n华南,300\n华东,150\n")["数据集ID"]
+
+    r = client.post("/datasets/merge", json={"数据集ID列表": [a, b]},
+                    headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+    name = r.json()["文件名"]
+    assert name == "合并数据集（2 个）", f"merge 默认名应为「合并数据集（2 个）」，实际 {name!r}"
+    assert _读名(client, token, r.json()["数据集ID"]) == name

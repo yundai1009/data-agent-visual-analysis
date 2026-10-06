@@ -185,13 +185,21 @@ def merge_datasets(payload: dict, user: dict = Depends(get_current_user)) -> Dic
     """
     import pandas as pd
     ids = payload.get("数据集ID列表") or []
-    # Fix D（阶段54-8 · XSS Important）：merge 输出名同样过 _清洗文件名（对齐上传路径）——
-    # 恶意名 `<script>` 等此前原样入库，属存储层纵深缺口。
-    新文件名 = _清洗文件名(str(payload.get("文件名") or ""))
     if not isinstance(ids, list) or len(ids) < 2:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="至少选择 2 个数据集进行合并")
     if len(ids) > 20:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="一次最多合并 20 个数据集")
+    # Fix D（阶段54-8 · XSS Important）：merge 输出名同样过 _清洗文件名（对齐上传路径）——
+    # 恶意名 `<script>` 等此前原样入库，属存储层纵深缺口。
+    # 补修（阶段54-8 审查 D2）：调用点先判空再清洗——**不要改 _清洗文件名 自身的空输入
+    # 回退 "upload"**（上传/rename 路径依赖该兜底）。修复前 `_清洗文件名(str("" or ""))`
+    # 返回 "upload"（真值）→ `新文件名 or f'合并数据集（N 个）'` 兜底永不到达 → 合并
+    # 产物名 "upload"（旧行为「合并数据集（2 个）」）；改为空输入直接用默认名。
+    原始名 = str(payload.get("文件名") or "").strip()
+    if 原始名:
+        新文件名 = _清洗文件名(原始名) or f"合并数据集（{len(ids)} 个）"   # 清洗后为空（如 ".."）回退默认名
+    else:
+        新文件名 = f"合并数据集（{len(ids)} 个）"
     if len(新文件名) > _MAX_FILENAME_LEN:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="文件名过长（最多 120 字符）")
 
@@ -212,7 +220,6 @@ def merge_datasets(payload: dict, user: dict = Depends(get_current_user)) -> Dic
     if merged.empty or len(merged.columns) == 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="合并结果为空，请检查所选数据集")
 
-    新文件名 = 新文件名 or f"合并数据集（{len(ids)} 个）"
     画像 = 生成数据画像(merged)
     dataset_id = uuid4().hex
     _仓储.保存(

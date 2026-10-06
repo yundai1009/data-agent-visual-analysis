@@ -85,6 +85,7 @@ def 多智能体分析(
     max_retries: int = 1,
     llm_config: Optional[LLMRequestConfig] = None,
     on_event: Optional[Any] = None,
+    规则输入: Optional[str] = None,
 ) -> Dict[str, Any]:
     """多智能体方式执行数据分析。
 
@@ -95,6 +96,10 @@ def 多智能体分析(
         max_retries: 质量审查打回后的最大重试次数
         llm_config: 请求级 LLM 配置（并发安全）
         on_event: 可选回调，trace 每记录一步即实时推送（SSE 直播）
+        规则输入: Fix C（阶段54-8 · LLM P1-2）——规则层识别文本：追问链时
+            API 层传「用户本轮原话」，分析需求为注入上下文后的完整文本
+            （含历史标题/图表名——不得触发规则短路）。LLM 调用始终用完整
+            分析需求。None = 直接用 分析需求。
 
     Returns:
         标准化意图 dict（含 Agent_Trace）
@@ -108,14 +113,14 @@ def 多智能体分析(
 
     if not is_llm_configured(llm_config.api_key if llm_config else None) or not (分析需求 or "").strip():
         trace.记录观察(轮次=0, 说明="LLM 未配置，使用关键词匹配降级", 状态="成功")
-        return _降级(画像, 分析需求, trace)
+        return _降级(画像, 分析需求, trace, 规则输入=规则输入)
 
     # ── 第 1 步：数据分析师（画像 + 聚合） ──
     data_agent_result = _运行_agent("数据分析师", 分析需求, tools, context, trace, 轮次起始=1, llm_config=llm_config)
     if not data_agent_result["成功"]:
         logger.warning("数据分析师失败，降级")
         trace.记录观察(轮次=1, 说明="数据分析师执行失败，降级到关键词匹配", 状态="失败")
-        return _降级(画像, 分析需求, trace)
+        return _降级(画像, 分析需求, trace, 规则输入=规则输入)
 
     # ── 第 2 步：图表设计师（推荐图表 + 结论），带质量审查重试闭环 ──
     data_summary = data_agent_result["摘要"]
@@ -142,7 +147,7 @@ def 多智能体分析(
             trace.记录观察(轮次=轮次图表, 说明=f"图表设计师第 {attempt+1} 次尝试失败", 状态="失败")
             if attempt < max_retries:
                 continue
-            return _降级(画像, 分析需求, trace)
+            return _降级(画像, 分析需求, trace, 规则输入=规则输入)
 
         # ── 质量审查员 ──
         quality_prompt = (
@@ -191,7 +196,7 @@ def 多智能体分析(
         intent_source = "LLM"
         trace.记录观察(轮次=6, 说明="多智能体分析完成" + ("（质量审查通过）" if passed else "（质量审查有建议）"), 状态="成功")
     else:
-        return _降级(画像, 分析需求, trace)
+        return _降级(画像, 分析需求, trace, 规则输入=规则输入)
 
     return {
         "图表类型": intent.get("图表类型", "自动推荐"),
@@ -265,10 +270,15 @@ def _画像摘要(画像: Dict[str, Any]) -> str:
     return f"{画像.get('行数',0)}行/{画像.get('列数',0)}列，字段：{', '.join(字段[:8])}"
 
 
-def _降级(画像: Dict[str, Any], 分析需求: str, trace: TraceRecorder) -> Dict[str, Any]:
-    """关键词匹配降级。"""
+def _降级(画像: Dict[str, Any], 分析需求: str, trace: TraceRecorder, 规则输入: Optional[str] = None) -> Dict[str, Any]:
+    """关键词匹配降级。
+
+    规则输入: Fix C（阶段54-8 · LLM P1-2）——规则层只识别用户本轮输入；
+    追问链时分析需求是注入上下文后的完整文本（含历史标题「图表类型:饼图」等，
+    模板语法正则/语义词会短路成错误图表），必须用 规则输入 or 分析需求 兜底。
+    """
     from 后端_核心.field_selector import _意图驱动配置
-    rule_over = _意图驱动配置(画像, 分析需求)
+    rule_over = _意图驱动配置(画像, 规则输入 or 分析需求)
     if rule_over:
         trace.记录观察(轮次=0, 说明="降级为关键词匹配", 状态="成功")
         return {

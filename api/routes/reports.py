@@ -1007,7 +1007,12 @@ def _多智能体报表(
     """多智能体模式生成报表。"""
     from 后端_核心.profile import 生成数据画像
     画像 = 生成数据画像(df)
-    result = 多智能体分析(画像, payload.分析需求, df, llm_config=llm_config, on_event=on_event)
+    # Fix C（阶段54-8 · LLM P1-2）：规则层只用用户本轮输入——追问链时
+    # payload.分析需求 是注入上下文后的完整文本（含上一轮标题「图表类型:饼图」
+    # 等，会短路 模板语法/语义词 规则），必须传 payload.原始分析需求（原话）。
+    # LLM 调用仍用完整 分析需求（含上下文），对齐单 Agent 的传法（L996）。
+    result = 多智能体分析(画像, payload.分析需求, df, llm_config=llm_config, on_event=on_event,
+                          规则输入=payload.原始分析需求 or None)
     if not result:
         # 降级到单 Agent
         logger.warning("多智能体失败，降级到单 Agent")

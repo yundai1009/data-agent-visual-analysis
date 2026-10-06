@@ -265,3 +265,131 @@ def test_API级_追问换成散点图_显式声明生效(client):
     # 无 LLM key 时规则兜底统一标「规则」（编排器降级路径的既有契约）；
     # 有 LLM key 时受控语句命中标「规则-受控语句」。核心契约是图表类型=散点图。
     assert body["意图来源"] in ("规则", "规则-受控语句"), body.get("意图来源")
+
+
+def _纯文本响应(text: str) -> dict:
+    """质量审查员走纯文本（无 tool_calls）的 chat.completion 响应。"""
+    return {
+        "id": "chatcmpl-text",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "deepseek-chat",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": text},
+                     "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    }
+
+
+# ═══ 3. API 级：multi 模式降级路径的规则输入透传（C1 补修，阶段 54-8） ═══
+
+
+def _生成饼图报表_multi(client, token, did):
+    """规则路径（无 LLM key）+ agent_mode=multi 生成饼图报表，供追问链作上一轮。
+
+    标题=分析需求原文（含「图表类型:饼图」模板语法）——C1 劫持源：
+    追问链注入上下文时该标题原样回显，修复前 `_降级` 拿注入后的全量文本
+    进 `_意图驱动配置` → 模板语法正则（图表类型[:：]）命中 → 短路成饼图。
+    """
+    r = client.post(
+        "/reports/generate",
+        json={"数据集ID": did, "分析需求": "图表类型:饼图 按地区统计销售额占比",
+              "图表类型": "自动推荐", "agent_mode": "multi"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["图表类型"] == "饼图", body
+    assert "图表类型:饼图" in body["标题"], f"标题应含模板语法源：{body.get('标题')!r}"
+    return body["报表ID"]
+
+
+def test_API级_multi_追问换成散点图_规则路径不被上下文劫持(client):
+    """C1 红：multi 模式降级路径（无 LLM key）追问「换成散点图」——上一轮
+    标题含「图表类型:饼图」，修复前 `_降级` 未接 `规则输入`，用注入后的
+    全量文本进 `_意图驱动配置` → 模板语法分支命中 → 图表类型=饼图（被劫持）；
+    修复后规则层只见用户原话「换成散点图」→ 显式声明命中散点图。"""
+    token = _注册(client, "mup1")
+    did = _上传(client, token)
+    pie_id = _生成饼图报表_multi(client, token, did)
+
+    r = client.post(
+        "/reports/generate",
+        json={"数据集ID": did, "分析需求": "换成散点图", "图表类型": "自动推荐",
+              "上一报表ID": pie_id, "agent_mode": "multi"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["图表类型"] == "散点图", (
+        f"multi 追问「换成散点图」不得被上下文劫持为饼图，实际 {body.get('图表类型')}"
+    )
+    assert body["意图来源"] in ("规则", "规则-受控语句"), body.get("意图来源")
+
+
+def test_API级_multi_追问那华南呢_规则路径不短路为饼图(client):
+    """C1 红：multi 模式降级路径追问「那华南呢？」——上一轮标题含
+    「图表类型:饼图」，修复前被劫持成饼图；修复后规则层只见用户原话，
+    不命中任何图表关键词 → 不再短路为饼图（自动推荐/表格兜底）。"""
+    token = _注册(client, "mup2")
+    did = _上传(client, token)
+    pie_id = _生成饼图报表_multi(client, token, did)
+
+    r = client.post(
+        "/reports/generate",
+        json={"数据集ID": did, "分析需求": "那华南呢？", "图表类型": "自动推荐",
+              "上一报表ID": pie_id, "agent_mode": "multi"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["图表类型"] != "饼图", (
+        f"multi 追问「那华南呢？」不得被上下文劫持为饼图，实际 {body.get('图表类型')}"
+    )
+    assert body["意图来源"] == "规则", body.get("意图来源")
+
+
+def test_API级_multi_追问那华南呢_LLM路径筛选保留(client):
+    """C1 守：multi 模式 LLM 路径（占位 key + mock 三 Agent 执行）追问
+    「那华南呢？」→ 聚合分析工具参数里的 筛选条件=[华南] 透传到最终报表
+    （S11 多智能体三键透传不回归；上一轮标题含「图表类型:饼图」不影响
+    LLM 路径——LLM 调用始终用注入后的完整需求，规则层只用用户原话）。"""
+    token = _注册(client, "mup3")
+    did = _上传(client, token)
+    pie_id = _生成饼图报表_multi(client, token, did)
+
+    脚本 = [
+        _工具响应("获取数据画像", {}, "ma_1"),                       # 数据分析师 R1
+        _工具响应("聚合分析",
+                   {"X轴": "地区", "Y轴": ["销售额"], "聚合方式": "求和",
+                    "筛选条件": [{"字段": "地区", "操作": "等于", "值": "华南"}]},
+                   "ma_2"),                                         # 数据分析师 R2
+        _工具响应("推荐图表", {"图表类型": "饼图", "理由": "华南销售额构成适合饼图"}, "ma_3"),  # 图表设计师 R1
+        _工具响应("聚合分析",
+                   {"X轴": "地区", "Y轴": ["销售额"], "聚合方式": "求和",
+                    "筛选条件": [{"字段": "地区", "操作": "等于", "值": "华南"}]},
+                   "ma_4"),                                         # 图表设计师 R2（携带筛选）
+    ]
+    with 记忆桩(), mock.patch(
+        "后端_核心.agent.orchestrator.chat_completion", side_effect=脚本
+    ), mock.patch(
+        "后端_核心.agent.llm_client.chat_completion",
+        return_value=_纯文本响应("通过"),                              # 质量审查员
+    ):
+        r = client.post(
+            "/reports/generate",
+            json={"数据集ID": did, "分析需求": "那华南呢？", "图表类型": "自动推荐",
+                  "上一报表ID": pie_id, "agent_mode": "multi"},
+            headers={"Authorization": f"Bearer {token}", "x-llm-api-key": "sk-test-not-placeholder"},
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # S10 设计：multi 已产出意图，_多智能体报表 二轮生成传 llm_config=None 走规则
+    # 路径 → 最终报表 意图来源 恒为规则（多智能体 LLM 意图经图表类型/字段显式传递）。
+    assert body["意图来源"] == "规则", body.get("意图来源")
+    # 多智能体 LLM 意图生效：图表类型=饼图（未被规则层自动推荐改写为表格）
+    assert body["图表类型"] == "饼图", body.get("图表类型")
+    assert body["图表配置"].get("筛选条件") == [{"字段": "地区", "操作": "等于", "值": "华南"}], body["图表配置"]
+    数据 = body["报表数据"]
+    assert 数据, "筛选后应有聚合结果"
+    for row in 数据:
+        assert row.get("地区") == "华南", f"报表数据应只含华南：{数据}"
