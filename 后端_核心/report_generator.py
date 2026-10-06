@@ -143,6 +143,7 @@ def _解析自然语言意图(
     llm_config: Optional[LLMRequestConfig] = None,
     on_event: Optional[Any] = None,
     user_id: str = "",
+    规则输入: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], str, List[Dict[str, Any]], str]:
     """优先用 LLM 解析; 失败降级回规则匹配. 返回 (override, source, trace, llm_fail_reason)。
 
@@ -161,6 +162,9 @@ def _解析自然语言意图(
       - source：意图来源，"LLM" / "规则" / "无"
       - trace：多轮 ReAct 决策记录，或空列表
       - llm_fail_reason：LLM 失败原因（降级时供前端明示；成功或规则路径为空）
+      - 规则输入（Fix C · 阶段54-8）：规则层识别文本——追问链时 API 层传
+        「用户原话」，与注入上下文后的完整 分析需求 分离，防历史图表名/
+        标题/结论短路规则（走查 P1-2）。默认 None = 直接用 分析需求。
     业务定位：
       - 【关键行】双引擎切换开关：LLM 智能解析优先，任何异常/None 都降级到规则。
       - 为什么：LLM 可能未配置 Key、网络波动、返回非法 JSON；规则兜底保证
@@ -172,7 +176,8 @@ def _解析自然语言意图(
     if 分析需求 and 分析需求.strip():
         try:
             # LLM 智能解析：调编排Agent 走 3 轮 ReAct；内部失败会自己降级并返回降级结果
-            agent_result = 编排Agent(画像, 分析需求, df=df, llm_config=llm_config, on_event=on_event, user_id=user_id)
+            agent_result = 编排Agent(画像, 分析需求, df=df, llm_config=llm_config, on_event=on_event,
+                                     user_id=user_id, 规则输入=规则输入)
             if agent_result:
                 override = {
                     "图表类型": agent_result["图表类型"],
@@ -186,14 +191,17 @@ def _解析自然语言意图(
                     "对比": agent_result.get("对比"),
                 }
                 # 阶段 29 兜底：编排器内部降级结果（无 key 时）不含筛选/TopN——
-                # 用规则层识别补齐，保证"只看华东区"/"Top 10"在 LLM 路径同样生效
+                # 用规则层识别补齐，保证"只看华东区"/"Top 10"在 LLM 路径同样生效。
+                # Fix C：兜底规则识别同样只认 用户本轮输入（规则输入 or 分析需求）
+                # ——追问链的注入上下文（历史标题/样例行）不得参与筛选推导。
+                规则文本 = 规则输入 or 分析需求
                 if df is not None and not override["筛选条件"]:
-                    override["筛选条件"] = 匹配筛选条件(分析需求, df, 画像)
+                    override["筛选条件"] = 匹配筛选条件(规则文本, df, 画像)
                 if df is not None and not override["TopN"]:
-                    override["TopN"] = 提取TopN(分析需求)
+                    override["TopN"] = 提取TopN(规则文本)
                 # 阶段 30 兜底：规则层识别"环比/同比"（LLM 未给出时补齐）
-                if not override["对比"] and ("环比" in 分析需求 or "同比" in 分析需求):
-                    override["对比"] = "环比" if "环比" in 分析需求 else "同比"
+                if not override["对比"] and ("环比" in 规则文本 or "同比" in 规则文本):
+                    override["对比"] = "环比" if "环比" in 规则文本 else "同比"
                 fail_reason = agent_result.get("LLM失败原因", "")
                 return override, agent_result["意图来源"], agent_result["Agent_Trace"], fail_reason
             logger.warning("LLM 意图解析返回 None, 降级到关键词匹配")
@@ -202,7 +210,8 @@ def _解析自然语言意图(
             # 前端/评测看不到"为什么降级"，排查全靠猜）
             logger.warning("LLM 意图解析异常, 降级到关键词匹配: %s", exc)
             _降级原因 = f"LLM 意图解析异常: {str(exc)[:200]}"
-            rule_override = _意图驱动配置(画像, 分析需求, df)
+            # Fix C：规则层只看 用户本轮输入（规则输入），追问链注入上下文不参与
+            rule_override = _意图驱动配置(画像, 规则输入 or 分析需求, df)
             return rule_override, ("规则" if rule_override else "无"), [], _降级原因
     # 规则降级路径：关键词匹配 + 模板语法解析（不依赖 LLM，永远可用）
     rule_override = _意图驱动配置(画像, 分析需求, df)
@@ -817,6 +826,7 @@ def 生成报表数据(
     llm_config: Optional[LLMRequestConfig] = None,
     on_event: Optional[Any] = None,
     user_id: str = "",
+    规则输入: Optional[str] = None,
 ) -> Dict[str, Any]:
     """根据上传数据和页面选择生成可渲染的报表配置。
 
@@ -826,6 +836,9 @@ def 生成报表数据(
     筛选条件: 显式筛选（AND 语义），在画像/聚合/结论之前应用——
         保证图表、结论、画像三者一致地反映"筛选后的世界"。
     topN: 聚合结果保留数值最大的前 N 行（"销量 Top 10"）。
+    规则输入: Fix C（阶段54-8 · LLM P1-2）——规则层（受控语句/快速路由/筛选
+        兜底）识别文本；追问链时 API 层传「用户原话」，与注入上下文后的完整
+        分析需求 分离，防历史图表名/标题/结论短路规则。None = 直接用 分析需求。
     """
     if df.empty:
         raise ValueError("没有可用于生成报表的数据")
@@ -849,7 +862,7 @@ def 生成报表数据(
     else:
         y轴列表 = [field for field in (y轴 or []) if field]
 
-    intent_override, intent_source, agent_trace, llm_fail_reason = _解析自然语言意图(画像, 分析需求, df, llm_config=llm_config, on_event=on_event, user_id=user_id)
+    intent_override, intent_source, agent_trace, llm_fail_reason = _解析自然语言意图(画像, 分析需求, df, llm_config=llm_config, on_event=on_event, user_id=user_id, 规则输入=规则输入)
     # M23：用户原始请求语义（推荐说明文案用）——用户选了"自动推荐"时，即使
     # LLM 意图覆盖出了具体图表，文案也应说"系统自动选择"而非"用户手动选择"。
     用户请求自动推荐 = 图表类型 == "自动推荐"
@@ -882,7 +895,8 @@ def 生成报表数据(
     是否自动推荐 = 图表类型 == "自动推荐"
     effective_chart = 图表类型
     if 是否自动推荐:
-        effective_chart = _推荐图表类型(画像, x轴, y轴列表, 分析需求)
+        # Fix C：规则推荐只看 用户本轮输入（规则输入），追问链注入上下文不参与
+        effective_chart = _推荐图表类型(画像, x轴, y轴列表, 规则输入 or 分析需求)
 
     if intent_override and 图表类型 == "饼图":
         effective_chart = "饼图"

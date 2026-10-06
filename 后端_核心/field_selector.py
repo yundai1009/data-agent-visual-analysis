@@ -324,6 +324,13 @@ def _显式图表声明(文本: str) -> Optional[str]:
       1. 模板语法「图表类型:饼图」/「图表类型：饼图」
       2. 需求里直接出现完整图表名（"生成饼图"/"我要折线图"等）
     命中即优先于任何语义推断（用户说了饼图就该是饼图）。
+
+    Fix C（阶段54-8 · LLM P1-2）：图表名需**独立成词**——只命中后随
+    空白/标点/结尾 的图表名；后紧贴其他汉字（如追问上下文注入的
+    「饼图 报表」、复合词「散点图分布」）视为**陈述历史/复合词**而非
+    用户新声明。修复前 `if name in 文本` 对任意图表名子串命中，追问链
+    被注入上下文里的历史图表名劫持到规则-受控语句（走查 P1-2：同一
+    「那华南呢？」带上下文→规则、不带→LLM 3 轮）。
     """
     import re as _re
 
@@ -334,9 +341,30 @@ def _显式图表声明(文本: str) -> Optional[str]:
             if declared.startswith(name):
                 return name
     for name in _图表名称优先级:
-        if name in 文本:
-            return name
+        start = 0
+        while True:
+            i = 文本.find(name, start)
+            if i == -1:
+                break
+            after = 文本[i + len(name):i + len(name) + 1]
+            # 后随 结尾/空白/标点（非汉字、非字母数字下划线）→ 独立成词，命中
+            if after == "" or (not _是词字符(after)):
+                return name
+            start = i + len(name)  # 紧贴汉字：跳过该次命中继续找下一个独立出现
     return None
+
+
+def _是词字符(ch: str) -> bool:
+    """判定字符是否算"词的一部分"（中文汉字/拉丁字母/数字/下划线）。
+
+    用于 `_显式图表声明` 的独立成词边界：后随词字符的图表名是陈述/复合词
+    （「饼图 报表」「散点图分布」），不算用户显式声明。
+    """
+    return (
+        ch == "_"
+        or ch.isalnum()
+        or "\u4e00" <= ch <= "\u9fff"   # 中文汉字
+    )
 
 
 def _受控语句配置(画像: Dict[str, Any], 分析需求: str) -> Dict[str, Any]:

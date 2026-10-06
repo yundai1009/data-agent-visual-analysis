@@ -172,6 +172,7 @@ def 解析自然语言需求(
                              # 修复"LLM 路径第 2 轮聚合分析因 df=None 必降级"的 bug
     enable_llm: Optional[bool] = None,
     llm_config: Optional[LLMRequestConfig] = None,
+    规则输入: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """兼容接口：从编排结果中提取标准化意图。
 
@@ -182,11 +183,13 @@ def 解析自然语言需求(
       - 画像：数据画像 dict（含字段列表、字段类型等，由 数据画像.py 生成）
       - enable_llm：是否启用 LLM（None 表示自动判断）
       - llm_config：请求级 LLM 配置（provider/base_url/model），并发安全
+      - 规则输入：Fix C——规则层只识别用户本轮输入（追问链时由调用方传入原话）
     返回：
       - 成功：标准化意图 dict，结构为 {"图表类型", "x轴", "y轴", "分组字段", "聚合方式", "推荐理由"}
       - 失败：None（LLM 不可用 + 关键词匹配也未命中）
     业务定位：报表生成器的"快速通道"，跳过 Trace 等诊断信息，只返回核心意图。"""
-    agent_result = 编排Agent(画像, 分析需求, df=df, enable_llm=enable_llm, llm_config=llm_config)
+    agent_result = 编排Agent(画像, 分析需求, df=df, enable_llm=enable_llm, llm_config=llm_config,
+                             规则输入=规则输入)
     if agent_result is None:
         return None
     return {
@@ -207,6 +210,7 @@ def 编排Agent(
     llm_config: Optional[LLMRequestConfig] = None,
     on_event: Optional[Any] = None,
     user_id: str = "",
+    规则输入: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """多轮 ReAct 编排：感知 → 推理 → 行动 → 观察 → 再推理。
 
@@ -226,6 +230,9 @@ def 编排Agent(
         llm_config: 请求级 LLM 配置（provider/base_url/model），每个请求独立，并发安全
         on_event: 可选回调，trace 每记录一步就实时推送一条记录（供前端 SSE 直播用）
         user_id: 用户 ID（贯穿到 Agent 记忆的检索和保存，实现用户级隔离）
+        规则输入: Fix C（阶段54-8 · LLM P1-2）——规则层（受控语句/快速路由）只
+            识别**用户本轮输入**；追问链时 API 层把「用户原话」传入，分析需求为
+            注入上下文后的完整文本（含历史图表名/标题/结论——不得触发规则短路）。
 
     Returns:
         标准化意图 dict，完整结构：
@@ -256,15 +263,19 @@ def 编排Agent(
     # 第一层：受控语句（明确图表词，如"直方图""K线"）→ 规则精确识别；
     # 第二层：快速路由（占比/趋势/TopN/相关 等通用意图词）→ 高置信度规则；
     # 均未命中才继续走 LLM（模糊需求才需要智能推理，省 3-4s 且准确率更高）。
-    if enable_llm and (分析需求 or "").strip():
+    # Fix C（阶段54-8 · LLM P1-2）：规则层只看「用户本轮输入」——追问链的
+    # 分析需求是注入上下文后的完整文本（含历史图表名/标题/结论），若直接
+    # 用于规则识别，历史信息会短路成 规则-受控语句（走查 P1-2）。
+    规则文本 = (规则输入 or 分析需求 or "").strip()
+    if enable_llm and 规则文本:
         from 后端_核心.field_selector import _受控语句配置
-        _受控 = _受控语句配置(画像, 分析需求)
+        _受控 = _受控语句配置(画像, 规则文本)
         if _受控:
             intent_override = _受控
             intent_source = "规则-受控语句"
             trace.记录观察(轮次=0, 说明="识别到明确的图表关键词（如 直方图/折线图），已直接生成对应配置", 状态="成功")
         else:
-            _快速 = _快速意图判断(分析需求, 画像)
+            _快速 = _快速意图判断(规则文本, 画像)
             if _快速:
                 intent_override = _快速
                 intent_source = "规则-快速路由"
@@ -391,7 +402,9 @@ def 编排Agent(
     # 替代方案：多次重试 LLM 后再报错（用户等待时间长）；当前优雅降级体验最好。
     if intent_override is None:
         from 后端_核心.field_selector import _意图驱动配置  # 解耦：规则层独立模块
-        rule_over = _意图驱动配置(画像, 分析需求)
+        # Fix C：降级兜底同样只认 用户本轮输入（规则输入），追问链的注入
+        # 上下文（历史标题/图表名/结论）不得触发 占比/趋势 等规则短路。
+        rule_over = _意图驱动配置(画像, 规则文本)
         if rule_over:
             intent_override = rule_over
             intent_source = "规则"
@@ -418,6 +431,13 @@ def 编排Agent(
         "Agent_Trace": trace.to_list(),
         # LLM 失败原因：降级时透传给用户（避免静默回退规则让用户困惑）
         "LLM失败原因": (llm_config.llm_fail_reason if llm_config else "") or 最近LLM失败().get("reason", ""),
+        # Fix B（阶段54-8 · LLM P1-1）：LLM 路径补三键——_从消息提取意图 已解析出
+        # 筛选条件/TopN/对比（含字段白名单校验），此前 return 时被丢 → 省略式追问
+        # 「那华南呢？」（筛选条件=华南）生成全地区报表。对齐规则路径 L153-162 的形状：
+        # 筛选条件默认 []、TopN 默认 None、对比 默认 None。
+        "筛选条件": intent_override.get("筛选条件", []),
+        "TopN": intent_override.get("TopN"),
+        "对比": intent_override.get("对比"),
     }
 
 
