@@ -477,7 +477,19 @@ def _执行一轮(
         # 删除后果：本轮推理直接断掉，所有轮次全部失败，整条 Agent 链路瘫痪、报表无法智能生成。
         # 替代方案：让 LLM 直接返回计算结果，但结果不可校验、token 成本极高；
         # 现方案（LLM 决策 + 后端执行）是 Function Calling 行业主流。
-        resp = chat_completion(messages=messages, tools=tools, tool_choice="auto", llm_config=llm_config)
+        # Fix L2（阶段54-9 · LLM P2-3）：LLM 调用包 try/except——CassetteMiss 等
+        # 异常（非 requests.RequestException）此前直接穿透，整段 trace（含轮 1 命中
+        # 证据）被丢弃，报表显示模板 trace 与规则路径不可区分；现在转成可控降级：
+        # 记 trace 失败记录 → 返回 False（上层决定降级/重试）。工具执行部分保持原语义。
+        try:
+            resp = chat_completion(messages=messages, tools=tools, tool_choice="auto", llm_config=llm_config)
+        except Exception as exc:
+            from 后端_核心.agent.llm_client import _record_llm_fail
+            _record_llm_fail(f"LLM 调用异常：{exc}", llm_config)
+            trace.记录LLM调用(轮次=轮次, prompt_summary=messages[-1].get("content", "")[:200],
+                              耗时_ms=timer.elapsed_ms, token={},
+                              状态="失败", 理由=f"LLM 调用异常：{exc}")
+            return False
     token_usage = 提取token(resp)
     tc = extract_tool_call(resp)
     # 【Bug19 修复】prompt_summary 提前固定下来——重试时 messages 会被 pop 恢复，
@@ -490,7 +502,18 @@ def _执行一轮(
     # 调用工具；重试仍无 tool_call 才判失败。临时提示用完即移除，不污染历史。
     if (not tc or not tc.get("name")) and 轮次 >= 2:
         messages.append({"role": "user", "content": "请调用工具完成本步骤的分析，必须返回工具调用，不要仅返回文字。"})
-        resp_retry = chat_completion(messages=messages, tools=tools, tool_choice="auto", llm_config=llm_config)
+        # Fix L2（阶段54-9 · LLM P2-3）：重试分支同样防护——异常时先还原 messages
+        # 再记失败 trace 返回 False（不吞异常也不丢证据）。
+        try:
+            resp_retry = chat_completion(messages=messages, tools=tools, tool_choice="auto", llm_config=llm_config)
+        except Exception as exc:
+            messages.pop()
+            from 后端_核心.agent.llm_client import _record_llm_fail
+            _record_llm_fail(f"LLM 重试调用异常：{exc}", llm_config)
+            trace.记录LLM调用(轮次=轮次, prompt_summary="请调用工具完成本步骤的分析（重试）",
+                              耗时_ms=timer.elapsed_ms, token={},
+                              状态="失败", 理由=f"LLM 重试调用异常：{exc}")
+            return False
         messages.pop()
         if resp_retry:
             tc_retry = extract_tool_call(resp_retry)
@@ -632,7 +655,14 @@ def _从消息提取意图(messages: List[Dict[str, Any]], 画像: Dict[str, Any
             if "推荐图表：" in content:
                 for line in content.split("\n"):
                     if line.startswith("推荐图表："):
-                        chart_type = line.replace("推荐图表：", "").strip()
+                        # Fix L1（阶段54-9 · LLM P2-2）：tool 内容解析出的图表名
+                        # 必须命中 _图表类型白名单 才采纳——此前"同值覆盖"逻辑让
+                        # 幻觉值（如「3D饼图」）先置入 chart_type 后无法被拦截，
+                        # 直接进结论（超前端枚举，引擎静默回退 table）。
+                        _候选图表 = line.replace("推荐图表：", "").strip()
+                        if _候选图表 in _图表类型白名单:
+                            chart_type = _候选图表
+                        # else: 白名单外不采纳（保持 None/未置 → 语义推断/自动推荐兜底）
                     if line.startswith("理由："):
                         reason = line.replace("理由：", "").strip()
 
@@ -645,8 +675,9 @@ def _从消息提取意图(messages: List[Dict[str, Any]], 画像: Dict[str, Any
                 except (json.JSONDecodeError, TypeError):
                     args = {}
                 if name == "推荐图表":
-                    # M25：图表类型走枚举白名单——LLM 幻觉的图表类型（如
-                    # "雷达图""3D饼图"）此前直接进结论，前端渲染失败/结论失真
+                    # Fix L1（阶段54-9 · LLM P2-2）：聚合参数（推荐图表 tool_call args）
+                    # 同样前置校验——LLM 推荐的图表类型必须是枚举内值才采纳；
+                    # 枚举外（如「3D饼图」「箱型图」）不采纳（保留已合法置入的值或 None）。
                     _候选图表 = args.get("图表类型") or chart_type
                     if _候选图表 in _图表类型白名单:
                         chart_type = _候选图表
