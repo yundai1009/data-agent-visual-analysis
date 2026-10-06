@@ -96,7 +96,6 @@ def 编辑校验(编辑: Dict, 画像: Dict):
 
     if 动作 == "换Y轴":
         y = 编辑.get("Y轴", []) or []
-        唯一约束字段 = _ID名称模式
         禁区 = set(标识符字段(画像))
         for f in y:
             if f in 禁区:
@@ -287,12 +286,14 @@ def 重算图表数据(画像: Dict, df, 编辑: Dict, 原_chart: Dict):
     # ---- 5. 组装新 chart_config ----
     新["数据"] = report_rows
     新["X轴"] = x if x in df.columns else (df.columns[0] if len(df.columns) else None)
+    # 占比模式：仅「切占比」动作或原配置已有该键时写，避免非占比编辑产生噪声变更
     if 聚合方式 == "count":
         新["Y轴"] = ["记录数"] if "记录数" in report_df.columns else (y_valid or ["记录数"])
         新["占比模式"] = "计数"
     else:
         新["Y轴"] = y_valid or ["记录数"]
-        新["占比模式"] = "数值"
+        if 动作 == "切占比" or "占比模式" in 原_chart:
+            新["占比模式"] = "数值"
 
     # 图表类型：切类型动作用目标中文转 plotly；否则保留原类型
     if 动作 == "切图表类型":
@@ -307,7 +308,7 @@ def 重算图表数据(画像: Dict, df, 编辑: Dict, 原_chart: Dict):
         if 新.get("Y轴"):
             新["值"] = 新["Y轴"][0]
 
-    说明 = f"已按 {新.get('X轴')} + {'、'.join(str(j) for j in 新.get('Y轴', []))} 本地重算（{新.get('占比模式')}）"
+    说明 = f"已按 {新.get('X轴')} + {'、'.join(str(j) for j in 新.get('Y轴', []))} 本地重算"
     return 新, 说明
 
 
