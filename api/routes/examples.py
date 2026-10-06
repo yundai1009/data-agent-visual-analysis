@@ -28,7 +28,7 @@ _EXAMPLES_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @router.post("/load-example", response_model=LoadExampleResponse)
-async def load_example_dataset(
+def load_example_dataset(
     user: dict = Depends(get_current_user),
 ) -> LoadExampleResponse:
     """加载内置示例数据集，方便新用户快速体验。"""

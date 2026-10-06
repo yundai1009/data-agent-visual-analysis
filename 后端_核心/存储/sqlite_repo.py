@@ -45,7 +45,7 @@ import pandas as pd
 
 from 后端_核心.存储 import sqlite_backend
 from 后端_核心.存储.backend import 写锁 as _write_lock   # 阶段 54：写锁统一到抽象层
-from 后端_核心.存储.backend import 冲突更新SQL, 当前后端   # 阶段 54-8：upsert 方言收敛
+from 后端_核心.存储.backend import 冲突更新SQL, 创建索引SQL, 当前后端   # 阶段 54-8：upsert 方言收敛
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +91,16 @@ def 初始化数据库() -> None:
             ON datasets (created_at)
             """
         )
+        # Fix A（阶段54-8 · 压测 P0）：datasets.user_id 索引——压测实测
+        # `WHERE user_id=?` 无索引全表 b-tree 扫描单查 ~20ms（列表端点一次跑
+        # 2 条 → ~40ms，串起 ~50ms 认证开销正好对上 c1 实测 52ms）。
+        # 与 mysql_repo._索引 的 idx_datasets_user_created 同名同列（双后端一致）。
+        # DDL 走方言函数：sqlite 真建（CREATE INDEX IF NOT EXISTS 幂等，
+        # 迁移已存在库安全）；mysql 分支在函数开头已提前 return，由
+        # mysql_repo.初始化数据库 的 information_schema 探测统一管理。
+        _索引SQL = 创建索引SQL(当前后端(), "idx_datasets_user_created", "datasets", "(user_id, created_at)")
+        if _索引SQL:
+            conn.execute(_索引SQL)
         # 迁移：旧表没有 user_id 列时，补列并将旧数据归到 demo 用户
         _迁移_datasets_user_id(conn)
         # 优化⑬：parent_id 列（数据集版本链：清洗/合并后记录来源数据集）
