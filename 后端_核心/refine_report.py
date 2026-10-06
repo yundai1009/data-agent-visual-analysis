@@ -219,3 +219,93 @@ def 解析编辑指令(文本: str, 画像: Dict):
         return None, True, f"未能识别字段「{m.group(1)}」，请从数据集中选择或确认"
 
     return None, True, "未能理解编辑指令，请描述具体要修改的内容（如：把X轴换成地区 / 标题改为… / 切换成饼图），或使用编辑面板"
+
+
+# ---- 本地重算（换轴 / 切占比 / 加筛选） ------------------------------------
+# 回到报表关联数据集的原始 df，用既有画像 + 本地 pandas 重算新 数据。
+# 不触发 Agent ReAct、不调外部工具/LLM（约束 1）。复用 report_generator._聚合数据。
+from 后端_核心.report_generator import _聚合数据, _可_json行
+
+_占比模式 = {"计数": "count", "数值": "sum"}
+# chart_config["类型"] 存 plotly 值；饼类图表补 名称/值
+_饼类 = {"pie", "donut"}
+
+
+def _类型转换值(series, 值):
+    """把筛选值转成与列类型匹配的类型（日期/数值/文本）。"""
+    try:
+        import pandas as pd
+        if pd.api.types.is_numeric_dtype(series):
+            return pd.to_numeric(值)
+        return str(值)
+    except Exception:
+        return str(值)
+
+
+def 求和聚合(y_valid: List[str]) -> str:
+    return "求和" if y_valid else "计数"
+
+
+def 重算图表数据(画像: Dict, df, 编辑: Dict, 原_chart: Dict):
+    """对原始 df 本地重算，产出新 chart_config 的 数据（及轴/名称/值/占比）。
+
+    返回 (新_chart_config, 说明)。
+    仅处理重算类动作（换X轴/换Y轴/切图表类型/切占比/加筛选）。
+    """
+    动作 = 编辑.get("动作")
+    新 = dict(原_chart)
+
+    # ---- 1. 确定交换后的 x / y ----
+    x = 新.get("X轴")
+    y_list = list(新.get("Y轴", []) or [])
+    if 动作 == "换X轴":
+        x = 编辑.get("X轴")
+    elif 动作 == "换Y轴":
+        y_list = list(编辑.get("Y轴", []) or [])
+
+    # ---- 2. 加筛选：对原始 df 行过滤（重算前，约束 6 确认：作用于原始 df） ----
+    if 动作 == "加筛选":
+        cond = 编辑.get("筛选") or {}
+        字段, 值 = cond.get("字段"), cond.get("值")
+        if 字段 and 字段 in df.columns:
+            目标值 = _类型转换值(df[字段], 值)
+            df = df[df[字段] == 目标值]
+
+    # ---- 3. 占比模式（样本计数 / 数值加权） ----
+    占比 = "数值"
+    if 动作 == "切占比":
+        占比 = 编辑.get("占比") or "计数"
+    聚合方式 = _占比模式.get(占比, "count")
+
+    # ---- 4. 聚合 ----
+    y_valid = [y for y in y_list if y in df.columns]
+    分组 = 新.get("颜色") or 新.get("分组字段")
+    有效聚合方式 = "count" if 聚合方式 == "count" else 求和聚合(y_valid)
+    report_df = _聚合数据(df, x, y_valid or ["记录数"], 分组, 有效聚合方式)
+    report_rows = _可_json行(report_df)
+
+    # ---- 5. 组装新 chart_config ----
+    新["数据"] = report_rows
+    新["X轴"] = x if x in df.columns else (df.columns[0] if len(df.columns) else None)
+    if 聚合方式 == "count":
+        新["Y轴"] = ["记录数"] if "记录数" in report_df.columns else (y_valid or ["记录数"])
+        新["占比模式"] = "计数"
+    else:
+        新["Y轴"] = y_valid or ["记录数"]
+        新["占比模式"] = "数值"
+
+    # 图表类型：切类型动作用目标中文转 plotly；否则保留原类型
+    if 动作 == "切图表类型":
+        target = _类型中文转plotly(编辑.get("图表类型"))
+    else:
+        target = _类型中文转plotly(新.get("类型"))
+    新["类型"] = target
+    # 饼类：补 名称/值
+    if target in _饼类:
+        if 新.get("X轴"):
+            新["名称"] = 新["X轴"]
+        if 新.get("Y轴"):
+            新["值"] = 新["Y轴"][0]
+
+    说明 = f"已按 {新.get('X轴')} + {'、'.join(str(j) for j in 新.get('Y轴', []))} 本地重算（{新.get('占比模式')}）"
+    return 新, 说明
