@@ -1,4 +1,23 @@
-# config/settings.py
+# ============================================================
+# 【文件定位】全局配置单一出口：读 .env → 汇总成 EnvConfig 类属性；另含请求级 LLM 配置的数据载体 LLMRequestConfig。
+# ============================================================
+# 【做了什么】
+#   1. load_dotenv(dotenv_path=.env, override=False) 后，用 EnvConfig 把全部可调项收成类属性：服务端口、CORS、认证/JWT、LLM 供应商与 Key、记忆容量等。
+#   2. EnvConfig._加载LLMProviders() 读 config/providers.toml（阶段 13.5 外置，18 家），只收 kind="openai" 的条目，文件缺失或解析失败回退内置 3 家；结果在类定义完成后赋给 EnvConfig.LLM_PROVIDERS。
+#   3. LLMRequestConfig：请求级 LLM 配置（阶段 12 收尾），冻结 dataclass，随调用链显式传递。
+# 【为什么这么做】
+#   - EnvConfig 是**普通 class 而不是 @dataclass**：配置项是进程级常量、要被几十个模块按 EnvConfig.XXX 直接取用，类属性写法不需要实例化也不需要注入；代价是「导入时求值」。
+#   - LLM provider 放 toml 而不是继续硬编码在 settings.py：接入新供应商改数据不改代码；过滤 kind != "openai" 是因为当前只实现了 OpenAI 兼容协议。
+#   - LLMRequestConfig 取代「临时改全局 EnvConfig.LLM_BASE_URL/LLM_MODEL 再还原」：前者无并发污染（不同请求互不干扰，也不用 try/finally 还原），且调用链上每个环节都能看到本次请求真正用的配置。
+# 【关键约定与坑】
+#   - **所有 EnvConfig 属性在 import 时求值一次**：改 .env 必须重启进程，否则读到的还是旧值——「配置项存在但怎么改都不生效」最难查的一类问题。同理，别把配置写成函数默认值再指望热更新。
+#   - load_dotenv(override=False)：系统环境变量优先级高于 .env，不会被 .env 覆盖（tests/conftest.py 正是靠这条用 os.environ 压住默认值的）。
+#   - CORS_ORIGINS 是**白名单**（阶段 19 起），不是 "*"；改了必须同步改前端 dev server 地址，否则浏览器直接被 CORS 拦掉。
+#   - EnvConfig.LLM_PROVIDERS 的赋值在类体之后（第 181 行）：因为 _加载LLMProviders 是 staticmethod，得等类体执行完才能调。
+#   - LLM_EMBEDDING_API_KEY 故意独立于 LLM_API_KEY：一个向量库只能有一个语义空间，chat 与 embedding 用不同 Key 时混用会直接 401/400。
+#   - MEMORY_PER_USER_LIMIT / MEMORY_TOTAL_LIMIT / MEMORY_CLEAN_STEP 是**软上限**（阶段 61 Task 2）：两次扫描之间最多超 MEMORY_CLEAN_STEP 条。
+#   - 启动自检（api/main.py 的 _启动安全自检）要求 AUTH_ENABLED / JWT_SECRET_KEY / SEED_ADMIN_PASSWORD 非默认值，否则**拒绝启动**——本地跑不起来先查这三项。
+# ============================================================
 from __future__ import annotations
 
 import os
@@ -189,7 +208,9 @@ class LLMRequestConfig:
     取代「临时覆盖全局 EnvConfig.LLM_BASE_URL / LLM_MODEL」的旧做法：
     - 无并发污染：不同请求互不干扰，也不依赖 try/finally 还原全局变量；
     - 显式传参：调用链上每个环节都能看到本次请求实际使用的配置；
-    - api_key 始终来自服务端 .env（EnvConfig.LLM_API_KEY），不接收用户输入。
+    - api_key 由服务端按四级优先级解析后填入（X-LLM-API-Key 请求头 > 账号 BYOK
+      PUT /auth/llm-key > provider 的 api_key_env > 服务端 .env 的 LLM_API_KEY），
+      本对象只承载结果，不做优先级判断。
     """
 
     provider: str
