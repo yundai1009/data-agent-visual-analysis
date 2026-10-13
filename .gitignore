@@ -78,6 +78,13 @@ data/*.xls
 data/parquet/
 data/*.xlsx
 
+# 例外：内置示例数据集是产品功能依赖（「导入示例数据」按钮 + 安装包随包分发，
+# 见 api/routes/examples.py 与 electron/build-backend/daa-backend.spec），
+# 必须随代码入库；上面的 data/*.csv 只匹配 data/ 直层，不覆盖此子目录。
+# 阶段 39「代码清理」曾把它当临时数据误删 → 阶段 59 恢复。
+!data/examples/
+!data/examples/*.csv
+
 # ──────────────────────────────────────────────
 # 10. 日志 & 覆盖率
 # ──────────────────────────────────────────────

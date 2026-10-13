@@ -55,6 +55,10 @@ a = Analysis(
     binaries=_pkgres_binaries + _setuptools_binaries + _numpy_binaries + [],
     datas=_pkgres_datas + _setuptools_datas + _numpy_datas + _rfc3987_datas + [
         (str(项目根.parent / "config" / "providers.toml"), "config"),
+        # 内置示例数据集（阶段 59）：「导入示例数据」按钮依赖它，漏收则安装包内该接口 404。
+        # 落 _internal/data/examples/，运行时由 api/routes/examples.py 复制到可写数据目录。
+        (str(项目根.parent / "data" / "examples" / "sales_2024.csv"),
+         str(Path("data") / "examples")),
     ],
     hiddenimports=[
         "uvicorn",
