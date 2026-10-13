@@ -16,7 +16,7 @@
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0; padding: 24px 28px 20px; background: var(--背景); color: var(--字);
+    margin: 0; padding: 24px 28px 0; background: var(--背景); color: var(--字);
     font: 14px/1.6 "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
   }
   h1 { margin: 0 0 4px; font-size: 19px; }
@@ -49,7 +49,13 @@
   button:disabled { opacity: .5; cursor: not-allowed; }
   button.主 { background: var(--蓝); border-color: var(--蓝); color: #fff; padding: 8px 20px; }
   button.主:hover:not(:disabled) { background: var(--蓝暗); border-color: var(--蓝暗); color: #fff; }
-  .底部 { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
+  /* 操作栏吸底：MySQL + 真实认证全展开时表单高度会超过窗口(实测 1107px vs 795px 视口)，
+     不吸底的话「保存」就落在折叠线以下，用户得先滚动才发现主操作按钮 */
+  .底部 {
+    position: sticky; bottom: 0; display: flex; align-items: center; gap: 12px;
+    margin: 8px -28px 0; padding: 14px 28px;
+    background: var(--背景); border-top: 1px solid var(--边);
+  }
   .状态 { flex: 1; font-size: 13px; color: var(--次字); min-height: 20px; }
   .状态.错误 { color: var(--红); }
   .状态.成功 { color: var(--绿); }
