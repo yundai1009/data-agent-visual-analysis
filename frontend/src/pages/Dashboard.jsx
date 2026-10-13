@@ -7,11 +7,14 @@
 //     dashboards 接口，前端只做组合与展示，不复制报表内容；
 //   - 展示用 EChartsChart 复用报表图表组件，同一套渲染逻辑。
 // 删除它会怎样：用户失去"把分析结果汇总成一页"的能力。
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Plus, Trash2, Pencil, ExternalLink, X, ImageOff, ChevronLeft, ChevronRight } from 'lucide-react';
-import { listDashboards, getDashboard, createDashboard, updateDashboard, deleteDashboard, listReports } from '../api';
+import { LayoutDashboard, Plus, Trash2, Pencil, ExternalLink, X, ImageOff, ChevronLeft, ChevronRight, LayoutGrid, Network } from 'lucide-react';
+import { listDashboards, getDashboard, createDashboard, updateDashboard, deleteDashboard, listReports, listDatasets } from '../api';
 import EChartsChart from '../components/EChartsChart';
+import LineageGraph from '../components/LineageGraph';
+import LineageDrawer from '../components/LineageDrawer';
+import { 构建血缘图 } from '../utils/看板血缘';
 
 // ---- 通用弹窗（名称 + 多选报表）----
 
@@ -44,6 +47,12 @@ export default function Dashboard() {
   const [showRename, setShowRename] = useState(false);
   const [newName, setNewName] = useState('');
   const [selectedIds, setSelectedIds] = useState([]);
+
+  // 阶段 六十：网格 ↔ 关系 双视图 + 血缘数据
+  const [视图, set视图] = useState('grid');            // 'grid' | 'lineage'
+  const [数据集列表, set数据集列表] = useState([]);     // listDatasets(200).数据集列表
+  const [血缘提示, set血缘提示] = useState('');         // 数据集元信息加载失败时的降级提示
+  const [选中节点ID, set选中节点ID] = useState('');
 
   const loadBoards = async () => {
     try {
@@ -92,6 +101,7 @@ export default function Dashboard() {
 
   const switchBoard = async (id) => {
     setCurrentId(id);
+    set选中节点ID('');            // 阶段 六十：旧看板的节点在图里已不存在
     await loadDetail(id);
   };
 
@@ -234,6 +244,31 @@ export default function Dashboard() {
     }
   };
 
+  // 阶段 六十：数据集元信息（文件名/行数/列数）只在首次切到关系视图时拉，
+  // 不让默认的网格视图为血缘多背一个请求
+  useEffect(() => {
+    if (视图 !== 'lineage' || 数据集列表.length > 0) return;
+    let 已取消 = false;
+    (async () => {
+      try {
+        const res = await listDatasets(200);
+        if (!已取消) set数据集列表(res?.数据集列表 || []);
+      } catch (e) {
+        if (!已取消) set血缘提示('数据集信息加载失败（关系图将显示为未知数据集）：' + (e.message || e));
+      }
+    })();
+    return () => { 已取消 = true; };
+  }, [视图, 数据集列表.length]);
+
+  // 血缘图数据：看板详情（含图表配置）× 报表列表（含数据集ID）× 数据集列表（含文件名）
+  const 报表索引 = useMemo(() => new Map(allReports.map((r) => [r.报表ID, r])), [allReports]);
+  const 数据集索引 = useMemo(() => new Map(数据集列表.map((d) => [d.数据集ID, d])), [数据集列表]);
+  const 血缘 = useMemo(
+    () => 构建血缘图({ 报表列表: detail?.报表列表 || [], 报表索引, 数据集索引 }),
+    [detail?.报表列表, 报表索引, 数据集索引],
+  );
+  const 选中节点 = 选中节点ID ? 血缘.节点索引[选中节点ID] || null : null;
+
   const reports = detail?.报表列表 || [];
   const addedIds = new Set(reports.map((r) => r.报表ID));
   const addable = allReports.filter((r) => !addedIds.has(r.报表ID));
@@ -282,6 +317,25 @@ export default function Dashboard() {
           <span className="text-sm font-medium text-gray-800">{detail.名称}</span>
           <span className="text-[11px] text-gray-400">共 {reports.length} 张图</span>
           <div className="ml-auto flex items-center gap-1.5">
+            {/* 阶段 六十：网格 / 关系 视图切换 */}
+            <div className="flex items-center rounded-lg border border-gray-200 overflow-hidden">
+              <button
+                title="网格视图"
+                aria-pressed={视图 === 'grid'}
+                onClick={() => set视图('grid')}
+                className={`flex items-center gap-1 px-2.5 py-1.5 text-xs transition-all ${视图 === 'grid' ? 'bg-accent text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+              >
+                <LayoutGrid className="w-3 h-3" /> 网格
+              </button>
+              <button
+                title="关系视图"
+                aria-pressed={视图 === 'lineage'}
+                onClick={() => set视图('lineage')}
+                className={`flex items-center gap-1 px-2.5 py-1.5 text-xs border-l border-gray-200 transition-all ${视图 === 'lineage' ? 'bg-accent text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+              >
+                <Network className="w-3 h-3" /> 关系
+              </button>
+            </div>
             <button
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all"
               onClick={() => { setNewName(detail.名称); setShowRename(true); }}
@@ -322,7 +376,7 @@ export default function Dashboard() {
       )}
 
       {/* 图表网格（智能排版 + 拖拽排序） */}
-      {reports.length > 0 && (
+      {reports.length > 0 && 视图 === 'grid' && (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           {reports.map((item, i) => {
             const cfg = item.报表?.图表配置 || {};
@@ -392,6 +446,53 @@ export default function Dashboard() {
             );
           })}
         </div>
+      )}
+
+      {/* 阶段 六十：关系视图——当前看板的 数据集 → 报表 → 复用字段 血缘图 */}
+      {reports.length > 0 && 视图 === 'lineage' && (
+        <div className="bg-white rounded-2xl shadow-[var(--shadow-card)] p-4">
+          {血缘提示 && <p className="mb-2 text-xs text-amber-600">{血缘提示}</p>}
+          <div className="flex items-center gap-2 flex-wrap mb-1 text-[11px] text-gray-400">
+            <Network className="w-3.5 h-3.5 text-accent" />
+            <span>当前看板：{detail?.名称}</span>
+            <span>· {血缘.统计.数据集数} 个数据集 → {血缘.统计.报表数} 张报表 → {血缘.统计.高价值字段.length} 个复用字段</span>
+            <span className="ml-auto">单击节点看详情 · 可拖拽 / 滚轮缩放</span>
+          </div>
+          {/* 父容器必须给确定高度：h-auto 会让 echarts 拿到 0 高度画不出东西 */}
+          <LineageGraph
+            图数据={血缘}
+            高亮节点ID={选中节点ID}
+            onSelectNode={set选中节点ID}
+            height={520}
+          />
+
+          {血缘.统计.高价值字段.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-gray-100">
+              <p className="text-xs font-medium text-gray-700 mb-2">字段复用榜（被 ≥2 张报表引用 = 值得治理的核心字段）</p>
+              <div className="flex flex-wrap gap-1.5">
+                {血缘.统计.高价值字段.map((f) => (
+                  <button
+                    key={f.节点ID}
+                    onClick={() => set选中节点ID(f.节点ID)}
+                    className="text-[11px] px-2 py-1 rounded-md bg-amber-50 text-amber-700 border border-amber-100 hover:bg-amber-100 transition-colors"
+                  >
+                    {f.字段名} <span className="text-amber-500">×{f.报表数}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 阶段 六十：节点详情抽屉（常驻挂载，节点为空时自身不渲染） */}
+      {视图 === 'lineage' && 选中节点 && (
+        <LineageDrawer
+          节点={选中节点}
+          onClose={() => set选中节点ID('')}
+          onSelectNode={set选中节点ID}
+          onOpenReport={(id) => navigate(`/report/${id}`)}
+        />
       )}
 
       {/* 新建看板弹窗 */}
