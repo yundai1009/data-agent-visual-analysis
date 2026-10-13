@@ -1,5 +1,5 @@
 // electron/main.js
-const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, Tray, Menu } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
@@ -7,11 +7,15 @@ const { 探测空闲端口 } = require('./核心/端口探测');
 const { 读设置, 写设置 } = require('./核心/设置存取');
 const { 构建后端环境 } = require('./核心/后端配置');
 const { 比对版本 } = require('./核心/版本比对');
+const { 设置转表单, 表单转设置, 校验表单, 是否需要重启, 随机强密钥 } = require('./核心/配置模型');
 
 const APP_NAME = '自助式数据分析Agent平台';
 const 数据根目录 = () => path.join(app.getPath('appData'), '数据分析Agent');
+const 配置文件路径 = () => path.join(数据根目录(), 'settings.json');
+const 后端日志路径 = () => path.join(数据根目录(), 'logs', 'backend.log');
 
 let 主窗口 = null;
+let 配置窗口 = null;
 let 后端进程 = null;
 let 托盘 = null;
 // 全局保存本次启动端口（will-navigate 校验用）；声明前置避免 TDZ 隐患
@@ -75,6 +79,42 @@ async function 等后端就绪(port, 超时Ms = 30000, proc = null) {
   return false;
 }
 
+/**
+ * 启动后端进程并等待就绪。失败时结束进程并返回 { ok:false, 错误 }（不弹窗、不退出），
+ * 由调用方决定是「提示 + 打开配置」还是「把错误回给配置窗口」。
+ * 首次启动与「配置保存后重启」共用这一条路径，避免两处逻辑漂移。
+ */
+async function 启动后端进程(超时Ms = 30000) {
+  // 已有进程在跑（重启场景）：先彻底结束再拉新进程，否则端口未释放会绑定失败
+  if (后端进程) {
+    const 旧进程 = 后端进程;
+    后端进程 = null;
+    try { 旧进程.kill(); } catch { /* 可能已退出 */ }
+    await new Promise((r) => {
+      if (旧进程.exitCode !== null) return r();
+      const 计时 = setTimeout(r, 5000);
+      旧进程.once('exit', () => { clearTimeout(计时); r(); });
+    });
+  }
+  let proc;
+  try {
+    proc = spawnBackend(全局端口);
+  } catch (e) {
+    return { ok: false, 错误: e.message };
+  }
+  后端进程 = proc;
+  const ok = await 等后端就绪(全局端口, 超时Ms, proc);
+  if (!ok) {
+    if (后端进程 === proc) 后端进程 = null;
+    try { proc.kill(); } catch { /* 可能已退出 */ }
+    return {
+      ok: false,
+      错误: `后端 ${Math.round(超时Ms / 1000)} 秒内未就绪（常见原因：MySQL 服务未启动、账号或密码错误、端口被占用）`,
+    };
+  }
+  return { ok: true, 错误: '' };
+}
+
 async function 创建主窗口() {
   主窗口 = new BrowserWindow({
     width: 1440, height: 900, minWidth: 1024, minHeight: 700,
@@ -106,6 +146,101 @@ async function 创建主窗口() {
   const 设置 = 读设置(数据根目录());
   if (设置.窗口最大化) 主窗口.maximize();
   主窗口.loadURL(`http://127.0.0.1:${全局端口}`);
+  // 关窗口 = 隐藏到托盘（不退出）；退出只走托盘菜单（before-quit 回收后端进程）
+  主窗口.on('close', (e) => {
+    e.preventDefault();
+    主窗口.hide();
+  });
+  主窗口.on('closed', () => { 主窗口 = null; });
+}
+
+/**
+ * 桌面版配置窗口（数据库模式 / 认证模式）。
+ * 刻意不复用网页版前端：frontend/dist 是网页版与桌面版共用的构建产物，
+ * 桌面专属的「改后端配置」界面不能混进去，否则网页版也会多出一个本机专用入口。
+ * 因此这里加载 electron/配置页/ 下的本地 file:// 页面，用独立 preload 只暴露配置相关 IPC。
+ * 单实例：已打开则前置聚焦。
+ */
+async function 创建配置窗口() {
+  if (配置窗口 && !配置窗口.isDestroyed()) {
+    配置窗口.show();
+    配置窗口.focus();
+    return 配置窗口;
+  }
+  配置窗口 = new BrowserWindow({
+    width: 780, height: 860, minWidth: 660, minHeight: 580,
+    icon: path.join(__dirname, 'build', 'logo.ico'),
+    title: `${APP_NAME} · 配置`,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, '配置页', 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  配置窗口.setMenuBarVisibility(false);
+  配置窗口.once('ready-to-show', () => { if (配置窗口 && !配置窗口.isDestroyed()) 配置窗口.show(); });
+  配置窗口.on('closed', () => { 配置窗口 = null; });
+  配置窗口.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  // 本地页面不允许任何导航（含被 iframe/脚本触发的），避免配置窗口变成任意页面宿主
+  配置窗口.webContents.on('will-navigate', (e) => e.preventDefault());
+  await 配置窗口.loadFile(path.join(__dirname, '配置页', 'index.html'));
+  return 配置窗口;
+}
+
+/** 建托盘（幂等）。菜单模板由被单测覆盖的 托盘菜单(state) 生成，避免测试与实现漂移。 */
+function 建立托盘() {
+  if (托盘 && !托盘.isDestroyed()) return 托盘;
+  const { 托盘菜单 } = require('./核心/托盘逻辑');
+  const 托盘图标路径 = path.join(__dirname, 'build', '托盘图标.png');
+  托盘 = new Tray(fs.existsSync(托盘图标路径) ? 托盘图标路径 : path.join(__dirname, '..', 'logo.ico'));
+  托盘.setToolTip(APP_NAME);
+  托盘.setContextMenu(Menu.buildFromTemplate(
+    托盘菜单({ 是否主窗口可见: !!主窗口 && !主窗口.isDestroyed() && 主窗口.isVisible() }).map(项 => {
+      if (项.type === 'separator') return { type: 'separator' };
+      return {
+        label: 项.label,
+        click: () => {
+          if (项.id === 'show') {
+            // 后端起不来时没有主窗口，此时的「唯一界面」是配置窗口——别让菜单项点了没反应
+            if (主窗口 && !主窗口.isDestroyed()) {
+              if (主窗口.isMinimized()) 主窗口.restore();
+              主窗口.show();
+              主窗口.focus();
+            } else {
+              创建配置窗口();
+            }
+          } else if (项.id === 'config') {
+            创建配置窗口();
+          } else if (项.id === 'quit') {
+            process.env.DAA_TRAY = '1';
+            app.quit();
+          }
+        },
+      };
+    })
+  ));
+  托盘.on('double-click', () => { if (主窗口 && !主窗口.isDestroyed()) { 主窗口.show(); 主窗口.focus(); } });
+  return 托盘;
+}
+
+/**
+ * 按磁盘上的最新配置重启后端，并按需建主窗口 / 重新加载页面。供配置窗口调用。
+ * @returns {Promise<{ok: boolean, 错误: string}>}
+ */
+async function 重启后端() {
+  const 结果 = await 启动后端进程();
+  if (!结果.ok) return 结果;
+  if (主窗口 && !主窗口.isDestroyed()) {
+    主窗口.loadURL(`http://127.0.0.1:${全局端口}`);
+  } else {
+    await 创建主窗口();
+  }
+  return { ok: true, 错误: '' };
 }
 
 // IPC：拖拽取真实路径（webUtils 只能在主进程用）
@@ -130,6 +265,55 @@ ipcMain.handle('desktop:check-update', async () => {
   }
 });
 
+// ===== 桌面版可视化配置（数据库模式 / 认证模式）=====
+// 语义全部落在被单测覆盖的 核心/配置模型.js：这里只负责「读盘 / 落盘 / 开目录 / 重启后端」。
+ipcMain.handle('desktop:config-load', () => ({
+  表单: 设置转表单(读设置(数据根目录())),
+  文件路径: 配置文件路径(),
+}));
+
+// 纯校验（不落盘）：供配置页做输入即时提示；保存时再校验一次，主进程是可信边界
+ipcMain.handle('desktop:config-validate', (_e, 表单) => 校验表单(表单));
+
+ipcMain.handle('desktop:config-save', (_e, 表单) => {
+  const 校验 = 校验表单(表单);
+  if (!校验.ok) return { ok: false, 错误: 校验.错误, 需重启: false };
+  const 旧 = 读设置(数据根目录());
+  // 写设置 合并写并返回合并结果；表单转设置 会对要清理的键给出 null（写设置的删除约定）
+  const 新 = 写设置(数据根目录(), 表单转设置(表单));
+  return { ok: true, 错误: [], 需重启: 是否需要重启(旧, 新) };
+});
+
+ipcMain.handle('desktop:config-gen-secret', () => 随机强密钥());
+
+ipcMain.handle('desktop:config-open-dir', async (_e, 目标) => {
+  const 目录 = 目标 === '日志' ? path.join(数据根目录(), 'logs') : 数据根目录();
+  fs.mkdirSync(目录, { recursive: true });
+  const 失败 = await shell.openPath(目录);
+  return 失败 ? { ok: false, 说明: `打开失败：${失败}` } : { ok: true, 说明: `已打开 ${目录}` };
+});
+
+ipcMain.handle('desktop:restart-backend', async () => {
+  const 结果 = await 重启后端();
+  if (结果.ok) {
+    // 重启成功：收起配置窗口并把主窗口亮出来
+    // （从「启动失败 → 打开配置」进来时本来没有主窗口，重启成功后 重启后端() 已建好）
+    if (配置窗口 && !配置窗口.isDestroyed()) 配置窗口.close();
+    if (主窗口 && !主窗口.isDestroyed()) {
+      if (主窗口.isMinimized()) 主窗口.restore();
+      主窗口.show();
+      主窗口.focus();
+    }
+  }
+  return 结果;
+});
+
+ipcMain.on('desktop:config-close', () => {
+  if (配置窗口 && !配置窗口.isDestroyed()) 配置窗口.close();
+  // 后端起不来时配置窗口是唯一界面，关掉它就等于应用没有可见界面了——直接退出
+  if (!主窗口 || 主窗口.isDestroyed()) app.quit();
+});
+
 // 单实例锁
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -144,43 +328,32 @@ if (!gotLock) {
   app.whenReady().then(async () => {
     try {
       全局端口 = await 探测空闲端口(8000);
-      后端进程 = spawnBackend(全局端口);
-      const ok = await 等后端就绪(全局端口, 30000, 后端进程);
-      if (!ok) {
-        dialog.showErrorBox(`${APP_NAME}`, '后端启动超时，请查看日志：%APPDATA%\\数据分析Agent\\logs\\backend.log');
-        app.quit();
-        return;
+      const 启动 = await 启动后端进程();
+      if (启动.ok) {
+        await 创建主窗口();
+      } else {
+        // 后端起不来的头号原因是配置问题（MySQL 没启动 / 账号密码错 / 端口占用）。
+        // 旧版这里直接 quit，用户只能自己去 %APPDATA% 手改 settings.json——
+        // 现在给「打开配置」这条自救路径：改回 SQLite + 演示模式就能先跑起来。
+        const 选择 = dialog.showMessageBoxSync({
+          type: 'error',
+          title: APP_NAME,
+          message: '后端启动失败，桌面界面无法加载。',
+          detail: `${启动.错误}\n\n可在「配置」中改回 SQLite + 演示模式先启动，或修正 MySQL 连接信息后重试。\n日志：${后端日志路径()}`,
+          buttons: ['打开配置', '退出'],
+          defaultId: 0,
+          cancelId: 1,
+          noLink: true,
+        });
+        if (选择 === 0) {
+          await 创建配置窗口();
+        } else {
+          app.quit();
+          return;
+        }
       }
-      await 创建主窗口();
       // ===== 托盘常驻（Task 3）=====
-      const { Tray, Menu } = require('electron');
-      const { 托盘菜单 } = require('./核心/托盘逻辑');
-      const 托盘图标路径 = path.join(__dirname, 'build', '托盘图标.png');
-      托盘 = new Tray(fs.existsSync(托盘图标路径) ? 托盘图标路径 : path.join(__dirname, '..', 'logo.ico'));
-      托盘.setToolTip(APP_NAME);
-      // 真实菜单由被单测覆盖的 托盘菜单(state) 生成，避免测试与实现漂移
-      托盘.setContextMenu(Menu.buildFromTemplate(
-        托盘菜单({ 是否主窗口可见: !!主窗口 && 主窗口.isVisible() }).map(项 => {
-          if (项.type === 'separator') return { type: 'separator' };
-          return {
-            label: 项.label,
-            click: () => {
-              if (项.id === 'show') {
-                if (主窗口 && !主窗口.isDestroyed()) { if (主窗口.isMinimized()) 主窗口.restore(); 主窗口.show(); 主窗口.focus(); }
-              } else if (项.id === 'quit') {
-                process.env.DAA_TRAY = '1';
-                app.quit();
-              }
-            },
-          };
-        })
-      ));
-      托盘.on('double-click', () => { if (主窗口 && !主窗口.isDestroyed()) { 主窗口.show(); 主窗口.focus(); } });
-      // 关窗口 = 隐藏到托盘（不退出）；退出只走托盘菜单（before-quit 回收后端进程）
-      主窗口.on('close', (e) => {
-        e.preventDefault();
-        主窗口.hide();
-      });
+      建立托盘();
     } catch (e) {
       dialog.showErrorBox(`${APP_NAME}`, `启动失败：${e.message}`);
       app.quit();
@@ -192,6 +365,7 @@ app.on('before-quit', () => {
   // 退出回收（Task 3）：先放行窗口关闭。close 的 preventDefault 会拦截 app.quit()，
   // 不 destroy 的话托盘「退出」会杀掉后端却不退出（harness 已复现），故此处 destroy。
   if (主窗口 && !主窗口.isDestroyed()) 主窗口.destroy();
+  if (配置窗口 && !配置窗口.isDestroyed()) 配置窗口.destroy();
   if (后端进程) { 后端进程.kill(); 后端进程 = null; }
 });
 app.on('window-all-closed', () => {

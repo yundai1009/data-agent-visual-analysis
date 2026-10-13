@@ -27,6 +27,7 @@
       "main.js",
       "preload.js",
       "核心/**/*",
+      "配置页/**/*",
       "build/托盘图标.png",
       "build/logo.ico"
     ],

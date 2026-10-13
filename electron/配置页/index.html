@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<!--
+  CSP：本地配置页不加载任何外部资源，样式与脚本全部内联。
+  刻意写成 'unsafe-inline'：file:// 文档的 CSP 'self' 源匹配行为在 Chromium 下不可靠，
+  一旦外链脚本被静默拦截就是白页，宁可牺牲一层（页面无远程内容、无用户 HTML 注入）。
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:">
+<title>配置 · 自助式数据分析Agent平台</title>
+<style>
+  :root {
+    --蓝: #2563eb; --蓝暗: #1d4ed8; --边: #d8dee9; --字: #1f2937; --次字: #6b7280;
+    --红: #b91c1c; --绿: #15803d; --背景: #f4f6fa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 28px 20px; background: var(--背景); color: var(--字);
+    font: 14px/1.6 "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  }
+  h1 { margin: 0 0 4px; font-size: 19px; }
+  h2 { margin: 0 0 10px; font-size: 15px; }
+  .副标题 { margin: 0 0 16px; color: var(--次字); font-size: 12px; }
+  .卡片 {
+    background: #fff; border: 1px solid var(--边); border-radius: 10px;
+    padding: 16px 18px; margin-bottom: 14px;
+  }
+  .选项 { display: block; padding: 7px 10px; border: 1px solid var(--边); border-radius: 8px; margin-bottom: 8px; cursor: pointer; background: #fbfcfe; }
+  .选项:hover { border-color: #9db6ef; }
+  .选项 input { margin-right: 8px; vertical-align: -1px; }
+  .选项 b { font-weight: 600; }
+  .说明 { color: var(--次字); font-size: 12px; }
+  fieldset { border: 1px dashed var(--边); border-radius: 8px; padding: 12px 14px 4px; margin: 6px 0 0; }
+  legend { color: var(--次字); font-size: 12px; padding: 0 6px; }
+  .行 { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .行 > label:first-child { width: 132px; flex: none; color: var(--次字); }
+  input[type="text"], input[type="password"], input[type="number"] {
+    flex: 1; padding: 6px 9px; border: 1px solid var(--边); border-radius: 6px;
+    font: inherit; background: #fff; color: var(--字); min-width: 0;
+  }
+  input:focus { outline: none; border-color: var(--蓝); box-shadow: 0 0 0 2px rgba(37, 99, 235, .15); }
+  input[type="number"] { flex: 0 0 110px; }
+  button {
+    font: inherit; padding: 6px 13px; border: 1px solid var(--边); border-radius: 6px;
+    background: #fff; color: var(--字); cursor: pointer; white-space: nowrap;
+  }
+  button:hover:not(:disabled) { border-color: var(--蓝); color: var(--蓝); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.主 { background: var(--蓝); border-color: var(--蓝); color: #fff; padding: 8px 20px; }
+  button.主:hover:not(:disabled) { background: var(--蓝暗); border-color: var(--蓝暗); color: #fff; }
+  .底部 { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
+  .状态 { flex: 1; font-size: 13px; color: var(--次字); min-height: 20px; }
+  .状态.错误 { color: var(--红); }
+  .状态.成功 { color: var(--绿); }
+  #错误列表 { margin: 10px 0 0; padding-left: 20px; color: var(--红); font-size: 13px; }
+  #错误列表:empty { display: none; }
+  code { background: #eef2f8; padding: 1px 6px; border-radius: 4px; font-size: 12px; word-break: break-all; }
+</style>
+</head>
+<body>
+  <h1>桌面版配置</h1>
+  <p class="副标题">数据库模式 / 认证模式 —— 等价于手写 <code id="配置文件">settings.json</code>，保存后由桌面端重启后端生效。</p>
+
+  <section class="卡片">
+    <h2>数据库模式</h2>
+    <label class="选项">
+      <input type="radio" name="数据库模式" value="sqlite">
+      <b>SQLite</b><span class="说明">　本机单文件数据库，零配置、免安装，开箱即用</span>
+    </label>
+    <label class="选项">
+      <input type="radio" name="数据库模式" value="mysql">
+      <b>MySQL</b><span class="说明">　与网页版共用同一个库，账号 / 数据集 / 报表实时同步</span>
+    </label>
+    <fieldset id="MySQL字段">
+      <legend>MySQL 连接</legend>
+      <div class="行"><label>主机</label><input type="text" id="MySQL主机" placeholder="127.0.0.1"></div>
+      <div class="行"><label>端口</label><input type="number" id="MySQL端口" min="1" max="65535" step="1" placeholder="3306"></div>
+      <div class="行"><label>用户名</label><input type="text" id="MySQL用户" placeholder="daa_app"></div>
+      <div class="行"><label>密码</label><input type="password" id="MySQL密码" placeholder="数据库账号密码"><button type="button" data-切换密码="MySQL密码">显示</button></div>
+      <div class="行"><label>库名</label><input type="text" id="MySQL库名" placeholder="daa"></div>
+    </fieldset>
+  </section>
+
+  <section class="卡片">
+    <h2>认证模式</h2>
+    <label class="选项">
+      <input type="radio" name="认证模式" value="demo">
+      <b>演示模式</b><span class="说明">　免登录、无鉴权，仅监听本机 127.0.0.1，适合单机试用</span>
+    </label>
+    <label class="选项">
+      <input type="radio" name="认证模式" value="real">
+      <b>真实认证</b><span class="说明">　账号密码登录 + JWT，与网页版同一套账号体系</span>
+    </label>
+    <fieldset id="认证字段">
+      <legend>真实认证参数</legend>
+      <div class="行"><label>JWT 密钥</label><input type="password" id="JWT密钥" placeholder="至少 32 个字符"><button type="button" id="生成密钥">生成强密钥</button><button type="button" data-切换密码="JWT密钥">显示</button></div>
+      <div class="行"><label>预置管理员口令</label><input type="password" id="预置口令" placeholder="首次登录用的 admin 口令"><button type="button" data-切换密码="预置口令">显示</button></div>
+      <p class="说明">密钥只存在于本机配置文件中，不随安装包分发；请勿把配置文件提交到代码仓库。</p>
+    </fieldset>
+  </section>
+
+  <section class="卡片">
+    <h2>配置文件</h2>
+    <p class="说明"><code id="文件路径">读取中…</code></p>
+    <button type="button" id="打开目录">打开所在目录</button>
+    <button type="button" id="打开日志">打开后端日志</button>
+  </section>
+
+  <ul id="错误列表"></ul>
+
+  <div class="底部">
+    <span class="状态" id="状态">正在读取配置…</span>
+    <button type="button" class="主" id="保存" disabled>保存并重启后端</button>
+    <button type="button" id="关闭">关闭</button>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+  var API = window.配置API;           // 由 配置页/preload.js 通过 contextBridge 注入
+  var $ = function (id) { return document.getElementById(id); };
+  var 字段 = {
+    主机: 'MySQL主机', 端口: 'MySQL端口', 用户: 'MySQL用户',
+    密码: 'MySQL密码', 库名: 'MySQL库名',
+    JWT密钥: 'JWT密钥', 预置管理员口令: '预置口令',
+  };
+
+  function 读表单() {
+    var 表单 = { 数据库模式: '', 认证模式: '' };
+    var 选中库 = document.querySelector('input[name="数据库模式"]:checked');
+    var 选中认 = document.querySelector('input[name="认证模式"]:checked');
+    表单.数据库模式 = 选中库 ? 选中库.value : '';
+    表单.认证模式 = 选中认 ? 选中认.value : '';
+    Object.keys(字段).forEach(function (k) { 表单[k] = $(字段[k]).value; });
+    return 表单;
+  }
+
+  function 填表单(表单) {
+    表单 = 表单 || {};
+    document.querySelector('input[name="数据库模式"][value="' + (表单.数据库模式 || 'sqlite') + '"]').checked = true;
+    document.querySelector('input[name="认证模式"][value="' + (表单.认证模式 || 'demo') + '"]').checked = true;
+    Object.keys(字段).forEach(function (k) { $(字段[k]).value = 表单[k] == null ? '' : String(表单[k]); });
+    同步可见性();
+  }
+
+  function 同步可见性() {
+    var 表单 = 读表单();
+    $('MySQL字段').hidden = 表单.数据库模式 !== 'mysql';
+    $('认证字段').hidden = 表单.认证模式 !== 'real';
+  }
+
+  function 显示错误(列表) {
+    var 容器 = $('错误列表');
+    容器.textContent = '';
+    (列表 || []).forEach(function (文本) {
+      var li = document.createElement('li');
+      li.textContent = 文本;      // 不用 innerHTML：所有文案都来自主进程/常量，避免注入面
+      容器.appendChild(li);
+    });
+  }
+
+  function 设状态(文本, 类名) {
+    var 节点 = $('状态');
+    节点.textContent = 文本;
+    节点.className = '状态' + (类名 ? ' ' + 类名 : '');
+  }
+
+  var 校验计时 = null;
+  function 触发校验() {
+    clearTimeout(校验计时);
+    校验计时 = setTimeout(function () {
+      API.校验表单(读表单()).then(function (结果) { 显示错误(结果.错误); });
+    }, 250);
+  }
+
+  document.addEventListener('input', function () { 同步可见性(); 触发校验(); });
+  document.addEventListener('change', function () { 同步可见性(); 触发校验(); });
+
+  Array.prototype.forEach.call(document.querySelectorAll('[data-切换密码]'), function (按钮) {
+    按钮.addEventListener('click', function () {
+      var 输入 = $(按钮.getAttribute('data-切换密码'));
+      var 隐藏 = 输入.type === 'password';
+      输入.type = 隐藏 ? 'text' : 'password';
+      按钮.textContent = 隐藏 ? '隐藏' : '显示';
+    });
+  });
+
+  $('生成密钥').addEventListener('click', function () {
+    API.生成强密钥().then(function (密钥) {
+      $('JWT密钥').value = 密钥;
+      $('JWT密钥').type = 'text';
+      设状态('已生成 32 字节随机密钥，保存后生效。');
+      触发校验();
+    });
+  });
+
+  $('打开目录').addEventListener('click', function () {
+    API.打开目录('配置').then(function (结果) { 设状态(结果.说明); });
+  });
+  $('打开日志').addEventListener('click', function () {
+    API.打开目录('日志').then(function (结果) { 设状态(结果.说明); });
+  });
+
+  $('保存').addEventListener('click', function () {
+    var 按钮 = $('保存');
+    按钮.disabled = true;
+    显示错误([]);
+    API.保存配置(读表单()).then(function (结果) {
+      if (!结果.ok) {
+        显示错误(结果.错误);
+        设状态('未保存：先修正上面的问题。', '错误');
+        按钮.disabled = false;
+        return;
+      }
+      if (!结果.需重启) {
+        设状态('已保存（本次修改无需重启后端）。', '成功');
+        按钮.disabled = false;
+        return;
+      }
+      设状态('已写入配置，正在重启后端…');
+      API.重启后端().then(function (重启) {
+        if (重启.ok) {
+          设状态('后端已按新配置重启。', '成功');
+        } else {
+          设状态('后端重启失败：' + 重启.错误, '错误');
+          按钮.disabled = false;
+        }
+      });
+    });
+  });
+
+  $('关闭').addEventListener('click', function () { API.关闭配置窗口(); });
+
+  // 首屏回填
+  API.读取配置().then(function (结果) {
+    填表单(结果.表单);
+    $('文件路径').textContent = 结果.文件路径;
+    $('配置文件').textContent = 结果.文件路径;
+    设状态('读取完成。修改数据库或认证配置需要重启后端生效。');
+    $('保存').disabled = false;
+    触发校验();
+  });
+})();
+</script>
+</body>
+</html>
