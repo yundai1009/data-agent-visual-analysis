@@ -1,4 +1,20 @@
 # -*- coding: utf-8 -*-
+# 一句话定位：作品集/文档用的一次性截图脚本（非运行时路径）——起一个临时 demo 服务、用 API 造数据，
+# 再用 Playwright 截 6 张页面图到 `docs/screenshots/`。
+#
+# 做了什么：`PAGES` 列出 6 组（文件名, 路由, 说明）；`main` 用 `subprocess.Popen` 起 `uvicorn api.main:app`
+# （端口 `PORT=8021`），`wait_health` 轮询 `/health` 就绪后依次 POST `/datasets/upload`、
+# `/reports/generate`、`/dashboards` 造数据，最后逐页 `page.screenshot`。
+#
+# 为什么这么做：
+#   - 必须真浏览器而不是抓 HTML：图表由前端 JS 渲染，静态响应里没有图，所以要 `wait_for_timeout(2200)` 等渲染。
+#   - 全程指向临时资源（`DAA_SQLITE_PATH`→tempdir 的 `shot_demo.db`、`FRONTEND_DIST`→`frontend/dist-demo`、`AUTH_ENABLED=false`），截图流程不碰生产库、不碰生产 dist。
+#   - 服务手动托管并在 `finally` 里 terminate/kill：脚本中途崩了也不能把 8021 端口的进程留在后台。
+#
+# 关键约定与坑：
+#   - 前置条件：`frontend/dist-demo` 必须先用 `npm run build -- --mode demo --outDir dist-demo` 构建好，否则页面是空白。
+#   - `04-report` 那条路由要 `path.format(rid=rid)` 填报表ID，ID 来自 `/reports/generate` 的响应。
+#   - 截图参数固定为 1440×900 视口、`device_scale_factor=1.5`、`full_page=False`（不是整页长图）；产物会被覆盖。
 """作品集截图生成：起 demo 服务 → API 造数据 → Playwright 截 6 张页面图。
 
 用法：python scripts/capture_screenshots.py

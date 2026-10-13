@@ -1,4 +1,19 @@
 # -*- coding: utf-8 -*-
+# 一句话定位：运维用的一次性迁移脚本（非运行时路径）——把 SQLite `datasets.df_json` 里的数据本体
+# 落成 parquet 文件并把路径写回 `datasets.data_path`；幂等，可反复重跑。
+#
+# 做了什么：`迁移` 扫出 `df_json` 非空的记录，用 `sr._parquet路径` 定目标文件、`sr._df_from_json`
+# 还原 DataFrame 后 `to_parquet`；`_df_宽松化` 给 object 列兜底；`main` 提供 `--dry-run`/`--clear-df-json`。
+#
+# 为什么这么做：
+#   - 默认不清 df_json：它是 parquet 丢失/损坏时唯一的灾难恢复副本；`--clear-df-json` 才清，且只清 parquet 文件确实已存在的行。
+#   - object 列先 `astype(str)` 重试、单行失败不中止：真实库 145 条里 2 条混排了数字与全角逗号字符串，pyarrow 严格类型检查会抛异常并中止整轮迁移。
+#   - 写 `data_path` 走 `sr._write_lock`：与在线请求共用同一把写锁，避免迁移和运行中的服务抢连接。
+#
+# 关键约定与坑：
+#   - 幂等判据是"`data_path` 非空 且 该文件存在 → 跳过"，所以删掉 parquet 文件即可让该条重迁。
+#   - 返回 `{"迁移": n, "跳过": n, "失败": [{"dataset_id", "原因"}]}`；`main` 在有失败时返回退出码 1。
+#   - 失败项保留 `df_json` 可重跑；目标路径由 `dataset_id` 决定，重跑是覆盖，不会产生重复文件。
 """阶段 54：把 datasets.df_json 里的数据本体一次性落成 parquet 文件。
 
 幂等：已迁移（data_path 非空且文件存在）的记录跳过，可重复运行。

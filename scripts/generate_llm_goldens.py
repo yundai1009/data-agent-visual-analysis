@@ -1,4 +1,19 @@
 # -*- coding: utf-8 -*-
+# 一句话定位：测试基建脚本（阶段 50，非运行时路径）——用"脚本响应"冒充合规的 LLM 供应商，生成 VCR 黄金样本。
+#
+# 做了什么：先把 `LLM_VCR_RECORD` 置 1，再用 `importlib.util.spec_from_file_location` 从文件路径加载
+# `tests/backend/test_llm_vcr.py`（模块名 `_vcr_test_source`），最后调 `模块.录制黄金样本(_SCENARIOS)`
+# 跑 `react_multi_round`/`degrade_round1`/`tool_call_direct` 三个场景，把 cassette 落盘。
+#
+# 为什么这么做：
+#   - 用脚本响应而非真实 LLM：CI 无 key 无网络，黄金样本必须离线确定、可复现；真实响应留给有 key 的机器另行录制覆盖。
+#   - 按文件路径加载测试模块而不是 `import tests.backend.test_llm_vcr`：站点包里也有个 `tests`，且 pytest 侧导入名与本脚本导入名不一致，按路径加载才避得开命名冲突。
+#   - 任一场景 0 条 cassette 就返回 1：宁可失败，也不产出"假绿"的空样本集。
+#
+# 关键约定与坑：
+#   - `LLM_VCR_RECORD=1` 必须在加载测试模块之前设置（`LLMCassette` 在 `__init__` 时读取它）。
+#   - 本脚本会覆盖 `tests/cassettes/` 下的黄金样本，跑完先看 `git diff tests/cassettes/` 再提交。
+#   - 生成后应跑 `python -m pytest tests/backend/test_llm_vcr.py -q` 回放验证。
 """生成 LLM VCR 黄金样本（阶段 50）：用脚本响应替代真实 LLM，落盘 cassette。
 
 背景

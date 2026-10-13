@@ -1,4 +1,20 @@
 # -*- coding: utf-8 -*-
+# 一句话定位：运维用的一次性数据迁移脚本（非运行时路径）——把生产 SQLite 的业务表搬到 MySQL
+# `daa` 库；MySQL 只存元信息，数据本体仍是文件系统里的 parquet（`datasets.data_path` 只存路径）。
+#
+# 做了什么：`发现表清单` 从 `sqlite_master` 动态取表；`列类型映射`+`_建表DDL` 生成 MySQL DDL；
+# `转时间值` 把 ISO 串折成 naive UTC；`_迁表` 按 `_批行数`/`_批字节` 分批 upsert；`迁移结果` 出报告。
+#
+# 为什么这么做：
+#   - 不用 ORM：这里读的是 `PRAGMA table_info` 的真实列类型，ORM 的模型类表达不了"任意表任意列"这种迁移场景，直接拼 DDL/DML 才能做到源库表增减不改脚本。
+#   - 源库用 `mode=ro` URI 打开（`_开源连接`）：迁移脚本宁可失败也不能写坏生产 SQLite；dry-run 更彻底，连 MySQL 都不连。
+#   - 时间值非法时落 NULL 并留痕，而不是回滚整表：单值脏数据不该拖死其余几十万行。
+#
+# 关键约定与坑：
+#   - 源库时间列是 ISO 串：带 `+00:00` 的会被强制折成 naive UTC（MySQL `DATETIME` 无时区语义，留 offset 会被会话时区二次偏移）。
+#   - 默认跳过 `datasets.df_json`（见 `_默认跳过列`），要迁得显式加 `--include-df-json`。
+#   - 源表无主键、或主键含 NULL 的行会被跳过，只进警告不进库（MySQL 主键不可为 NULL）。
+#   - `_upsertSQL` 用 `VALUES(col)` 写法：MySQL 8.0.20+ 已标记弃用，当前 8.0.23 仍可用，别当 bug 改掉。
 """阶段 54 · SQLite → MySQL 数据迁移（幂等）。
 
 把生产 SQLite 的业务表迁到 MySQL ``daa`` 库：MySQL 存元信息，数据本体（parquet
