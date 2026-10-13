@@ -1,24 +1,7 @@
 import { useRef, useState, useEffect } from 'react';
 import { Download, Copy } from 'lucide-react';
-
-// 藏青系协调色板 + 主题常量（阶段 13 重设计：与 UI 主色统一）
-const COLORS = ['#0f4c81', '#3d7bb8', '#5b8cb8', '#8aa9c4', '#b45309', '#0f766e', '#64748b', '#334155'];
-const CHART_TEXT_STYLE = { fontFamily: 'Noto Sans SC, Microsoft YaHei, sans-serif', fontSize: 12, color: '#475569' };
-const CHART_TOOLTIP = {
-  backgroundColor: '#ffffff',
-  borderColor: '#e2e8f0',
-  borderWidth: 1,
-  textStyle: { fontFamily: 'Noto Sans SC, Microsoft YaHei, sans-serif', fontSize: 12, color: '#1e293b' },
-  extraCssText: 'box-shadow: 0 8px 16px -8px rgba(15,76,129,.15); border-radius: 8px;',
-};
-
-// P0 加固：echarts tooltip 内容按 HTML 渲染，自定义 formatter 返回值须自行转义，
-// 否则上传数据中的 <img onerror=...> 可触发存储型 XSS（实测审计 P0-6）。
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, (c) => (
-    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
-  ));
-}
+// 阶段 六十：色板/主题/转义抽到 utils/图表主题.js，与 LineageGraph 共用单一来源
+import { COLORS, CHART_TEXT_STYLE, CHART_TOOLTIP, 转义HTML as escapeHtml } from '../utils/图表主题';
 
 export default function EChartsChart({ chartType, chartConfig, height = 320 }) {
   const containerRef = useRef(null);
