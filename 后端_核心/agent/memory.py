@@ -19,7 +19,7 @@
 - 本文件负责：
   1. 保存记忆：分析完成后把「需求」向量化后存入 chromadb（全量文本另存 documents）
   2. 检索记忆：新需求到来时按 user_id 过滤 + 向量相似度取 top-k
-  3. 容量治理：清理记忆（超上限删最旧）/ 删除用户记忆（注销时清空）
+  3. 容量治理：清理记忆（单用户配额 + 全局硬上限，按水位摊销扫描）/ 删除用户记忆（注销时清空）
   4. few-shot 格式化：把历史记忆拼成 prompt 文本给 LLM 参考
   5. 阶段 61：embedding 指纹（建库时写入，换模型可检出）+ 只读一致性校验（启动硬闸）
 - 面试要点：这是典型的 RAG（检索增强生成）+ 长期记忆设计；
@@ -33,7 +33,7 @@ import logging
 import os
 import threading
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import chromadb
 from chromadb.config import Settings
@@ -61,10 +61,10 @@ _collection: Optional[chromadb.Collection] = None
 # 阶段 61 修正[预检1·P0]：必须是 **RLock**——_get_collection 持锁内再调 _get_client，
 #   普通 Lock 不可重入，会永久死锁（且死锁发生在无 IO 的临界区里，栈上看不出原因）。
 _记忆锁 = threading.RLock()
-# 阶段 61 Task 2 的占位：容量治理摊销水位。
-#   【死代码说明】Task 2 的 清理记忆 会读它来做分批摊销；在 Task 2 落地之前
-#   全仓没有任何读取点（grep `_清理水位` 只有这一行赋值）。刻意保留而不是删除，
-#   免得 Task 2 重新发明一个同名字段时漏掉命名/语义约定。
+# 阶段 61 Task 2：容量治理摊销水位（本模块唯一的读取点是 清理记忆）。
+#   语义：库里的总条数达到它才允许做一次全库 col.get() 扫描；扫完抬到
+#         「当前总数 + MEMORY_CLEAN_STEP」，于是每攒够 STEP 条写入才扫一次。
+#   进程内状态（不落盘）：重启后水位归 0，只会多扫一次，不会漏扫。
 _清理水位 = 0
 # 阶段 61（决策 D8）：最近一次失败原因——把「静默降级」变成 /healthz.memory 可见
 _记忆状态: Dict[str, Any] = {"最近错误": ""}
@@ -442,25 +442,94 @@ def 检索相似记忆(
         return []
 
 
-def 清理记忆(keep: int = 5000) -> int:
-    """批次4：记忆容量上限——超过 keep 条时删除最旧的（按 created_at 排序）。返回删除条数。"""
+def 清理记忆(
+    每人上限: Optional[int] = None,
+    全局上限: Optional[int] = None,
+) -> int:
+    """容量治理：单用户配额 + 全库硬上限，超限删最旧的。返回**本次**删除的总条数。
+
+    做了什么
+    ========
+    1. 水位门控（摊销扫描）：总条数 < `_清理水位` 时直接返回，连 ``col.get()`` 都不调；
+       扫描后把水位抬到 ``total + max(1, EnvConfig.MEMORY_CLEAN_STEP)``。
+    2. 单用户裁剪：按 metadata 的 ``user_id`` 分组，每组按 ``created_at`` 升序
+       （旧的在前）删掉超出「每人上限」的最旧条目。
+    3. 全局硬上限：裁完仍 > 全局上限时，再按全局 ``created_at`` 升序删最旧的直到达标。
+
+    为什么这么取舍
+    ==============
+    · **为什么按 user_id 分层**：原实现只有「全库超 keep 就删最旧的」，多租户下等于
+      「谁用得少谁的历史先被删光」，而且被删的永远是早期用户——既不公平也不可预期。
+      分层之后重用户只会挤掉**自己**的旧记忆（别人的配额一分不动）。
+    · **为什么水位摊销**：`col.get()` 会把整库 metadatas 拉进内存，是本函数唯一的
+      O(全库) 成本；而它在编排器里是「每保存一条记忆就跑一次」，于是每写一条就全扫一次
+      = O(n) 写放大，n 越大越慢（越省着用越容易在关键时刻卡住）。摊销后每次写入的
+      期望成本降到 O(n/step)。代价要说清楚：**两个上限都是软的**——两次扫描之间最多
+      可能超 MEMORY_CLEAN_STEP 条。不影响正确性，因为超出的只是「最旧的那几条晚点被删」，
+      检索（top-3 按相似度）本来就用不到它们。
+    · **为什么保留全局硬上限**：分层只约束「单个用户」，一个失控/恶意账号仍可能把全库
+      写满到磁盘上限；全局水位是最后一道兜底，删的仍是全库最旧的那些。
+    · **为什么不做 per-provider 分库**：记忆库是一个语义空间（见 llm_client.embedding_settings），
+      按 provider 拆成多个 collection 之后，删除用户记忆与容量治理都要遍历多库、
+      记忆被切碎（同一份历史散在几个库里）、跨 provider 召回彻底失效——为省一次
+      col.get() 而破坏整条链路的可解释性，不划算。
+    · **失败兜底**：记忆清理失败绝不能打断分析主流程，所以任何异常都只 warning + 返回 0。
+    """
+    # 【关键行】两个上限必须在**调用时**读 EnvConfig，不能缓存成默认参数。
+    # 为什么：def 的默认值在模块导入那一刻就求值了，之后测试 monkeypatch EnvConfig
+    #   或运维改 .env 重启，读到的都会是旧值——「配置项存在但怎么改都不生效」最难查。
+    每人 = 每人上限 if 每人上限 is not None else EnvConfig.MEMORY_PER_USER_LIMIT
+    全局 = 全局上限 if 全局上限 is not None else EnvConfig.MEMORY_TOTAL_LIMIT
+    global _清理水位
     try:
         col = _get_collection()
         total = col.count()
-        if total <= keep:
+        # 【关键行】水位没到就直接返回——这里是 O(1) 的 count()，不碰 col.get()。
+        # 编排器每保存一条记忆就调一次本函数；不加这道门就是每次写入一次全库扫描。
+        if total < _清理水位:
             return 0
         data = col.get(include=["metadatas"])
+        # 扫描结束（或放弃：本次扫完就抬水位，无论有没有删到东西）后推进水位，
+        # 让接下来 MEMORY_CLEAN_STEP 次写入都只付一次 count() 的钱。
+        # max(1, ...) 是防呆：步长被配成 0 时会退化成每次都扫，等于没做摊销。
+        _清理水位 = total + max(1, EnvConfig.MEMORY_CLEAN_STEP)
+
         ids = data.get("ids") or []
         metas = data.get("metadatas") or []
-        pairs = []
+        # 按 (created_at, id) 分组；带上 id 做次级排序键——时间戳相同的条目（同秒连续
+        # 保存）必须有确定的删除顺序，否则测试和线上行为都不可复现。
+        分组: Dict[str, List[Tuple[str, str]]] = {}
         for i, m in enumerate(metas):
-            pairs.append((str(m.get("created_at", "") if m else ""), ids[i]))
-        pairs.sort()  # 旧 → 新
-        drop_ids = [pid for _, pid in pairs[: total - keep]]
-        if drop_ids:
-            col.delete(ids=drop_ids)
-        return len(drop_ids)
+            md = m or {}
+            分组.setdefault(str(md.get("user_id", "")), []).append(
+                (str(md.get("created_at", "")), str(ids[i]))
+            )
+        待删: List[str] = []
+        已选 = set()
+        for 条目 in 分组.values():
+            条目.sort()  # 旧 → 新
+            if len(条目) > 每人:
+                # 只裁这一组自己超出的部分：别人的记忆一条都不会进 待删。
+                for _, pid in 条目[: len(条目) - 每人]:
+                    待删.append(pid)
+                    已选.add(pid)
+        # 全局硬上限：从「还没被选中删」的条目里按时间继续删最旧的。
+        # 为什么要排除 已选：重复 id 再进一次 delete 会让返回条数虚高（删了 5 条报 6 条），
+        #   这是最容易被误判成「清理有 bug」的地方。
+        剩余数 = total - len(待删)
+        if 剩余数 > 全局:
+            全库序 = sorted(
+                (str((m or {}).get("created_at", "")), str(ids[i]))
+                for i, m in enumerate(metas)
+                if str(ids[i]) not in 已选
+            )
+            待删.extend(pid for _, pid in 全库序[: 剩余数 - 全局])
+        # 一次性删：N 次 delete(ids=[单条]) 会把索引维护成本放大 N 倍。
+        if 待删:
+            col.delete(ids=待删)
+        return len(待删)
     except Exception as exc:
+        # 记忆是可降级依赖：清理失败只记 warning，绝不打断分析主流程。
         logger.warning("清理记忆失败: %s", exc)
         return 0
 

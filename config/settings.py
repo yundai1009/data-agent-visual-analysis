@@ -37,6 +37,22 @@ class EnvConfig:
     #   而 401 只会 warning，用户侧表现为「某些用户的记忆功能从头到尾没工作过」。
     # 留空回落 LLM_API_KEY：同供应商场景不用多配一个变量。
     LLM_EMBEDDING_API_KEY = (os.getenv("LLM_EMBEDDING_API_KEY") or "").strip()
+    # 阶段 61 Task 2：向量记忆容量治理（清理记忆 的两个上限 + 摊销步长）。
+    # 为什么默认 200（单用户）：检索只取 top-3，一个人的第 200 条记忆对 few-shot 的边际
+    #   价值已经接近 0；而 200 条也足够覆盖「同一用户几百次不同分析」的真实使用量。
+    #   更重要的是它能挡住单个重用户独吞全库——5000 / 200 = 25 个重用户才会把全局写满，
+    #   原来只有一个全局 5000 上限时，一个刷数据的账号就能把早期用户的历史全挤掉。
+    # 为什么默认 5000（全局）：这就是重构前 `清理记忆(keep=5000)` 的硬编码值，保持默认
+    #   = 老部署的容量行为不变（可回滚、可对比）。5000 条 metadata 量级仍是「一次
+    #   col.get() 几十毫秒、整库几十 MB」，所以全库扫描这条退路还养得起。
+    # 为什么默认 50（步长）：全库 col.get() 是本模块唯一的 O(全库) 成本，每写一条记忆
+    #   就扫一次 = O(n) 写放大；攒够 50 条才扫一次 → 摊销到每次写入约 O(n/50)。
+    #   代价是单用户上限是**软的**：两次扫描之间最多超 50 条（真实场景无感，因为超出的
+    #   只是最旧的几条没被及时删掉，不影检索正确性）。取 50 而不是 500：50 次写入的
+    #   间隔在低流量部署上也就是几分钟，水位不会被长期推开而让上限形同虚设。
+    MEMORY_PER_USER_LIMIT = int(os.getenv("MEMORY_PER_USER_LIMIT", "200"))
+    MEMORY_TOTAL_LIMIT = int(os.getenv("MEMORY_TOTAL_LIMIT", "5000"))
+    MEMORY_CLEAN_STEP = int(os.getenv("MEMORY_CLEAN_STEP", "50"))
     LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "60"))
     LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 

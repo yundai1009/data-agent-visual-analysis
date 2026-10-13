@@ -391,8 +391,8 @@ def 编排Agent(
                             from 后端_核心.profile import 生成数据画像
                             画像摘要 = f"{画像.get('行数',0)}行/{画像.get('列数',0)}列"
                             保存记忆(user_id, 分析需求, intent_override, 画像摘要)
-                            from 后端_核心.agent.memory import 清理记忆  # 批次4：容量上限
-                            清理记忆(5000)
+                            from 后端_核心.agent.memory import 清理记忆  # 阶段 61 Task 2：容量上限改由配置决定（单用户配额 + 全库硬上限 + 水位摊销）
+                            清理记忆()
                         except Exception as exc:
                             logger.warning("保存长期记忆失败: %s", exc)
 
