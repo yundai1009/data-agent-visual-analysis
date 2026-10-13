@@ -1,0 +1,9 @@
+# electron/.gitignore
+node_modules/
+dist-backend/
+release/
+*.log
+# PyInstaller 工作目录（151MB 中间产物；根 .gitignore 的 build/ 已精确为 /build/，
+# 故 electron/build/ 下的这个子目录需在此显式忽略，否则 npm run dist 后会污染 git status）
+build/daa-backend/
+package-lock.json

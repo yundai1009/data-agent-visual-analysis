@@ -15,7 +15,8 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 *.egg-info/
-build/
+/build/
+# PC 端 electron/build/（托盘图标、安装说明）需要入库，故用 /build/ 精确限定根目录
 
 # ──────────────────────────────────────────────
 # 3. 虚拟环境
@@ -102,3 +103,5 @@ scripts/.smoke/
 # 13. SDD 技能账本（subagent 协作进度，非项目产物）
 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 .superpowers/
+
+electron/dist-backend/

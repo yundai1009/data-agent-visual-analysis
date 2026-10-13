@@ -1,0 +1,57 @@
+{
+  "name": "daa-desktop",
+  "productName": "自助式数据分析Agent平台",
+  "version": "0.1.0",
+  "description": "自助式数据分析 Agent 平台 · 桌面版",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test \"tests/**/*.test.js\"",
+    "build:backend": "pyinstaller --clean --noconfirm build-backend/daa-backend.spec",
+    "dist": "npm run build:backend && electron-builder --win nsis portable",
+    "dist:dir": "npm run build:backend && electron-builder --win dir"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.daa.desktop",
+    "productName": "自助式数据分析Agent平台",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "核心/**/*",
+      "build/托盘图标.png",
+      "build/logo.ico"
+    ],
+    "extraResources": [
+      { "from": "dist-backend/", "to": "backend/", "filter": ["**/*", "!**/data/daa.db", "!**/data/uploads/**", "!**/data/parquet/**"] },
+      { "from": "../frontend/dist/", "to": "backend/_internal/frontend/dist/", "filter": ["**/*"] }
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "icon": "../logo.ico"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-${arch}-portable.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "自助式数据分析Agent平台",
+      "perMachine": false,
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    }
+  }
+}
