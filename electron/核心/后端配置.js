@@ -1,19 +1,12 @@
-// electron/核心/后端配置.js
-/**
- * 根据用户设置构建后端进程的环境变量（纯逻辑，便于单测；不依赖 electron API）。
- *
- * 默认形态（零配置开箱即用）：
- *   DB_BACKEND=sqlite（本地 %APPDATA% 库）+ AUTH_ENABLED=false（演示模式，回环免认证）
- *
- * 用户可在 userData/settings.json 里覆盖：
- *   { "数据库": { "模式": "mysql", "主机": ..., "端口": ..., "用户": ..., "密码": ..., "库名": ... } }
- *     → 注入 DB_BACKEND=mysql 与 MYSQL_*（网页版/桌面版连同一个库，账号数据天然同步）
- *   { "认证模式": "real" }
- *     → AUTH_ENABLED=true + JWT_SECRET_KEY（强密钥）+ 预置管理员口令
- *       （后端启动安全自检要求：认证开启时这两项必须显式非默认值）
- */
-
-/** 默认：sqlite + 演示模式的后端环境变量补丁。 */
+// 把用户设置翻译成后端子进程的环境变量（纯函数，不依赖 electron，可直接单测）。
+// 做了什么：构建后端环境(基础环境, 设置) 先叠一层 默认补丁（DB_BACKEND=sqlite / AUTH_ENABLED=false / HOST=127.0.0.1），
+//   再按设置注入 API_PORT 与 PORT、mysql 模式下的 MYSQL_*、real 认证下的 AUTH_ENABLED / JWT_SECRET_KEY / SEED_ADMIN_PASSWORD。
+// 为什么在这里拼 env 而不是让后端自己去读桌面版的 settings.json：后端是网页版与桌面版共用的同一份代码，
+//   给它开一条「读桌面版私有目录」的配置路径，就等于把桌面版特有的东西焊进后端；env 是两版共有的进程契约，且外部可观测。
+// 为什么默认是 sqlite + 演示模式：零配置开箱即用是新装桌面版的硬要求，MySQL 与真实认证是可选增强，不能变成前置条件。
+// 坑：API_PORT 与 PORT 都写同一个值——后端自检与 uvicorn 历史上读的键不统一，两个都写才能保证哪个生效结果都一样。
+// 坑：mysql 分支只在 模式==='mysql' 时才覆盖 DB_BACKEND，其它未知模式会静默沿用默认 sqlite，不报错也不提示（校验在 配置模型.js 里做）。
+// 坑：认证开启时若密钥/口令为空就不注入这两个键——特意留给后端自检去报「未设置」，用空串注入会把「没配」伪装成「配了」。
 function 默认补丁() {
   return {
     DB_BACKEND: 'sqlite',

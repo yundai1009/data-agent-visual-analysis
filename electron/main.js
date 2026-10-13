@@ -1,4 +1,13 @@
-// electron/main.js
+// 桌面版（Electron）主进程：进程编排中枢——拉起后端、等它就绪、开窗口、管托盘、承接 desktop:* IPC。
+// 做了什么：① 启动时探测空闲端口(8000 起) → spawn 打包好的后端 exe → 轮询 /healthz 直到 200；
+//   ② 就绪才开主窗口加载 http://127.0.0.1:<端口>，起不来就弹框并给「打开配置」自救入口；③ 托盘常驻，关窗口只隐藏不退出；
+//   ④ IPC 侧只做「读盘 / 落盘 / 开目录 / 重启后端」的编排，配置语义一律委托 核心/ 下的纯函数。
+// 为什么把语义拆到 核心/ 目录：main.js 一 require('electron') 就只能在 Electron 运行时里跑，
+//   配置校验、是否需重启、托盘菜单、版本比对、env 拼装写在这里一行都测不了；拆成纯 node 模块后 `npm test`（node --test）不开窗口就能覆盖。
+// 坑：后端 exe 是打包产物 electron/dist-backend/daa-backend.exe，开发模式（npm start）下不存在，必须先 npm run build:backend。
+// 坑：数据根固定 %APPDATA%\数据分析Agent，不用 app.getPath('userData')——后者按应用名生成，与 db/日志目录错位会让读设置读到空对象。
+// 坑：close 的 preventDefault 会拦住 app.quit()，before-quit 里必须 destroy() 窗口，否则托盘「退出」只杀后端、进程赖着不退。
+// 坑：will-navigate 按 协议+主机+端口 三段精确比对，不用 startsWith——http://127.0.0.1:8000@evil.com 能骗过前缀判断。
 const { app, BrowserWindow, ipcMain, shell, dialog, Tray, Menu } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');

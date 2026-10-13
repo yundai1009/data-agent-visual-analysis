@@ -1,3 +1,25 @@
+// 阶段 六十 · 单图表渲染组件：把后端下发的「图表配置」翻译成 ECharts option 并渲染。
+//
+// 做了什么：
+// 1. 默认导出 <EChartsChart chartType chartConfig height>：懒加载 echarts（含 echarts-wordcloud 词云插件），
+//    就绪后建实例 → setOption(notMerge) → resize，卸载时 dispose；工具条提供「下载图表 PNG」与「复制图片到剪贴板」。
+// 2. 具名导出 buildOption(chartType, config)：纯函数，负责 18 种图表类型 → option 的翻译，供单测直接断言。
+// 3. 色板 / 文本样式 / tooltip 主题 / HTML 转义统一从 ../utils/图表主题.js 取，本文件不再持有副本。
+//
+// 为什么这么做：
+// - echarts 用动态 import 而非首屏静态引入：库 + 词云插件接近 1MB，进主 bundle 会拖慢首屏；代价是首帧要显示占位，
+//   所以用 ready 状态把「加载中」和「已可渲染」隔开。
+// - setOption 必须 notMerge：切换图表类型时配置变的是 series / 坐标轴，合并模式会把上一次的系列残留下来，
+//   表现为「从折线图切到饼图后还挂着几条线」。
+// - buildOption 单独导出而不埋在组件里：option 是纯数据，不用起浏览器就能断言，图表类型越多越省事。
+//
+// 关键约定与坑：
+// - chartType 收的是英文短名（bar / line / pie / wordcloud / boxplot…），中文名（柱状图 / 词云图）是给人看的，
+//   中英映射表在后端_核心/report_generator.py:52-72，前端不做转换。
+// - chartConfig.数据 的键名由后端约定：X轴、Y轴[]、颜色/分组字段、名称、值（取值逻辑在本文件 :185-199 附近）。
+// - 渲染异常不让整页崩：catch 之后把错误画成图内标题（#ef4444），空白图也比整页报错更好定位问题。
+// - 阶段 六十 起主题常量搬到 utils/图表主题.js（血缘图与它共用单一来源），改色板只改那一个文件。
+
 import { useRef, useState, useEffect } from 'react';
 import { Download, Copy } from 'lucide-react';
 // 阶段 六十：色板/主题/转义抽到 utils/图表主题.js，与 LineageGraph 共用单一来源
