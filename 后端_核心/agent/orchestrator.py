@@ -290,7 +290,9 @@ def 编排Agent(
         # 删除后果：LLM 失去历史参考，首次分析可能选错图表/字段，但不会崩溃（准确率下降）。
         # 替代方案：RAG 检索增强 + 更复杂的 prompt 工程效果更好但成本高；
         # 当前方案（向量检索 top-3 + 格式化为 few-shot 文本）简单实用、性价比高。
-        相似记忆 = 检索相似记忆(user_id, 分析需求, llm_config=llm_config)
+        # 阶段 61（D2）：不再透传请求级 llm_config——embedding 是平台级能力，
+        #   跟用户所选 chat provider 走会 401/400（详见 llm_client.embedding_settings）。
+        相似记忆 = 检索相似记忆(user_id, 分析需求)
         memory_hint = 生成_few_shot_prompt(相似记忆)
 
         messages: List[Dict[str, Any]] = [
@@ -388,7 +390,7 @@ def 编排Agent(
                         try:
                             from 后端_核心.profile import 生成数据画像
                             画像摘要 = f"{画像.get('行数',0)}行/{画像.get('列数',0)}列"
-                            保存记忆(user_id, 分析需求, intent_override, 画像摘要, llm_config=llm_config)
+                            保存记忆(user_id, 分析需求, intent_override, 画像摘要)
                             from 后端_核心.agent.memory import 清理记忆  # 批次4：容量上限
                             清理记忆(5000)
                         except Exception as exc:

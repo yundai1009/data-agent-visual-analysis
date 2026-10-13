@@ -75,6 +75,44 @@ def _解析监听地址() -> str:
     return EnvConfig.HOST
 
 
+def _解析workers() -> int:
+    """推断本次启动 uvicorn 打算起几个 worker（用于向量记忆的单进程约束）。
+
+    - CLI 方式（python -m uvicorn api.main:app --workers 4）：解析 sys.argv；
+    - 其他一切方式（uvicorn.run(workers=N) / UVICORN_WORKERS 环境变量 / gunicorn
+      / k8s 多个副本）在本函数里都看不到，统一按 1 处理——宁可少拦，也绝不宣称
+      「绝对拦截」（见 _启动安全自检 第 5 道防线的文案）。
+    - 非法值（如 --workers abc）同样按 1 处理：不因为一个打错的参数拒绝启动。
+    - 非 uvicorn 启动形态（阶段 61 修复 M1）直接按 1 返回，见下方【关键行】。
+    """
+    # 【关键行】只有 sys.argv 里确实有 uvicorn 启动痕迹时才解析。
+    # 为什么：sys.argv 是**进程级**全局量，pytest 进程的 argv 就是 pytest 的参数。
+    #   装了 pytest-parallel（它的开关恰好也叫 --workers）或手写
+    #   `pytest tests --workers 4` 时，本函数会误判成「多 worker 启动」，
+    #   于是每个 TestClient 用例都在 lifespan 里被「安全拒绝启动」，而且报错
+    #   指向 chromadb/向量记忆，与真实故障毫无关系——排查成本极高。
+    #   非 uvicorn 启动本来就看不到真实 worker 数（本函数只能读 CLI），按 1 处理
+    #   不会漏掉任何它原本能拦的情况。
+    argv = [str(a) for a in sys.argv]
+    uvicorn形态 = "uvicorn" in os.path.basename(argv[0] if argv else "") or any(
+        "uvicorn" in a for a in argv[:3]  # `uvicorn ...` / `python -m uvicorn ...` 两种前缀
+    )
+    if not uvicorn形态:
+        return 1
+    for i, arg in enumerate(sys.argv):
+        if arg == "--workers" and i + 1 < len(sys.argv):
+            try:
+                return max(1, int(sys.argv[i + 1]))
+            except ValueError:
+                return 1
+        if arg.startswith("--workers="):
+            try:
+                return max(1, int(arg.split("=", 1)[1]))
+            except ValueError:
+                return 1
+    return 1
+
+
 def _启动安全自检() -> None:
     """P0 安全硬门槛：拒绝不安全默认配置启动。
 
@@ -84,6 +122,9 @@ def _启动安全自检() -> None:
       必须被覆盖（默认 admin123 公开已知）——否则可伪造 token / 直接登录管理员。
     - 认证关闭时（AUTH_ENABLED=false）：只允许绑定回环地址——免认证模式一旦绑到
       0.0.0.0 暴露公网 = 全站无鉴权，直接拒绝启动，物理上杜绝"公网免登录站"。
+    - 阶段 61 新增第 5 道：--workers > 1 拒绝启动（向量记忆是嵌入式单进程库）。
+    - 阶段 61 新增第 6 道：记忆库 embedding 指纹与当前配置不同源 → 拒绝启动
+      （只是「库打不开」则放行，记忆是可降级依赖）。
     """
     auth = os.getenv("AUTH_ENABLED")
     # 【关键行】AUTH_ENABLED 没设置 → 直接拒绝启动。
@@ -138,6 +179,65 @@ def _启动安全自检() -> None:
                 "安全拒绝启动：AUTH_ENABLED=false（免认证）时只允许本机访问，"
                 f"监听 host 必须是 127.0.0.1/localhost/::1，当前是 {host!r}。"
             )
+
+    # 第 5 道防线（阶段 61 决策 D5）：向量记忆是嵌入式单进程库，多 worker 拒绝启动。
+    # 【关键行】--workers > 1 直接拒绝启动。
+    # 为什么：chromadb.PersistentClient 是嵌入式 sqlite + 内存索引，每个进程各写一份；
+    #         并发写会互相破坏索引，而失败方式一样只是 logger.warning——监控全绿，
+    #         只是记忆慢慢变得不准（最隐蔽的一类故障）。
+    # 替代方案：换 Qdrant/pgvector 服务端向量库（多进程安全，但部署成本上台阶）。
+    # 局限（必须如实说明）：本闸门只能解析 CLI 的 --workers，CLI 尽力而为。
+    #         以下三种启动方式都会绕过它——代码里写 uvicorn.run(workers=N)、
+    #         环境变量 UVICORN_WORKERS=4、gunicorn -w 4 / k8s 多副本。
+    #         它们需要各自显式处理（不要给这些方式开向量记忆）。
+    workers = _解析workers()
+    if workers > 1:
+        raise RuntimeError(
+            f"安全拒绝启动：检测到 --workers {workers}，向量记忆暂不支持多 worker。\n"
+            "原因：chromadb 是嵌入式单进程库，多进程并发写会破坏索引，且故障只表现为"
+            "「记忆慢慢不准」，监控上完全看不见。\n"
+            "本闸门是 CLI 尽力而为，不是绝对拦截——代码里写 uvicorn.run(workers=N)、"
+            "环境变量 UVICORN_WORKERS=4、gunicorn -w 4 / k8s 多副本都会绕过它，"
+            "用这些方式启动时必须自行确认。\n"
+            "怎么办：① 用 --workers 1 启动（推荐）；或 ② 清空 embedding Key"
+            "（LLM_EMBEDDING_API_KEY / LLM_API_KEY 都留空）让记忆链路整体不读写——"
+            "此时第 6 道指纹闸也会一并跳过，不会再撞上拒绝启动；或 ③ 换成服务端向量库"
+            "（Qdrant / pgvector），它们本身支持多进程。"
+        )
+
+    # 第 6 道防线（阶段 61 决策 D4）：记忆库 embedding 指纹必须与当前配置同源。
+    # 【关键行】指纹不一致 → 走与上面同样的「安全拒绝启动」通道。
+    # 为什么必须硬失败：换了 embedding 模型/端点/向量化文本模板后，旧向量与新查询
+    #         向量不在同一语义空间。维度不同时查询抛异常被吞（检索恒空）；
+    #         维度相同时**完全不报错**，只是结果全是噪声。
+    # 降级边界：「打开记忆库本身失败」（磁盘满/权限/锁文件）不拦截启动——记忆是
+    #         非关键依赖，只记 warning 并在 /healthz.memory 里暴露，交给运维处理。
+    try:
+        from 后端_核心.agent.llm_client import embedding_settings, is_llm_configured
+        from 后端_核心.agent.memory import 校验记忆库一致性
+
+        # 【关键行】embedding Key 为空 = 记忆链路整体不读写 → 跳过指纹校验。
+        # 为什么（阶段 61 修复 M2，审查指出的自相矛盾）：指纹里**不含** Key
+        #   （含 Key 会把轮换密钥误判成"换了模型"，见 memory.当前指纹），
+        #   所以上面第 5 道防线的自救建议②"清空 embedding Key 关记忆"在旧实现下
+        #   根本走不通：只删 Key 而 LLM_BASE_URL 仍配置时，指纹会回落到
+        #   LLM_BASE_URL + 默认模型，反而更容易撞上第 6 道拒绝启动。
+        #   语义上也不该拦：Key 为空时 保存记忆/检索相似记忆 全部早退，
+        #   不存在"新旧向量不同源"的问题，硬拦只会把一个可降级依赖变成启动故障。
+        # 删除后果：按文案②自救的用户被卡在启动阶段，只能删库（丢全部长期记忆）。
+        _, _, embedding_key = embedding_settings()
+        if not is_llm_configured(embedding_key):
+            logger.info(
+                "embedding Key 未配置：记忆链路整体不读写，跳过第 6 道指纹校验"
+                "（记忆降级为「未启用」，不影响分析主流程）"
+            )
+        else:
+            校验记忆库一致性()
+    except RuntimeError as exc:
+        raise RuntimeError(f"安全拒绝启动：{exc}") from exc
+    except Exception as exc:
+        # 记忆库打不开属于可降级故障：让服务起来，只是记忆不可用
+        logger.warning("向量记忆库一致性检查未通过（不影响分析主流程）: %s", exc)
 
 
 # 【函数】FastAPI 生命周期钩子：应用启动前/关闭后各执行一次。
@@ -229,11 +329,25 @@ async def health_check() -> HealthResponse:
         timestamp=datetime.now(),
     )
 
-# 【函数】深度健康检查：后端类型 + 数据库连通性（部署探活升级版）。
-# 返回：{"status", "db_backend", "db_ok"} —— status=ok 表示进程与库都健康；
+# 【函数】深度健康检查：后端类型 + 数据库连通性 + 向量记忆状态（部署探活升级版）。
+# 返回：{"status", "db_backend", "db_ok", "memory"} —— status=ok 表示进程与库都健康；
 #       degraded 表示进程活着但库连不上（供负载均衡摘除/告警）。
+# 阶段 61（决策 D8）：新增 memory 段——记忆故障原来只有 warning，运维看不见。
+# 关键取舍：**memory.ok=False 不影响顶层 status**。记忆是非关键依赖（关掉它
+#       分析主流程照跑），因为它坏了就把实例从负载均衡摘掉不划算；
+#       交给"人看 /healthz.memory"比交给"机器摘节点"更合适。
+# 阶段 61 修复 M3：本路由改成**同步 def**（FastAPI 自动丢到线程池执行）。
+# 为什么：路由体里**一个 await 都没有**，却全是阻塞 IO——sqlite/mysql 的
+#   connect+execute，以及 记忆状态() 里的 chroma `col.count()`（嵌入式 sqlite +
+#   可能触发索引加载）。async def 会让 FastAPI 直接在**事件循环线程**里执行它们，
+#   探活一卡就是整个后端全部接口一起卡住（历史上真发生过：开发日志
+#   docs/开发日志/项目开发日志.md:4536-4537 记录 /healthz 把接口从 2241ms
+#   拖到 2.7s，:4674、:4716 是同一条线的后续）。
+# 为什么不是"加个 await 或包线程池"：这里没有需要让出的异步 IO；同步 def 由
+#   Starlette 自动 `run_in_threadpool`，语义上正好表达"这活儿是阻塞的"。
+# 删除后果：并发探活/启动器轮询时，记忆库 count() 的几百毫秒会冻结事件循环。
 @app.get("/healthz")
-async def healthz():
+def healthz():
     from 后端_核心.存储 import backend as 存储后端
     后端名 = 存储后端.当前后端()
     db_ok = False
@@ -250,7 +364,19 @@ async def healthz():
         db_ok = True
     except Exception:
         db_ok = False
-    return {"status": "ok" if db_ok else "degraded", "db_backend": 后端名, "db_ok": db_ok}
+    memory_info: dict = {"ok": False, "原因": "未查询"}
+    try:
+        from 后端_核心.agent.memory import 记忆状态
+        memory_info = 记忆状态()
+    except Exception as exc:
+        # 探活本身不能因记忆模块出错而 500：兜底成 ok=False + 原因
+        memory_info = {"ok": False, "原因": f"查询失败: {exc}"}
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "db_backend": 后端名,
+        "db_ok": db_ok,
+        "memory": memory_info,
+    }
 
 # 注册 9 个业务路由模块：顺序即 /docs 文档中的展示顺序；FastAPI 按注册顺序
 # 匹配请求，具体路由总是先于末尾的 SPA 回退路由命中，互不干扰

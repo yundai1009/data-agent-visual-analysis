@@ -21,7 +21,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from 后端_核心.agent.llm_client import chat_completion, extract_tool_call, is_llm_configured, embed_text
+from 后端_核心.agent.llm_client import chat_completion, extract_tool_call, is_llm_configured
 from 后端_核心.agent.tools import TOOL_SCHEMAS_FULL, execute_tool
 from 后端_核心.agent.executors import 注册所有执行器
 from 后端_核心.agent.trace import TraceRecorder

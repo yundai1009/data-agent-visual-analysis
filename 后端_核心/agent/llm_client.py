@@ -376,44 +376,56 @@ def extract_tool_call(response: Optional[Dict[str, Any]]) -> Optional[Dict[str, 
     return {"name": name, "arguments": arguments}
 
 
-def embed_text(
-    text: str,
-    llm_config: Optional["LLMRequestConfig"] = None,
-) -> Optional[List[float]]:
+def embedding_settings() -> tuple[str, str, str]:
+    """返回 embedding 的 ``(base_url, model, api_key)``——三者同源，全部取全局配置。
+
+    阶段 61 决策 D1：embedding 是**平台级能力**，不是请求级能力。
+    为什么不再跟随请求级 ``llm_config``：阶段 27 的「请求级优先」只对齐了一半
+    （api_key/base_url 跟请求走，model 永远取全局，llm_client.py:416），于是存在
+    两种必然失败的错配——
+      · 用户 BYOK Key 打服务端 ``LLM_EMBEDDING_BASE_URL`` → 401；
+      · 用户所选 provider 的地址配别家模型名 → 400。
+    两者都只记 warning，用户侧表现为「记忆功能从头到尾没工作过」。
+    代价：纯 BYOK 且服务器没配 embedding Key 的部署，记忆功能全局不可用——
+    这是**显式且可观测**的降级（/healthz.memory.ok=false），好过半好半坏。
+    替代方案：per-provider 指纹隔离 collection（记忆按 provider 分库），代价是删除
+    用户记忆/容量治理都要遍历多库、记忆被切碎、跨 provider 召回失效。
+
+    端点做 ``rstrip("/")`` 归一化：指纹拿它做等值比较，运维在 .env 里多打一个
+    斜杠不该被当成「换了语义空间」而拒绝启动。
+    """
+    base = (EnvConfig.LLM_EMBEDDING_BASE_URL or EnvConfig.LLM_BASE_URL or "").strip().rstrip("/")
+    model = EnvConfig.LLM_EMBEDDING_MODEL or "text-embedding-3-small"  # 通用 fallback
+    key = (EnvConfig.LLM_EMBEDDING_API_KEY or EnvConfig.LLM_API_KEY or "").strip()
+    return base, model, key
+
+
+def embed_text(text: str) -> Optional[List[float]]:
     """调用 OpenAI 兼容的 /embeddings 接口，返回向量。
 
-    与 ``chat_completion`` 相同的配置优先级：``llm_config`` > ``EnvConfig``。
-    此前直接读全局 EnvConfig（多 provider 并发下 embedding 走错供应商），
-    本轮对齐为请求级配置透传（见 记忆.py 调用链）。
+    阶段 61 决策 D1/D2：端点、模型、Key 三者统一由 ``embedding_settings()`` 提供，
+    **刻意不接收 ``llm_config``**——签名里留着这个参数就是回退的种子（下次有人会
+    「顺手」把用户所选 provider 再传回来，又回到 401/400 的老路）。
 
     Args:
-        text: 要编码的文本
-        llm_config: 请求级 LLM 配置（可选，缺省回退服务端全局配置）
+        text: 要编码的文本（记忆链路上只有「需求」会被送进来，见 memory.保存记忆）
 
     Returns:
-        浮点数向量列表，失败返回 None
+        浮点数向量列表，失败返回 None（不抛，由调用方降级）
     """
-    api_key = ((llm_config.api_key if llm_config else None) or EnvConfig.LLM_API_KEY or "").strip()
+    base_url, model, api_key = embedding_settings()
     if not is_llm_configured(api_key):
-        logger.warning("LLM 未配置，无法生成 embedding")
+        logger.warning("未配置 embedding Key，跳过向量化（记忆功能不可用，不影响分析主流程）")
+        return None
+    if not base_url:
+        logger.warning("未配置 embedding 端点（LLM_EMBEDDING_BASE_URL / LLM_BASE_URL），跳过向量化")
         return None
 
-    base_url = (
-        (llm_config.base_url if llm_config else None)
-        or EnvConfig.LLM_BASE_URL
-        or ""
-    ).rstrip("/")
-    # 阶段 34 修复（Bug3）：embedding 优先走独立配置 LLM_EMBEDDING_BASE_URL/
-    # LLM_EMBEDDING_MODEL——chat 端点（如智谱 GLM）不支持 /embeddings 时，
-    # 可指向供应商的专用 embedding 端点；未配置则回退通用 base_url 与模型。
-    embed_base = (EnvConfig.LLM_EMBEDDING_BASE_URL or base_url).rstrip("/")
-    url = f"{embed_base}/embeddings"
+    url = f"{base_url}/embeddings"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    # DeepSeek 使用 text-embedding-v3，OpenAI 使用 text-embedding-3-small
-    model = EnvConfig.LLM_EMBEDDING_MODEL or "text-embedding-3-small"  # 通用 fallback
     payload = {
         "input": text,
         "model": model,
@@ -425,6 +437,7 @@ def embed_text(
         return None
 
     if response.status_code != 200:
+        # 状态码常见两类：401=Key 与端点不同源；400=模型名不属于该端点（阶段 61 D1 的两种错配）
         logger.warning("Embedding HTTP %s（响应内容已脱敏，仅记录状态码）", response.status_code)
         return None
 

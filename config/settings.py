@@ -31,6 +31,12 @@ class EnvConfig:
     # 留空 = 回退通用 base_url + text-embedding-3-small；配置后按此独立端点/模型。
     LLM_EMBEDDING_BASE_URL = (os.getenv("LLM_EMBEDDING_BASE_URL") or "").strip()
     LLM_EMBEDDING_MODEL = (os.getenv("LLM_EMBEDDING_MODEL") or "").strip()
+    # 阶段 61：embedding 的 Key 独立配置（embedding 三要素同源的第一块拼图）。
+    # 为什么必须单独拆：LLM_API_KEY 往往是 chat 供应商的 Key（如 DeepSeek），而
+    #   embedding 端点常常是另一家（如硅基流动 / OpenAI）——用错 Key 直接 401，
+    #   而 401 只会 warning，用户侧表现为「某些用户的记忆功能从头到尾没工作过」。
+    # 留空回落 LLM_API_KEY：同供应商场景不用多配一个变量。
+    LLM_EMBEDDING_API_KEY = (os.getenv("LLM_EMBEDDING_API_KEY") or "").strip()
     LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "60"))
     LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 
