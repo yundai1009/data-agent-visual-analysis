@@ -1,14 +1,23 @@
 # -*- coding: utf-8 -*-
-"""阶段 54 · 存储后端抽象层。
-
-目的：把 SQL 方言差异收敛到本模块，让 repositories 层不必为换库逐文件返工。
-当前只实现 SQLite 行为（默认）；MySQL 后端见 mysql_backend.py。
-
-约定
-----
-- repo 层 SQL 永远用 ``?`` 占位符；转 MySQL 时由 :func:`转换SQL` 变成 ``%s``
-- SQL 文本中禁止出现字面问号（``'?'`` 之类），否则转换无法安全进行
-"""
+# ============================================================
+# 【文件定位】存储层唯一的方言收敛点：把 SQLite 与 MySQL 的写法差异收成一组纯函数，仓储层永远只写 SQLite 方言。
+# ============================================================
+# 【做了什么】
+#   1. 当前后端()：读 config.settings.EnvConfig.DB_BACKEND（默认 sqlite），仅 ImportError 时回落默认值，其它异常向上抛出。
+#   2. SQL 方言函数：转换SQL（?→%s，sqlite 原样返回；含单引号字符串字面量里的 ? 时抛 ValueError）、占位符风格、自增主键DDL、插入忽略、冲突更新SQL（ON CONFLICT DO UPDATE ↔ VALUES (...) AS new ON DUPLICATE KEY UPDATE）、表存在SQL、表结构SQL（两分支结果行都含 name 键）。
+#   3. 创建索引SQL：sqlite 返回 CREATE [UNIQUE] INDEX IF NOT EXISTS ...，mysql 返回空串（索引改由 mysql_repo.初始化数据库 统一"先查后加"）。
+#   4. 唯一冲突(异常)：同时认 sqlite 的 UNIQUE constraint failed 与 pymysql 的 1062 / Duplicate entry；另导出 写锁 = threading.Lock()，供各仓储做进程内写串行化。
+# 【为什么这么做】
+#   - 用拼字符串的纯函数而不是 SQLAlchemy 抽象或 ORM：现有 SQL 全部按 SQLite 语法手写，抽象层要么全量重写、要么只是装饰；收敛成函数后换库 = 改 import 指向 + 环境变量，仓储层零返工。
+#   - 创建索引SQL 对 mysql 返回空串而不是照拼：MySQL 8 不支持 CREATE INDEX IF NOT EXISTS，重复建索引报 1061；返回空串让调用方 if sql: 自然跳过，索引职责归一到 mysql_repo。
+#   - upsert 用 VALUES (...) AS new 行别名而不是已废弃的 VALUES(col)：后者 8.0.20+ 弃用、8.4 移除，所以本路径要求 MySQL ≥ 8.0.19。
+#   - 唯一冲突 按 errno/关键字识别而不是 except IntegrityError：pymysql 抛的是通用异常且消息里没有 UNIQUE 字样，不显式识别的话重复注册/改名会变成 500 而非 400。
+# 【关键约定与坑】
+#   - 仓储层 SQL 一律用 ? 占位符，且文本里禁止出现字面问号；双引号 "q?"、反引号标识符、-- 注释里的 ? 不在检测范围，会被误替换。
+#   - 表结构SQL 与 表存在SQL 把表名内联进 SQL，表名 只能是代码常量，不能来自用户输入。
+#   - 冲突更新SQL 的 冲突列 参数只有 sqlite 分支用得上，mysql 分支保留只为签名一致——传了它并不会让 mysql 按该列判冲突。
+#   - 当前后端() 只吞 ImportError：改动时别把真实配置错误一起吞掉，"配了 mysql 却仍写 SQLite"这类假后端 bug 正是这么来的。
+# ============================================================
 from __future__ import annotations
 
 import re

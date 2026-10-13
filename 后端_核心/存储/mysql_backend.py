@@ -1,15 +1,22 @@
 # -*- coding: utf-8 -*-
-"""阶段 54 · MySQL 后端：SQLAlchemy 引擎仅作连接池 + 连接保活，SQL 仍走原生。
-
-为什么用 SQLAlchemy 而非裸 pymysql
---------------------------------
-- 连接池：借出前 ``pool_pre_ping`` 自动探活，数据库重启/网络抖动导致连接已死时
-  自动换一条，用户无感知（裸 pymysql 需自己实现）
-- 不引 ORM：127 处业务 SQL 一行不改，只换连接来源与占位符风格
-
-配合 backend.占位符风格/转换SQL：repo 层写 ``?``，本后端执行时转 ``%s``（pymysql 风格）。
-（此处仅为说明性引用，本模块**不** import backend——无循环依赖，也无实际使用。）
-"""
+# ============================================================
+# 【文件定位】MySQL 的连接来源与"SQLite 行风格"适配层：只负责借连接、提交回滚，把 pymysql 变成仓储层熟悉的 conn。
+# ============================================================
+# 【做了什么】
+#   1. _取引擎()：双检锁懒加载全局 SQLAlchemy Engine（pool_pre_ping 探活、pool_size=10、max_overflow=20、pool_recycle=3600 防 MySQL wait_timeout 断连）；_连接url() 用 quote_plus 编码账号密码并固定 charset=utf8mb4。
+#   2. get_conn()：借 raw_connection()（DBAPI/pymysql），正常 commit、异常 rollback、finally 里 close() 归还连接池（SQLAlchemy 中 close 是归还而非断开）。
+#   3. 行风格三层包装：_MySQLRow（row["列名"] 与 row[下标] 双可用，等价 sqlite3.Row）、_MySQL游标（包 DictCursor，fetchone/fetchall 包装成 _MySQLRow 并关游标，透传 rowcount/lastrowid/description、支持 for 迭代）、_MySQL连接包装（conn.execute(sql, params) 直接可用，内部 调 backend.转换SQL 做 ?→%s）。
+#   4. 建表语句(表名, 列定义)：拼 InnoDB + utf8mb4 + utf8mb4_unicode_ci 的 CREATE TABLE IF NOT EXISTS。
+# 【为什么这么做】
+#   - 只借 SQLAlchemy 的连接池、不引 ORM：仓储层上百处业务 SQL 一行不改，只换连接来源与占位符风格；上 ORM 则迁移成本与"SQL 能被单测直接断言"的可测性一起丢掉。
+#   - 自己写行包装而不是改十几个仓储：仓储层的通行写法就是 row["列名"]，改仓库等于全量返工；在连接层对齐 sqlite3.Row 语义，一次改动覆盖所有调用点。
+#   - 占位符在运行期而不是 import 期转换：sqlite 分支的 SQL 保持原样，只有真正执行 mysql 语句前才转，方言差异集中在这一个点。
+# 【关键约定与坑】
+#   - get_conn() yield 出去的是裸 DBAPI 连接（无 ?→%s、无行包装）；要 sqlite3 风格必须走 连接._get_conn 的 mysql 分支套 _MySQL连接包装。
+#   - _MySQL游标.fetchone/fetchall 取完即关游标，第二次取会报错；conn.cursor() 返回的是裸 DictCursor，不带 _MySQLRow 包装。
+#   - 建表语句 明确不做表名/列名的反引号转义，标识符只能来自代码常量。
+#   - 引擎本身不设置会话时区，SET time_zone 由 连接._get_conn 在借出后逐连接设置。
+# ============================================================
 from __future__ import annotations
 
 import threading

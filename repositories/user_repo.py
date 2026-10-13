@@ -1,8 +1,17 @@
-"""用户仓储：users 表的 CRUD。
-
-复用 后端_核心/存储/sqlite_repo.py 的连接管理（_get_conn / _write_lock），
-避免重复实现 SQLite 连接逻辑。
-"""
+# -*- coding: utf-8 -*-
+# ============================================================
+# 【文件定位】users 表的唯一出入口：账号生命周期 + 认证凭据 + 账号级 LLM 配置，也是注销级联删除的调度中心。
+# ============================================================
+# 【做了什么】
+#   1. 建 users 表并对旧库幂等迁移（补 email / llm_api_key / llm_custom_providers / status / token_version），建表进程级一次性、按 DB 路径分键缓存。
+#   2. 创建用户、按用户名/邮箱/user_id 查询、更新用户名与密码、封禁与解封；唯一冲突统一转成带具体原因的 ValueError，token_version 用于吊销旧 JWT。
+#   3. 账号级 LLM Key 与自定义供应商经 services.crypto 加密落库；删除用户及数据 在一个事务里清 15 张表 + data/uploads 物理文件并同步清 chromadb 记忆。
+# 【为什么这么做】
+#   - 归属校验固化进 WHERE 而非散在各路由：漏传一次 user_id 就直接泄露数据，仓储层是兜底闸；种子管理员遇到同名非管理员抛错而非静默升级，那正是提权漏洞。
+# 【关键约定与坑】
+#   - 用户不存在必须暴露（读取token版本 返回 None、封禁用户 抛 ValueError），否则已删号用户的旧 JWT 仍能通过 token 版本对账。
+#   - UPDATE 后查 cur.rowcount 防「影响 0 行」假成功；连接走 存储/连接._get_conn，写操作加 backend.写锁，SQL 全 ? 参数化；crypto 延迟 import 避循环导入。
+# ============================================================
 
 from __future__ import annotations
 

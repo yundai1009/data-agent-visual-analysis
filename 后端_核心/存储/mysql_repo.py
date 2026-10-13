@@ -1,19 +1,23 @@
 # -*- coding: utf-8 -*-
-"""阶段 54-8 · MySQL 初始化数据库（对齐 sqlite_repo.初始化数据库 的表集合）。
-
-职责（幂等，重复调用安全，不 DROP 任何表）：
-1. 16 张业务表 ``CREATE TABLE IF NOT EXISTS``——正确 DDL（VARCHAR 主键、UNIQUE、
-   索引、列宽对齐）；对已存在的迁移产物表是 no-op；
-2. 幂等**升级**既有表（走查时由 migrate 脚本生成、0 行的表）：
-   - users.username/email → VARCHAR + UNIQUE（对齐 SQLite UNIQUE 约束，验收 5）
-   - favorites.user_id/report_id 宽 191 → 255（对齐 users/reports 主键宽度）
-   - datasets/reports 等补 user_id 索引（压测 P0：列表查询全表扫描）
-   - 全部时间列 datetime(6) → VARCHAR(64)（**业务契约**：repo 层时间即 ISO 字符串
-     原文——lexical 比较 + ``fromisoformat`` 需要带偏移；DATETIME 读回是 naive，
-     auth.py 的 aware/naive 比较、事件导出的 astimezone、分享到期判断会崩）
-
-升级全部先查 information_schema 再执行，任意时刻重跑安全。
-"""
+# ============================================================
+# 【文件定位】MySQL 后端的 schema 事实来源：用一套幂等的建表 + 升级脚本，把库表结构对齐 SQLite 侧的既有语义。
+# ============================================================
+# 【做了什么】
+#   1. _建表DDL：16 张业务表 CREATE TABLE IF NOT EXISTS（datasets / users / email_codes / reports / report_templates / dashboards / share_links / favorites / audit_log / feedback / llm_usage / scheduled_jobs / event_register / event_gen / event_paywall / event_payment）；业务表主键用 VARCHAR(255) 而非自增数字，event_* 表用 INT AUTO_INCREMENT。
+#   2. 幂等升级四件套：_宽列 与 _宽列改 → _确保列宽（TEXT/longtext → VARCHAR(255) 便于建索引，favorites 191→255 对齐主键宽）；_文本列改 → _确保文本列（audit_log.detail、feedback.correction → TEXT 防截断）；_确保时间列（datetime → VARCHAR(64)）；_确保大小写敏感列（users.username/email → COLLATE utf8mb4_bin）。
+#   3. _索引 与 _确保索引：先查 information_schema.STATISTICS 再 ALTER TABLE ADD [UNIQUE] INDEX，含 (user_id, created_at) 这类列表查询热路径的组合索引。
+#   4. 初始化数据库()：走 mysql_backend.get_conn() 原生连接（不经 _MySQL连接包装，避免 import 环），顺序为 建表 → 列宽 → 文本列 → collation → 时间列 → 索引，全程先查后改，重复执行安全。
+# 【为什么这么做】
+#   - 只建不删、不 DROP：生产库只能向前迁移，migrate 脚本生成的既有表必须是 no-op 升级而不是重建，否则用户数据会丢。
+#   - 时间列坚持存 VARCHAR(64) 而不是 DATETIME：repo 写入的是带 +00:00 偏移的 ISO 串原文，业务依赖 lexical 比较与 fromisoformat；DATETIME 读回是 naive，auth.py 的 aware/naive 比较、事件导出的 astimezone、分享到期判断都会崩。
+#   - username/email 单独设 utf8mb4_bin：表默认的 utf8mb4_unicode_ci 大小写不敏感，会让 Alice 与 alice 互等（唯一约束失效、登录匹配放宽），与 SQLite 行为不一致。
+#   - 索引由本模块统一管理、而 backend.创建索引SQL 对 mysql 返回空串：MySQL 8 不支持 CREATE INDEX IF NOT EXISTS，重复建索引会报 1061。
+# 【关键约定与坑】
+#   - 升级顺序不能换：_确保大小写敏感列 内部是 ALTER ... MODIFY，会重置 collation，必须排在 _确保列宽 之后调用。
+#   - 表名/列名只能来自本文件的常量字典再 f-string 拼接，绝不能拼用户输入（与 backend.表结构SQL 的纪律一致）。
+#   - 本文件用 %s 占位符直查 information_schema（原生 pymysql 连接）；仓储层写的是 ?，只有经 连接._get_conn 的包装才做 ?→%s，两条路径不要混用同一个 cursor。
+#   - _列信息 返回 (DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH) 不含 collation，故 _确保大小写敏感列 要多查一次。
+# ============================================================
 from __future__ import annotations
 
 import logging

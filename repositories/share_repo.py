@@ -1,8 +1,17 @@
-"""分享链接仓储：share_links 表的 CRUD。
-
-分享链接 = 创建者为某份报表生成一条有时效的只读访问令牌（share_id）。
-访问者凭 /s/{share_id} 公开访问，无需登录；过期或撤销后失效。
-"""
+# -*- coding: utf-8 -*-
+# ============================================================
+# 【文件定位】share_links 表的唯一出入口：为报表或看板签发有时效、可设密码的公开只读访问链接。
+# ============================================================
+# 【做了什么】
+#   1. 建 share_links 表并对旧表迁移补 password / collaborators / view_count / target_type 四列。
+#   2. 创建分享：share_id 取 uuid4().hex，expires_at = 创建时间 + hours，密码只落 HMAC-SHA256 哈希（密钥复用 JWT_SECRET_KEY）。
+#   3. 读取有效分享（share_id 且 expires_at > now）、按报表列出（仅创建者）、增加浏览次数、撤销分享（仅创建者）。
+# 【为什么这么做】
+#   - 口令用 HMAC-SHA256 而非慢哈希：它是低价值、可用过期与撤销兜底的凭据，慢哈希只配给登录密码（users 表走 auth_service 的 PBKDF2）；读取有效分享则刻意不过滤 user_id，因为它服务 /s/{{share_id}} 免登录路由，安全性来自 uuid4 不可猜 + 过期判定。
+# 【关键约定与坑】
+#   - 初始化分享表 未做 report_repo/user_repo 那样的进程级缓存（每次调用都跑 DDL 与列检查），属已知遗留，改前先看阶段 54-9 Fix E1。
+#   - target_type 区分 report / dashboard；协作者白名单存 JSON 数组、解析失败按空降级；连接走 存储/连接._get_conn，写操作加 backend.写锁。
+# ============================================================
 
 from __future__ import annotations
 
