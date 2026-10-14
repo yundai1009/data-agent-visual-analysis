@@ -1,4 +1,4 @@
-﻿"""真实浏览器 E2E 冒烟（Playwright + Chromium，demo 模式）。
+"""真实浏览器 E2E 冒烟（Playwright + Chromium，demo 模式）。
 
 自启动后端（临时 SQLite + frontend/dist-demo），headless Chromium 走完整用户链路：
 首页 → 上传数据集 → 生成报表（等待追问条出现）→ 报表页（图表/分享/重放按钮）→
@@ -108,8 +108,21 @@ def main():
             page.screenshot(path=str(SHOT_DIR / "04-report.png"))
 
             print("\n== 4. 报表页功能入口 ==")
-            for label in ("分享", "重放", "Excel", "CSV", "PDF"):
+            # 阶段 53 起导出统一收进「导出」弹窗（Report.jsx:673 → ExportDialog），
+            # 页面顶层不再有 Excel/CSV/PDF 按钮；重跑入口文案是「用最新数据重跑」。
+            # 断言旧按钮名会让这个冒烟脚本必然 FAIL，且失败原因与代码质量无关。
+            for label in ("分享", "导出", "用最新数据重跑"):
                 check(f"按钮「{label}」存在", page.locator(f"button:has-text('{label}')").count() > 0)
+            page.click("button:text-is('导出')")
+            try:
+                # 用「确认下载」当弹窗打开的哨兵（ExportDialog.jsx:73，弹窗里独有）
+                page.wait_for_selector("text=确认下载", timeout=10000)
+                formats = [n for n in ("Excel 表格", "CSV 数据", "PDF 报告")
+                           if page.locator(f"button:has-text('{n}')").count()]
+                check("导出弹窗列出格式", len(formats) >= 3, f"可见={formats}")
+                page.click("button:has-text('取消')")
+            except Exception as exc:
+                check("导出弹窗列出格式", False, type(exc).__name__)
 
             print("\n== 5. 创建分享链接 → 匿名访问 ==")
             page.click("button:has-text('分享')")
