@@ -14,6 +14,8 @@
 #   - `reset_password` 对未注册邮箱返回「验证码错误」（与真错文案逐字一致）以防枚举，别"优化"成更友好的提示。
 #   - 验证码只存 `email_service.验证码哈希(code)`、从不存明文，`email_code_repo.标记已用` 防重放。
 #   - 自定义供应商 `api_key` 明文存库（BYOK、仅服务端使用）；`test_custom_provider` 只允许 https 且禁重定向。
+#   - 导出头的 RFC 5987 `filename*` 里那两个单引号不能用**单引号** f-string 写：py3.11 会在第一个 `'` 截断字面量，`{quote(filename)}` 退化成字面量、中文文件名永远传不到浏览器。linter 把 `quote`/`filename` 报成"未使用"正是这件事的信号，别当噪音删掉。
+#   - 注册的用户名有字符白名单（`^[a-zA-Z0-9_\-\u4e00-\u9fa5]+$`），但 `change_username` 只查长度与重名——改名的字符集是已知缺口，导出文件名因此必须 `quote(..., safe='')` 自保。
 """认证接口：注册（邮箱验证码）、登录（用户名/邮箱）、当前用户、登出。"""
 
 from __future__ import annotations
@@ -608,10 +610,17 @@ def export_user_data(user: dict = Depends(get_current_user)) -> StreamingRespons
     payload = _json.dumps(data, ensure_ascii=False, default=str)
     buf = io.BytesIO(payload.encode("utf-8"))
     filename = f"我的数据-{user.get('username', 'user')}.json"
+    # 【坑】RFC 5987 的 filename* 必须是 UTF-8''<percent-encoded>，中间那两个单引号
+    # 不能用单引号写进单引号 f-string——py3.11（PEP 701 之前）会在第一个 ' 就结束
+    # 字符串，{quote(filename)} 退化成字面量，中文文件名永远传不到浏览器
+    # （ruff F401/F841 会把 quote/filename 报成"未使用"，就是这个 bug 的信号）。
+    # safe=''：用户名可经 /auth/change-username 改写且那条路径没做字符白名单，
+    # 含 '/' 时 quote 默认会原样留下，在 header 里就是分隔符。
+    cd_value = f"attachment; filename=export.json; filename*=UTF-8''{quote(filename, safe='')}"
     return StreamingResponse(
         buf,
         media_type="application/json; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename=export.json; filename*=UTF-8''{quote(filename)}'},
+        headers={"Content-Disposition": cd_value},
     )
 
 
