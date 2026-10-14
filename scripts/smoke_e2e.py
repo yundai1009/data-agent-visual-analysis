@@ -4,7 +4,6 @@
 分享(公开访问+撤销后的404) → 导出(xlsx/pdf) → 看板 → 权限边界(admin 403)。
 任意环节失败即退出码 1。
 """
-import io
 import re
 import sys
 

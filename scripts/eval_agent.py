@@ -19,7 +19,7 @@ import logging
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import pandas as pd
 
@@ -334,7 +334,7 @@ def 评测(verbose: bool = False, enable_llm: bool = False) -> Dict[str, Any]:
 
         if result is None:
             if verbose:
-                print(f"      输出: None ❌")
+                print("      输出: None ❌")
             continue
 
         # 字段匹配
