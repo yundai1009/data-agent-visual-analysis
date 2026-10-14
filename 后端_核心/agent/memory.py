@@ -122,7 +122,9 @@ def 校验指纹(记录指纹: Optional[dict], 当前: Dict[str, str]) -> None:
                 "修复：停服后运行 `python scripts/重建记忆库.py --dry-run` 确认条数，"
                 "再用 `--yes` 删除并按当前配置重建；"
                 f"或直接删除 {os.path.abspath(_CHROMA_DIR)} 目录再启动"
-                "（两条路径都会丢失全部长期记忆，不可逆）；或把 embedding 配置改回原值。"
+                "（这两条路径在库内确有记忆时会丢失全部长期记忆，不可逆；"
+                "库内 0 条时不会丢任何数据，只是重新盖一次指纹）；"
+                "或把 embedding 配置改回原值。"
             )
 
 

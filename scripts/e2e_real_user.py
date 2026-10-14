@@ -375,13 +375,24 @@ def main():
               health.get("status") == "ok" and "memory" in health,
               f"memory.ok={mem.get('ok')} 模型={mem.get('模型')}", group="P0 前置", cost=time.time() - t0)
         # 这条不记成 check（失败项），因为它不是「功能坏了」，而是「当前 .env 的配置
-        # 组合注定调不通」——实测 embedding HTTP 400 且被 llm_client 静默吞掉，
+        # 组合注定调不通」——配置错时 embedding 请求 400 且被 llm_client 静默吞掉，
         # 于是 memory.ok 仍然是 true，属于**假绿灯**。记成备注是为了不把配置问题
         # 混进功能通过率里，但必须用 ⚠ 顶在最前面，不能埋在报告角落。
-        note(f"⚠ /healthz.memory 模型名 = `{mem.get('模型')}`，端点 = `{mem.get('端点')}`："
-             f"两者不同源（OpenAI 的模型名打到了非 OpenAI 的端点）。实测 embed_text() 返回 "
-             f"None 且不抛错，memory.ok 仍为 true —— 向量记忆当前**根本没在工作**。"
-             f"修法见报告 F1：三项 LLM_EMBEDDING_* 必须配成同源的 base/model/key。")
+        # 阶段六十五：这里原来写死的是 F1 的结论（「向量记忆当前根本没在工作」）。
+        # 把 .env 配成同源之后那句话就变成假话了，所以改成按 /healthz 实际字段分支。
+        check("healthz.memory 暴露「嵌入配置同源」字段（阶段六十三 新增契约）",
+              "嵌入配置同源" in mem, f"memory 字段={sorted(mem)}", group="P0 前置")
+        同源 = mem.get("嵌入配置同源")
+        if 同源 is True:
+            note(f"✅ /healthz.memory 嵌入配置同源：模型=`{mem.get('模型')}` 端点=`{mem.get('端点')}` "
+                 f"条数=`{mem.get('条数')}` 指纹一致=`{mem.get('指纹一致')}` 说明=`{mem.get('嵌入配置说明')}`；"
+                 f"真实写入是否发生见 P13「向量记忆端到端」。")
+        else:
+            note(f"⚠ /healthz.memory 嵌入配置同源=`{同源}`，模型名=`{mem.get('模型')}`，端点=`{mem.get('端点')}`，"
+                 f"说明=`{mem.get('嵌入配置说明')}`：不同源时 embed_text() 拿到 400 后返回 None，"
+                 f"memory.ok 仍然是 true —— 向量记忆实际一次都没写进去。"
+                 f"修法：三项 LLM_EMBEDDING_* 配成同源（智谱端点用 LLM_EMBEDDING_MODEL=embedding-3），"
+                 f"配好后用 `python scripts/自检记忆库.py` 一次性验通；详见 docs/工程文档/LLM接入说明.md。")
         check("前端正式产物 dist 存在且已构建", (ROOT / "frontend" / "dist" / "index.html").exists(),
               group="P0 前置")
         check("Chromium 已安装", bool(os.environ.get("PLAYWRIGHT_BROWSERS_PATH")) or
@@ -869,6 +880,12 @@ def main():
                 我的ID = ""
         跑极限测试(token, 用户名, 数据集ID)
 
+        # ---------------- P13 向量记忆端到端（阶段六十五）
+        # 放在 P11 之后、P12 删号之前：此时 token 仍然有效、数据集还在，
+        # 而且 P12 的删号会把记忆一起级联清掉（user_repo.py:313 删除用户记忆），
+        # 所以这是「本轮账号的记忆还在库里」的最后一个观察窗口。
+        跑向量记忆(token, 数据集ID)
+
         # ---------------- P12 收尾：删账号 + MySQL 残留核对
         print("\n== P12 清理与残留核对 ==")
         if args.keep:
@@ -925,6 +942,93 @@ def main():
     print(f"报告：{md}")
     print(f"截图：{SHOT_DIR}")
     sys.exit(1 if FAIL else 0)
+
+
+# --------------------------------------------------------------------------- 向量记忆
+def 跑向量记忆(token, 数据集ID):
+    """P13 向量记忆端到端（阶段六十五）。
+
+    为什么要有这一组：F1 修配置之后，「记忆真的能用」这件事一直只有
+    `scripts/自检记忆库.py` 的**独立进程**证据——服务进程里到底有没有把向量写进 chroma、
+    读的时候拿不拿得到 few-shot 提示，谁都没验过。这组用真实 HTTP 链路自证：
+
+      1. `/healthz.memory.嵌入配置同源` 是**配置闸门**，不是功能判据。不同源 → 记 note
+         直接跳过（配置问题不能混进功能通过率；同 F1 时期 P0 的处理口径）。
+      2. `条数 >= 1`：P5 那次**在浏览器里点的**分析（需求「按地区统计销售额」，实测绕过
+         规则快速通道真走 LLM）在服务进程里落了一条记忆——真实 embedding 调用 + 真实
+         chroma 写入 + 真实 HTTP 栈，三段一起过才算数。
+      3. `指纹一致`：写入用的是当前配置的指纹，没往旧语义空间里混。
+      4. 复用同一需求再生成一张报表（`POST /reports/generate` 与前端 SSE 端点
+         `POST /reports/generate-stream` 走同一个生成器）：这一轮 `检索相似记忆` 会命中
+         刚才那条（few-shot 提示真的进了 system prompt），随后 `保存记忆` 再写一条 →
+         条数自增。**读 + 写两段一起验**，且断言 `意图来源 == 'LLM'`，证明注入了记忆提示
+         之后 LLM 路径没有被破坏（提示污染 system prompt 会让 JSON 提取失败并降级成规则）。
+
+    已知边界（别当成通过）：语义召回（换一种问法还能捞到）由 `scripts/自检记忆库.py`
+    第 5 步用完全不同的问句验证（实测 Top1 命中，得分 1.1256194114685059）；这里复用
+    同一句需求，只能证明「按需求文本检索」这一段通，不能证明向量语义质量。
+    """
+    G = "P13 记忆"
+    print("\n== P13 向量记忆端到端 ==")
+    if not token:
+        check("P13 前提：有可用 JWT", False, "P4 没抓到 token，整组跳过", group=G)
+        return
+
+    st, body = http("GET", "/healthz", timeout=30)
+    mem: dict = {}
+    if st == 200:
+        try:
+            mem = json.loads(body).get("memory") or {}
+        except Exception as e:  # noqa: BLE001
+            note(f"P13 /healthz 解析失败：{type(e).__name__}")
+    同源 = mem.get("嵌入配置同源")
+    check("P13 healthz.memory 报告了嵌入配置是否同源", 同源 in (True, False, "未知"),
+          f"嵌入配置同源={同源!r} 说明={mem.get('嵌入配置说明')!r} "
+          f"模型={mem.get('模型')!r} 端点={mem.get('端点')!r}", group=G)
+    if 同源 is not True:
+        # 不算失败：embedding 调不通时记忆本来就不该写入，这是**配置**问题。
+        # 但必须显式说出来，否则报告里「P13 一条没跑」会被读成「记忆验过了」。
+        note(f"P13 自增验证跳过：嵌入配置同源={同源!r}（说明={mem.get('嵌入配置说明')!r}）——"
+             f"不同源时写入注定不发生。修法见 P0 的 ⚠ 备注与 docs/工程文档/LLM接入说明.md；"
+             f"配好后重跑本脚本即可验到条数自增。")
+        return
+
+    基线 = int(mem.get("条数") or 0)
+    check("P5 浏览器分析在服务进程里真的落了一条长期记忆", 基线 >= 1,
+          f"条数={基线} 库={mem.get('库')!r} 模型={mem.get('模型')!r}", group=G)
+    check("记忆库指纹与当前 embedding 配置一致（没混语义空间）", mem.get("指纹一致") is True,
+          f"指纹一致={mem.get('指纹一致')!r} 原因={mem.get('原因')!r}", group=G)
+
+    if not 数据集ID:
+        note("P13 自增验证跳过：没有数据集 ID")
+        return
+
+    # 与 P5 同一句需求：既验证「检索命中刚写的那条 few-shot」，也验证记忆提示不会
+    # 把 LLM 路径带崩（意图来源必须仍是 LLM 而不是被污染成降级规则）。
+    需求 = "按地区统计销售额"
+    t0 = time.time()
+    st, body = http("POST", "/reports/generate",
+                    {"数据集ID": 数据集ID, "分析需求": 需求}, token=token, timeout=300)
+    意图来源 = ""
+    if st == 200:
+        try:
+            意图来源 = str(json.loads(body).get("意图来源", ""))
+        except Exception:  # noqa: BLE001
+            意图来源 = ""
+    check("带 few-shot 记忆提示再走一次 LLM 路径仍成功且未被带偏",
+          st == 200 and 意图来源 == "LLM",
+          f"{st} 意图来源={意图来源!r} {str(body)[:140]}", group=G, cost=time.time() - t0)
+
+    st, body = http("GET", "/healthz", timeout=30)
+    后: dict = {}
+    if st == 200:
+        try:
+            后 = json.loads(body).get("memory") or {}
+        except Exception:  # noqa: BLE001
+            后 = {}
+    后条数 = int(后.get("条数") or 0)
+    check("记忆条数自增（检索+保存的读与写两段都跑通）", 后条数 > 基线,
+          f"{基线} → {后条数}", group=G)
 
 
 # --------------------------------------------------------------------------- 极限测试

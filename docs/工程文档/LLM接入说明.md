@@ -51,6 +51,27 @@ LLM_EMBEDDING_MODEL=text-embedding-3-small
 > 而 `/healthz` 当时报 `memory.ok=true`，**全绿**。所以：**用了第三方（非 OpenAI/Azure）端点，就必须显式写 `LLM_EMBEDDING_MODEL`**。
 >
 > 读取入口：`llm_client.embedding_settings()`（`llm_client.py:379`）、`llm_client.embed_text()`（`llm_client.py:403`）、`llm_client.检查嵌入配置()`（阶段六十三新增，**零网络**）。
+>
+> **F1 的正解（阶段六十五 实测确认）**：智谱端点（`https://open.bigmodel.cn/api/paas/v4`）真正可用的
+> 模型名是 `embedding-3`（2048 维，推荐）和 `embedding-2`（1024 维）；`embedding-3-small` 与
+> `text-embedding-3-small` 在它上面都是 **400**。所以本项目的 `.env` 必须写：
+>
+> ```dotenv
+> LLM_EMBEDDING_BASE_URL=https://open.bigmodel.cn/api/paas/v4   # 与 LLM_BASE_URL 同值也可以
+> LLM_EMBEDDING_MODEL=embedding-3                                # ← 缺这一行就是 F1
+> LLM_EMBEDDING_API_KEY=<与 chat 同一个 Key 即可>                # 智谱同厂，共用 Key 没问题
+> ```
+>
+> **上线前必跑一次**（配置对了 ≠ 记忆真的在用，阶段 63~65 的 F1/F5 都是从这一步漏过去的）：
+>
+> ```bash
+> python scripts/自检记忆库.py     # 7 步：配置同源 → 真调 embedding → 指纹 → 写入
+>                                  # → 换一种问法语义回捞 → 跨用户隔离反证 → 条数自增
+> echo $?                          # 0 才算通过；2/3/4/5/6/7/8 分别对应失败在哪一步
+> ```
+>
+> 它和 `/healthz.memory.嵌入配置同源` 的分工：后者是**零网络的静态自检**（每秒都可能被轮询，绝不能变成
+> 计费调用），只证「配置自洽」；自检脚本才证「真能调通、真能召回」。两者都过才敢说记忆上线了。
 
 ### 其余可调项（`config/settings.py`）
 
@@ -214,11 +235,13 @@ curl -X POST http://127.0.0.1:8000/reports/generate `
 | HTTP 429 | 触发限流或额度。系统会自动重试 2 次并指数退避；持续 429 就是真限流了，查供应商账户 |
 | HTTP 5xx | 供应商侧故障，自动重试后仍失败则降级为规则，`llm_fail_reason` 里有原文 |
 | 响应里 `意图来源: 规则` | LLM 没配、调用失败或输出被白名单判负。看后端日志的 `LLM 调用失败` 警告行 |
-| 启动被拒："记忆库 embedding 指纹不一致" | 改了 `LLM_EMBEDDING_*` 但旧向量库还是上一个模型建的。两条恢复路径：`python scripts/重建记忆库.py --dry-run` 看清条数后 `--yes` 删除重建，或直接删掉库目录再启动。**两条都会丢掉全部长期记忆且不可逆**，所以脚本强制你显式二选一 |
+| 启动被拒："记忆库 embedding 指纹不一致" | 改了 `LLM_EMBEDDING_*` 但旧向量库还是上一个模型建的。跑 `python scripts/重建记忆库.py --dry-run` 看它怎么判：**0 条 + 指纹旧 = 只需重新盖章，一条用户数据都不丢**（阶段六十五 修 F5 后的新分支），确有数据时才会走「删除重建」并如实报出条数。两条路径都可能不可逆，所以脚本强制你显式 `--yes` |
 | 记忆功能静默失效 | `LLM_EMBEDDING_*` 没配（`llm_client.py:417-422` 只 warning 后返回 None），或 embedding 端点返回 401/400 被吞掉（`:439-442`）。**先看 `/healthz` 的 `memory.嵌入配置同源`**（阶段六十三新增）：`false` = 配置就配错了，`说明` 字段直接写清错在哪、怎么改 |
+| `嵌入配置同源: true` 但记忆还是空的 | `检查嵌入配置()` 是**零网络静态自检**，只能证明「配置自洽」，不能证明「真能调通」（阶段 63~65 的 F1 就是配置自洽却 400）。用 `python scripts/自检记忆库.py` 真调一次：退出码 3 = embedding 调不通，其余按步数定位 |
 | `嵌入配置同源: 未知` | 没配 Key（或还是占位符）→ 记忆链路整体不读写，这是部署的合法状态，不算配置错。`/healthz.memory.ok` 仍然是「库可读」的语义 |
 | 分析秒回、以为没走 LLM | 命中了规则快速通道（`orchestrator.py:261-284`），耗时接近 0 是**设计如此**。看报表的 `意图来源`：`规则-受控语句` / `规则-快速路由` = 没调 LLM，`LLM` = 真调了 |
-| 换了 embedding 模型但**没**被拦住 | 已知限制：指纹硬闸只对**新建库**有效。老库缺指纹字段时按"未知"放行，换模型既不报错也不启动失败。判断办法：`python scripts/重建记忆库.py --dry-run` 看条数是否为 0 |
+| 换了 embedding 模型但**没**被拦住 | 已知限制：指纹硬闸只对**新建库**有效。老库缺指纹字段时按"未知"放行，换模型既不报错也不启动失败。判断办法：`python scripts/重建记忆库.py --dry-run`——回「指纹与当前配置一致」才是真启用过，回「一个指纹字段都没有」说明这个库从没真正写入过记忆 |
+| 跑了 `--yes` 报 `NotFoundError` | 阶段六十五 之前的老脚本对不存在的 collection 无条件 `delete_collection`。现在已修：库不存在时直接新建。当前 `HEAD` 若还报这个错，说明脚本比代码旧 |
 
 > `/healthz` 会同时返回数据库与记忆库状态（`api/main.py`）。记忆块**不会**把整体状态降级为失败——它只做观测，不拖垮可用性。
 
