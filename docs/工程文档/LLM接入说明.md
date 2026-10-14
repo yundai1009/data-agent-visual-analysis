@@ -9,7 +9,7 @@
 
 1. **模块改名**：仓库同时存在中文别名与英文名两套文件，**真实 import 路径是英文名**。`llm客户端.py` → `后端_核心/agent/llm_client.py`；`编排器.py` → `后端_核心/agent/orchestrator.py`；`工具集.py` → `后端_核心/agent/tools.py`；`记忆.py` → `后端_核心/agent/memory.py`；`上传报表生成器.py` → `后端_核心/report_generator.py`。
 2. **配置从「全局一份 .env」演进到「请求级配置 + 18 家预设供应商 + 用户自带 Key（BYOK）」**：不再有"临时改全局变量"这种并发不安全做法。
-3. **阶段六十一新增向量记忆**：embedding 走独立配置项，并在启动时做一致性硬闸（同库不得混用不同 embedding 模型）。
+3. **阶段六十一加固了向量记忆**：embedding 拆出独立配置项，并在启动时做一致性硬闸（同库不得混用不同 embedding 模型）；容量从「一把全局尺子」改成按用户分层。
 
 ---
 
@@ -40,7 +40,7 @@ LLM_EMBEDDING_MODEL=text-embedding-3-small
 # LLM_EMBEDDING_API_KEY=     # 留空则回落 LLM_API_KEY（同供应商场景不必重复配）
 ```
 
-> **为什么必须单列这三项**（阶段六十一 D1）：不同供应商的 embedding 模型名与向量维度都不一样，混用会得到"能存不能查"的静默损坏库。`config/settings.py:30-39` 的注释写明了这条坑。
+> **为什么必须单列这三项**（阶段六十一 D1）：不同供应商的 embedding 模型名与向量维度都不一样，混用会得到"能存不能查"的静默损坏库。`config/settings.py:47-58` 的注释写明了这条坑。
 >
 > 读取入口：`llm_client.embedding_settings()`（`llm_client.py:379`）与 `llm_client.embed_text()`（`llm_client.py:403`）。
 
@@ -63,10 +63,10 @@ LLM_EMBEDDING_MODEL=text-embedding-3-small
 
 **内置列表**：deepseek、openai、gemini、claude、mistral、groq、xai、glm、qwen、kimi、doubao、ernie、hunyuan、minimax、stepfun、yi、openrouter、siliconflow。
 
-> ⚠️ **全部 `kind = openai`**，即统一走 OpenAI 兼容的 `/chat/completions` 协议。Claude 官方端点只列了模型名，实际接入需走中转服务（否则协议不兼容）。
+> ⚠️ **TOML 里不写 `kind` 键**：当前 18 家全部是 OpenAI 兼容的 `/chat/completions` 协议，所以 `kind` 缺省即 `openai`。加载时 `config/settings.py:160` 是 `if not name or p.get("kind", "openai") != "openai": continue`——**写别的值会被静默跳过**（不报错、该 provider 直接消失）。Claude 官方端点也列在表里，但它走的是 Anthropic 原生协议，实际接入需换类 OpenAI 的中转服务，否则请求格式对不上。
 
-- 加载入口：`config/settings.py` 的 `_加载LLMProviders()`；文件缺失或 TOML 解析失败 → 回退到内置默认表，**服务照常启动**。
-- 类定义完成后统一赋值：`EnvConfig.LLM_PROVIDERS = EnvConfig._加载LLMProviders()`（`config/settings.py:165`）。
+- 加载入口：`config/settings.py` 的 `_加载LLMProviders()`（`:144-196`）；文件缺失或 TOML 解析失败 → 回退到内置默认表（deepseek / openai / siliconflow 三家），**服务照常启动**。
+- 类定义完成后统一赋值：`EnvConfig.LLM_PROVIDERS = EnvConfig._加载LLMProviders()`（`config/settings.py:200`）——必须放在类体末尾，因为 `_加载LLMProviders` 是 staticmethod，类体里直接调用时它还没绑定。
 - 用户可在前端增删自定义供应商：`frontend/src/components/LLMConfig.jsx`，对应接口 `GET /auth/llm-providers`、`POST /auth/llm-providers/custom`、`DELETE /auth/llm-providers/custom/{name}`、`POST /auth/llm-providers/test`。新增供应商的 base_url 会过 SSRF 校验。
 
 ---
@@ -84,7 +84,7 @@ LLM_EMBEDDING_MODEL=text-embedding-3-small
 
 **隔离原则：请求级配置，不碰全局。**
 
-`config/settings.py:168` 的 `@dataclass(frozen=True) class LLMRequestConfig` 字段为 `provider / base_url / model / api_key / llm_fail_reason`，每次生成报表时按用户选择构造，沿调用链显式传递。
+`config/settings.py:204` 的 `@dataclass(frozen=True) class LLMRequestConfig` 字段为 `provider / base_url / model / api_key / llm_fail_reason`，每次生成报表时按用户选择构造，沿调用链显式传递。
 
 > **为什么不选"临时改 `EnvConfig.LLM_BASE_URL` 再 try/finally 还原"**：两个用户同时发请求必然互相污染，还依赖 try/finally 万无一失。frozen dataclass 让每个请求的配置在整条链路上"看得见"，并发请求互不干扰（这是阶段 12 收尾时的改造点）。
 
@@ -99,13 +99,13 @@ LLM_EMBEDDING_MODEL=text-embedding-3-small
 | 字段白名单 | `X轴 / Y轴 / 分组字段` 必须命中数据画像的字段列表，否则视为失败 | `tools.py` 的 `_validate_field` / `_validate_y_axis` |
 | 枚举白名单 | 图表类型 `_validate_chart_type`、聚合方式 `_validate_aggregation` | `tools.py:344/366` |
 | 用户优先 | 用户显式选的字段/图表类型优先，LLM 只填空缺 | `report_generator.py` |
-| SSRF 防护 | base_url 出站前做地址校验；**且禁用重定向**（`allow_redirects=False`），防"校验通过后再 302 到内网"绕过 | `llm_client.py:264`、`:296-299` |
-| 重试与退避 | 最多尝试 3 次（首发 + 2 次重试），指数退避 0.5s / 1s，仅对 429 / 5xx / 408 / 网络异常重试 | `llm_client.py:286-320` |
-| 超时 | 单次调用 ≤ `LLM_TIMEOUT` 秒（默认 60） | `llm_client.py` |
-| 配额 | 每日 token 与请求数双配额 | `config/settings.py:88-89` |
-| 凭据落库 | BYOK Key 用 `LLM_KEY_ENCRYPTION_KEY` 加密；管理端读用户列表时该字段被查询层剔除，而非事后过滤 | `config/settings.py:101`、`repositories/admin_repo.py` |
+| SSRF 防护 | base_url 出站前做地址校验（`llm_client.py:264`）；**且禁用重定向**（`allow_redirects=False`，`:299`/`:304`/`:434`），防"校验通过后再 302 到内网"绕过 |
+| 重试与退避 | 最多尝试 3 次（首发 + 2 次重试），指数退避 0.5s / 1s，仅对 429 / 5xx / 408 / 网络异常重试（`llm_client.py:286-321`） |
+| 超时 | 单次调用 ≤ `LLM_TIMEOUT` 秒（默认 60，`llm_client.py:285`） | `llm_client.py` |
+| 配额 | 每日 token 与请求数双配额 | `config/settings.py:123-124` |
+| 凭据落库 | BYOK Key 用 `LLM_KEY_ENCRYPTION_KEY` 加密；管理端读用户列表时该字段被查询层剔除，而非事后过滤 | `config/settings.py:136`、`repositories/admin_repo.py` |
 | 失败回退 | 未配置 / 超时 / 非 200 / 无 tool_call / 字段越界 → 全部降级为关键词规则，主链路不报错 | `orchestrator.py` |
-| 可观测性 | 每个失败节点 `logger.warning`；响应带 `意图来源`（`LLM` / `规则` / `无`）与 `llm_fail_reason` | `llm_client.py:73,91` |
+| 可观测性 | 每个失败节点 `logger.warning`（`:306`/`:317`/`:320`/`:329`）；响应带 `意图来源`（`LLM` / `规则` / `无`）与 `llm_fail_reason`，由 `llm_client.py:73 最近LLM失败()` / `:91 _解释HTTP状态()` 汇总 | `llm_client.py` |
 | 启动硬闸 | 记忆库 embedding 指纹与当前配置不一致 → 拒绝启动（宁可停服也不产出静默损坏的向量库） | `api/main.py` 第 6 道防线 |
 
 ---
@@ -147,7 +147,9 @@ LLM_EMBEDDING_MODEL=text-embedding-3-small
 ```powershell
 cd D:\python\数据分析agent\自助式数据分析Agent平台
 python -m pytest tests\backend\test_agent_意图.py -v
-python -m pytest tests\backend -q            # 全量，约 520+ 用例
+python -m pytest tests\backend -q            # 全量，约 558 用例（约 73 秒）
+python -m pytest tests\backend -q -k 阶段61   # 只跑向量记忆的 64 个用例
+python -m pytest tests\backend -q -p no:randomly   # 需要确定性顺序时
 ```
 
 **VCR 录放**：`tests/backend/llm_cassette.py` 提供"假网关"，把真实 LLM 响应录成 JSON 磁带放在 `tests/cassettes/`（5 个场景目录：`react_multi_round`、`react_llm_api_ok`、`react_llm_api_midmiss`、`degrade_round1`、`tool_call_direct`，共 11 个磁带）。测试时按请求指纹命中磁带，**不产生任何真实调用与费用**。
@@ -192,8 +194,9 @@ curl -X POST http://127.0.0.1:8000/reports/generate `
 | HTTP 429 | 触发限流或额度。系统会自动重试 2 次并指数退避；持续 429 就是真限流了，查供应商账户 |
 | HTTP 5xx | 供应商侧故障，自动重试后仍失败则降级为规则，`llm_fail_reason` 里有原文 |
 | 响应里 `意图来源: 规则` | LLM 没配、调用失败或输出被白名单判负。看后端日志的 `LLM 调用失败` 警告行 |
-| 启动被拒："记忆库 embedding 指纹不一致" | 改了 `LLM_EMBEDDING_*` 但旧向量库还在。删除向量库目录后重启（旧记忆会丢）或用重建脚本迁移 |
-| 记忆功能静默失效 | `LLM_EMBEDDING_*` 没配，或 embedding 端点返回 401/400 被吞掉。查 `/healthz` 的 `memory` 段 |
+| 启动被拒："记忆库 embedding 指纹不一致" | 改了 `LLM_EMBEDDING_*` 但旧向量库还是上一个模型建的。两条恢复路径：`python scripts/重建记忆库.py --dry-run` 看清条数后 `--yes` 删除重建，或直接删掉库目录再启动。**两条都会丢掉全部长期记忆且不可逆**，所以脚本强制你显式二选一 |
+| 记忆功能静默失效 | `LLM_EMBEDDING_*` 没配（`llm_client.py:417-422` 只 warning 后返回 None），或 embedding 端点返回 401/400 被吞掉（`:439-442`）。查 `/healthz` 的 `memory` 段 |
+| 换了 embedding 模型但**没**被拦住 | 已知限制：指纹硬闸只对**新建库**有效。老库缺指纹字段时按"未知"放行，换模型既不报错也不启动失败。判断办法：`python scripts/重建记忆库.py --dry-run` 看条数是否为 0 |
 
 > `/healthz` 会同时返回数据库与记忆库状态（`api/main.py`）。记忆块**不会**把整体状态降级为失败——它只做观测，不拖垮可用性。
 
