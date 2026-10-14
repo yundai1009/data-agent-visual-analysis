@@ -10,6 +10,9 @@
 1. **模块改名**：仓库同时存在中文别名与英文名两套文件，**真实 import 路径是英文名**。`llm客户端.py` → `后端_核心/agent/llm_client.py`；`编排器.py` → `后端_核心/agent/orchestrator.py`；`工具集.py` → `后端_核心/agent/tools.py`；`记忆.py` → `后端_核心/agent/memory.py`；`上传报表生成器.py` → `后端_核心/report_generator.py`。
 2. **配置从「全局一份 .env」演进到「请求级配置 + 18 家预设供应商 + 用户自带 Key（BYOK）」**：不再有"临时改全局变量"这种并发不安全做法。
 3. **阶段六十一加固了向量记忆**：embedding 拆出独立配置项，并在启动时做一致性硬闸（同库不得混用不同 embedding 模型）；容量从「一把全局尺子」改成按用户分层。
+4. **阶段六十三补上了「配置本身配错」这一层**：真机实测发现「端点用第三方、模型名却靠缺省回落成 `text-embedding-3-small`」时，
+   `/healthz` 依然全绿而记忆一次都没成功过。现在 `检查嵌入配置()` 会纯靠配置判定同源性，
+   `/healthz.memory` 多出 `嵌入配置同源` / `嵌入配置说明` 两个键，启动日志也会打 ERROR 级告警（**不拦启动**，理由见第 109 行表格）。
 
 ---
 
@@ -42,7 +45,12 @@ LLM_EMBEDDING_MODEL=text-embedding-3-small
 
 > **为什么必须单列这三项**（阶段六十一 D1）：不同供应商的 embedding 模型名与向量维度都不一样，混用会得到"能存不能查"的静默损坏库。`config/settings.py:47-58` 的注释写明了这条坑。
 >
-> 读取入口：`llm_client.embedding_settings()`（`llm_client.py:379`）与 `llm_client.embed_text()`（`llm_client.py:403`）。
+> **最典型的踩坑现场（阶段六十三 F1，实测抓获）**：只配了 `LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4` + `LLM_MODEL=glm-4-flash`，
+> 三项 `LLM_EMBEDDING_*` 一个都没配。回落链于是拼出「智谱端点 + `text-embedding-3-small`」，
+> 真实调用返回 **HTTP 400 / code 1211 / 模型不存在**，被 `embed_text()` 静默吞掉返回 `None`——
+> 而 `/healthz` 当时报 `memory.ok=true`，**全绿**。所以：**用了第三方（非 OpenAI/Azure）端点，就必须显式写 `LLM_EMBEDDING_MODEL`**。
+>
+> 读取入口：`llm_client.embedding_settings()`（`llm_client.py:379`）、`llm_client.embed_text()`（`llm_client.py:403`）、`llm_client.检查嵌入配置()`（阶段六十三新增，**零网络**）。
 
 ### 其余可调项（`config/settings.py`）
 
@@ -105,8 +113,20 @@ LLM_EMBEDDING_MODEL=text-embedding-3-small
 | 配额 | 每日 token 与请求数双配额 | `config/settings.py:123-124` |
 | 凭据落库 | BYOK Key 用 `LLM_KEY_ENCRYPTION_KEY` 加密；管理端读用户列表时该字段被查询层剔除，而非事后过滤 | `config/settings.py:136`、`repositories/admin_repo.py` |
 | 失败回退 | 未配置 / 超时 / 非 200 / 无 tool_call / 字段越界 → 全部降级为关键词规则，主链路不报错 | `orchestrator.py` |
-| 可观测性 | 每个失败节点 `logger.warning`（`:306`/`:317`/`:320`/`:329`）；响应带 `意图来源`（`LLM` / `规则` / `无`）与 `llm_fail_reason`，由 `llm_client.py:73 最近LLM失败()` / `:91 _解释HTTP状态()` 汇总 | `llm_client.py` |
+| 可观测性 | 每个失败节点 `logger.warning`（`:306`/`:317`/`:320`/`:329`）；响应带 `意图来源` 与 `LLM失败原因`，由 `llm_client.py:73 最近LLM失败()` / `:91 _解释HTTP状态()` 汇总 |
 | 启动硬闸 | 记忆库 embedding 指纹与当前配置不一致 → 拒绝启动（宁可停服也不产出静默损坏的向量库） | `api/main.py` 第 6 道防线 |
+| 配置自检 | embedding 端点/模型/Key 不同源 → **启动 ERROR 告警 + `/healthz.memory.嵌入配置同源=False`**，但**不拦启动** | `llm_client.检查嵌入配置()`（阶段六十三） |
+
+> **两道的分工别搞混**（阶段六十三定的边界）：
+> - **拦启动**（第 6 道硬闸）判的是「库里**已经有**数据，而当前 embedding 配置与建库时不同源」——
+>   继续跑会往一个语义错乱的库里写数据，**改配置也救不回来**，只能重建，所以必须停。
+> - **只告警**（阶段六十三）判的是「配置**本身就配错了**」——后果仅仅是「记忆没启用」，
+>   分析主链路完全不受影响，为这个拒绝启动得不偿失。
+>
+> **`意图来源` 的取值有四个，不是两个**（阶段六十三 F2）：`LLM` / `规则-受控语句` / `规则-快速路由` / `规则`。
+> 其中前两者来自编排器的规则快速通道（阶段 35/39 的「省 3-4s」优化，`orchestrator.py:261-284`）。
+> 前端判断时**必须用 `startsWith('规则')`**，equal-to 比较会把快速通道的产报显示成「自动」（已修：`Report.jsx:487`）。
+> 想知道「这一轮到底有没有真调 LLM」，别猜耗时（快速通道 0.0s、真 LLM 十秒级），直接看 `意图来源`。
 
 ---
 
@@ -195,7 +215,9 @@ curl -X POST http://127.0.0.1:8000/reports/generate `
 | HTTP 5xx | 供应商侧故障，自动重试后仍失败则降级为规则，`llm_fail_reason` 里有原文 |
 | 响应里 `意图来源: 规则` | LLM 没配、调用失败或输出被白名单判负。看后端日志的 `LLM 调用失败` 警告行 |
 | 启动被拒："记忆库 embedding 指纹不一致" | 改了 `LLM_EMBEDDING_*` 但旧向量库还是上一个模型建的。两条恢复路径：`python scripts/重建记忆库.py --dry-run` 看清条数后 `--yes` 删除重建，或直接删掉库目录再启动。**两条都会丢掉全部长期记忆且不可逆**，所以脚本强制你显式二选一 |
-| 记忆功能静默失效 | `LLM_EMBEDDING_*` 没配（`llm_client.py:417-422` 只 warning 后返回 None），或 embedding 端点返回 401/400 被吞掉（`:439-442`）。查 `/healthz` 的 `memory` 段 |
+| 记忆功能静默失效 | `LLM_EMBEDDING_*` 没配（`llm_client.py:417-422` 只 warning 后返回 None），或 embedding 端点返回 401/400 被吞掉（`:439-442`）。**先看 `/healthz` 的 `memory.嵌入配置同源`**（阶段六十三新增）：`false` = 配置就配错了，`说明` 字段直接写清错在哪、怎么改 |
+| `嵌入配置同源: 未知` | 没配 Key（或还是占位符）→ 记忆链路整体不读写，这是部署的合法状态，不算配置错。`/healthz.memory.ok` 仍然是「库可读」的语义 |
+| 分析秒回、以为没走 LLM | 命中了规则快速通道（`orchestrator.py:261-284`），耗时接近 0 是**设计如此**。看报表的 `意图来源`：`规则-受控语句` / `规则-快速路由` = 没调 LLM，`LLM` = 真调了 |
 | 换了 embedding 模型但**没**被拦住 | 已知限制：指纹硬闸只对**新建库**有效。老库缺指纹字段时按"未知"放行，换模型既不报错也不启动失败。判断办法：`python scripts/重建记忆库.py --dry-run` 看条数是否为 0 |
 
 > `/healthz` 会同时返回数据库与记忆库状态（`api/main.py`）。记忆块**不会**把整体状态降级为失败——它只做观测，不拖垮可用性。
