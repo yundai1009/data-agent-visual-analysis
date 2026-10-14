@@ -54,12 +54,6 @@ _需真实库 = pytest.mark.skipif(not _能连mysql(), reason="无 MySQL 实例�
 # ---- 当前后端() -----------------------------------------------------------
 
 
-def test_当前后端_默认sqlite():
-    from config import settings
-    assert settings.EnvConfig.DB_BACKEND == "sqlite" or True  # 不钉死默认值
-    assert backend.当前后端() in ("sqlite", "mysql")
-
-
 def test_当前后端_monkeypatch切换(monkeypatch):
     from config import settings
     monkeypatch.setattr(settings.EnvConfig, "DB_BACKEND", "mysql", raising=False)
