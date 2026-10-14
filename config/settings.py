@@ -3,7 +3,7 @@
 # ============================================================
 # 【做了什么】
 #   1. load_dotenv(dotenv_path=.env, override=False) 后，用 EnvConfig 把全部可调项收成类属性：服务端口、CORS、认证/JWT、LLM 供应商与 Key、记忆容量等。
-#   2. EnvConfig._加载LLMProviders() 读 config/providers.toml（阶段 13.5 外置，18 家），只收 kind="openai" 的条目，文件缺失或解析失败回退内置 3 家；结果在类定义完成后赋给 EnvConfig.LLM_PROVIDERS。
+#   2. EnvConfig._加载LLMProviders() 读 config/providers.toml（阶段 13.5 外置，18 家），只收 kind 为 "openai" 的条目（providers.toml 里**不写**这个键，缺省即 openai；写了别的值会被静默跳过、该 provider 直接消失且不报错），文件缺失或解析失败回退内置 3 家；结果在类定义完成后赋给 EnvConfig.LLM_PROVIDERS。
 #   3. LLMRequestConfig：请求级 LLM 配置（阶段 12 收尾），冻结 dataclass，随调用链显式传递。
 # 【为什么这么做】
 #   - EnvConfig 是**普通 class 而不是 @dataclass**：配置项是进程级常量、要被几十个模块按 EnvConfig.XXX 直接取用，类属性写法不需要实例化也不需要注入；代价是「导入时求值」。
@@ -13,7 +13,7 @@
 #   - **所有 EnvConfig 属性在 import 时求值一次**：改 .env 必须重启进程，否则读到的还是旧值——「配置项存在但怎么改都不生效」最难查的一类问题。同理，别把配置写成函数默认值再指望热更新。
 #   - load_dotenv(override=False)：系统环境变量优先级高于 .env，不会被 .env 覆盖（tests/conftest.py 正是靠这条用 os.environ 压住默认值的）。
 #   - CORS_ORIGINS 是**白名单**（阶段 19 起），不是 "*"；改了必须同步改前端 dev server 地址，否则浏览器直接被 CORS 拦掉。
-#   - EnvConfig.LLM_PROVIDERS 的赋值在类体之后（第 181 行）：因为 _加载LLMProviders 是 staticmethod，得等类体执行完才能调。
+#   - EnvConfig.LLM_PROVIDERS 的赋值在类体之后（第 200 行）：因为 _加载LLMProviders 是 staticmethod，得等类体执行完才能调。
 #   - LLM_EMBEDDING_API_KEY 故意独立于 LLM_API_KEY：一个向量库只能有一个语义空间，chat 与 embedding 用不同 Key 时混用会直接 401/400。
 #   - MEMORY_PER_USER_LIMIT / MEMORY_TOTAL_LIMIT / MEMORY_CLEAN_STEP 是**软上限**（阶段 61 Task 2）：两次扫描之间最多超 MEMORY_CLEAN_STEP 条。
 #   - 启动自检（api/main.py 的 _启动安全自检）要求 AUTH_ENABLED / JWT_SECRET_KEY / SEED_ADMIN_PASSWORD 非默认值，否则**拒绝启动**——本地跑不起来先查这三项。
@@ -23,6 +23,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Dict
 
 from dotenv import load_dotenv
 
