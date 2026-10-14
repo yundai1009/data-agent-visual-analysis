@@ -563,7 +563,7 @@ def generate_report_stream(
             # 参数/字段问题（词云无词、桑基缺分组）→ 可给用户看的明确提示
             logger.warning("报表流式生成参数不满足: %s", exc)
             _push({"type": "error", "message": str(exc)})
-        except Exception as exc:  # noqa: BLE001 - SSE 错误统一走事件通道
+        except Exception:  # noqa: BLE001 - SSE 错误统一走事件通道
             # 内部异常只记日志，对外返回通用消息（避免泄露路径/堆栈/数据细节）
             logger.exception("报表流式生成失败")
             _push({"type": "error", "message": "分析失败，请检查参数后重试"})

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Dict, List
 
 from 后端_核心.存储.backend import 写锁 as _write_lock
 from 后端_核心.存储.backend import 当前后端 as _后端

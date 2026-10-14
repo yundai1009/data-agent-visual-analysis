@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, List
-from pathlib import Path
 from uuid import uuid4
 import io
 import threading
@@ -27,7 +26,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from api.contracts import DatasetPreviewResponse, DatasetUploadResponse
+from api.contracts import DatasetPreviewResponse
 from api.dependencies import get_current_user
 from 后端_核心.file_services import 读取上传表格
 from 后端_核心.profile import 生成数据画像

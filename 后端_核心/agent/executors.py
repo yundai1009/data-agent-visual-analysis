@@ -33,12 +33,11 @@
 from __future__ import annotations
 
 import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import pandas as pd
 
 from 后端_核心.agent.tools import register_tool_executor
-from 后端_核心.profile import 生成数据画像 as _生成数据画像
 
 
 def _示例值文本(value: Any) -> str:

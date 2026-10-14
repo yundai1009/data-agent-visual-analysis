@@ -20,7 +20,7 @@ import csv
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Dict, Optional
 
 from 后端_核心.存储.backend import 写锁 as _write_lock
 from 后端_核心.存储.backend import 插入忽略 as _插入忽略, 当前后端 as _后端

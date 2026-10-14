@@ -48,11 +48,10 @@ from config.settings import LLMRequestConfig
 from 后端_核心.agent.tools import (
     TOOL_SCHEMAS_FULL,
     execute_tool,
-    validate_intent_against_profile,
 )
 from 后端_核心.agent.trace import TraceRecorder, 计时, 提取token
 from 后端_核心.agent.executors import 注册所有执行器
-from 后端_核心.agent.memory import 检索相似记忆, 保存记忆, 生成_few_shot_prompt, 记忆条数
+from 后端_核心.agent.memory import 检索相似记忆, 保存记忆, 生成_few_shot_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -388,7 +387,6 @@ def 编排Agent(
                         # 替代方案：不保存（省存储但无记忆）；或用关系库存结构化历史；
                         # 向量库 + 语义检索最适合"找相似需求"这个场景。
                         try:
-                            from 后端_核心.profile import 生成数据画像
                             画像摘要 = f"{画像.get('行数',0)}行/{画像.get('列数',0)}列"
                             保存记忆(user_id, 分析需求, intent_override, 画像摘要)
                             from 后端_核心.agent.memory import 清理记忆  # 阶段 61 Task 2：容量上限改由配置决定（单用户配额 + 全库硬上限 + 水位摊销）

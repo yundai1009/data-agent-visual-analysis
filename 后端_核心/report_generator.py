@@ -19,10 +19,8 @@ from 后端_核心.agent.conclusion import 润色结论
 from config.settings import LLMRequestConfig
 
 from 后端_核心.field_selector import (
-    _匹配意图字段, _提取模板字段, _合法字段,
-    自动选字段, _合并显式字段, _受控语句配置,
     _意图驱动配置, _推荐图表类型,
-    占比关键词, 字段意图关键词,
+    占比关键词,
 )
 
 logger = logging.getLogger(__name__)
@@ -272,7 +270,7 @@ def _生成推荐说明(
 def _字段问题提示(画像: Dict[str, Any], 图表类型: str, x轴: Optional[str], y轴列表: List[str], 分析需求: str = "") -> List[str]:
     warnings: List[str] = []
     数值字段 = set(画像.get("数值字段", []))
-    需求文本 = 分析需求.strip()
+    # 注：`分析需求` 形参保留是为了不破坏既有调用方（按关键字传参），当前版本未使用它。
     if 图表类型 != "表格" and not x轴:
         warnings.append("当前图表缺少 X 轴字段，已回退为数据预览/聚合结果")
     if 图表类型 not in {"表格", "饼图"} and not y轴列表:

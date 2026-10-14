@@ -144,7 +144,6 @@ class EnvConfig:
     @staticmethod
     def _加载LLMProviders() -> Dict[str, Any]:
         import logging
-        import os
         from pathlib import Path as _Path
         _log = logging.getLogger(__name__)
         _file = _Path(__file__).resolve().parents[1] / "config" / "providers.toml"

@@ -20,7 +20,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # 任务状态枚举：异步分析任务的"生命周期"。PENDING→RUNNING→

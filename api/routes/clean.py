@@ -12,7 +12,6 @@
 # ============================================================
 from __future__ import annotations
 
-from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -63,7 +62,6 @@ def clean_dataset(
 
         # 保存清洗版本：传 新文件名 时另存为新数据集（保留原始数据对照），否则覆盖
         from 后端_核心.profile import 生成数据画像
-        import io
         import uuid
 
         new_profile = 生成数据画像(cleaned_df)
