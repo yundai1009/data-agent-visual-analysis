@@ -447,3 +447,84 @@ def embed_text(text: str) -> Optional[List[float]]:
     except (json.JSONDecodeError, IndexError, TypeError, ValueError) as exc:
         logger.warning("Embedding 响应解析失败: %s", exc)
         return None
+
+
+# 阶段 63：判断「嵌入模型名和端点是不是一家的」用的域名特征。
+# 只认 OpenAI 官方域名（含 Azure OpenAI）；自定义网关可能同时代理 OpenAI 模型，
+# 那时这里会误判——所以它只用来**提示**，不用来拦截启动（见 检查嵌入配置 的说明）。
+_官方嵌入域名 = ("openai.com", "azure.com")
+
+
+def 检查嵌入配置() -> Dict[str, Any]:
+    """零网络检查 embedding 的 端点/模型/Key 三者是否同源（阶段 63 新增）。
+
+    由来（E2E 实测 run=1014-100941 + P0 备注）：`.env` 只配了 `LLM_BASE_URL`（智谱），
+    没配 `LLM_EMBEDDING_MODEL`，于是 `embedding_settings()` 的回落链给出
+    「OpenAI 的模型名 + 智谱的端点」→ `embed_text()` HTTP 400 → 被上面的
+    `if response.status_code != 200` 静默吞掉 → 而 `/healthz.memory.ok` 仍是 `true`
+    （它只表示「库可读」）。**这是假绿灯**：监控全绿，记忆功能从上线到现在一次都没工作过。
+
+    检查方式刻意**不发网络请求**：启动自检和 `/healthz` 会被高频轮询，
+    在那里打 embedding 接口等于把探活变成计费调用；而「模型名配成了别家模型」这件事
+    纯靠配置就能看出来，不需要网络。
+
+    Returns:
+        ``{"同源": True | False | "未知", "端点": str, "模型": str,
+           "端点来源": str, "模型来源": str, "键来源": str, "说明": str}``
+        「未知」= 无 Key 或无端点，记忆链路整体不读写，本就不该判对错。
+        「同源」= True 只代表**配置上**没有明显错配，不代表该端点真的支持这个模型
+        （那需要一次真实调用验证，不属于本函数的职责）。
+    """
+    base, model, key = embedding_settings()
+    键来源 = (
+        "LLM_EMBEDDING_API_KEY"
+        if EnvConfig.LLM_EMBEDDING_API_KEY
+        else ("LLM_API_KEY（回落）" if EnvConfig.LLM_API_KEY else "未配置")
+    )
+    端点来源 = (
+        "LLM_EMBEDDING_BASE_URL"
+        if EnvConfig.LLM_EMBEDDING_BASE_URL
+        else ("LLM_BASE_URL（回落）" if EnvConfig.LLM_BASE_URL else "未配置")
+    )
+    模型来源 = "LLM_EMBEDDING_MODEL" if EnvConfig.LLM_EMBEDDING_MODEL else f"缺省值 {model}"
+    结果: Dict[str, Any] = {
+        "同源": "未知",
+        "端点": base,
+        "模型": model,
+        "端点来源": 端点来源,
+        "模型来源": 模型来源,
+        "键来源": 键来源,
+        "说明": "",
+    }
+
+    if not is_llm_configured(key):
+        结果["说明"] = (
+            f"未配置可用的 embedding Key（{键来源}）：记忆链路整体不读写，"
+            "分析主流程不受影响，无需处理"
+        )
+        return 结果
+    if not base:
+        结果["同源"] = False
+        结果["说明"] = "未配置 embedding 端点（LLM_EMBEDDING_BASE_URL / LLM_BASE_URL），embed_text() 会直接早退"
+        return 结果
+
+    # 【关键行】模型名是缺省的 → 只能是 OpenAI 官方的 text-embedding-3-small。
+    # 为什么单拎出来判：这是最常见的踩法（配了聊天模型的端点就以为 embedding 也通了），
+    # 而它的失败方式是「静默返回 None」，用户侧表现为记忆功能从头到尾没工作过。
+    if not EnvConfig.LLM_EMBEDDING_MODEL:
+        if any(域名 in base for 域名 in _官方嵌入域名):
+            结果["同源"] = True
+            结果["说明"] = "未配 LLM_EMBEDDING_MODEL，但端点是 OpenAI 官方，缺省模型名可用"
+        else:
+            结果["同源"] = False
+            结果["说明"] = (
+                f"LLM_EMBEDDING_MODEL 未配置，当前用的是 OpenAI 的缺省模型名 {model}，"
+                f"而端点是 {base}——该端点几乎不可能有这个模型，embed_text() 会 4xx "
+                "并被静默吞掉，记忆功能等于没启用。请显式配置 LLM_EMBEDDING_MODEL "
+                "为该端点实际支持的嵌入模型名（与 LLM_EMBEDDING_BASE_URL/KEY 同源）"
+            )
+        return 结果
+
+    结果["同源"] = True
+    结果["说明"] = "三项均为显式配置（是否真支持该模型需一次真实调用验证）"
+    return 结果

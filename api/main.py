@@ -125,6 +125,8 @@ def _启动安全自检() -> None:
     - 阶段 61 新增第 5 道：--workers > 1 拒绝启动（向量记忆是嵌入式单进程库）。
     - 阶段 61 新增第 6 道：记忆库 embedding 指纹与当前配置不同源 → 拒绝启动
       （只是「库打不开」则放行，记忆是可降级依赖）。
+    - 阶段 63 追加（**不是闸门**）：embedding 端点/模型/Key 配置错配 → 启动日志
+      ERROR 级告警，但不拒绝启动——理由见下面那段注释。
     """
     auth = os.getenv("AUTH_ENABLED")
     # 【关键行】AUTH_ENABLED 没设置 → 直接拒绝启动。
@@ -213,7 +215,7 @@ def _启动安全自检() -> None:
     # 降级边界：「打开记忆库本身失败」（磁盘满/权限/锁文件）不拦截启动——记忆是
     #         非关键依赖，只记 warning 并在 /healthz.memory 里暴露，交给运维处理。
     try:
-        from 后端_核心.agent.llm_client import embedding_settings, is_llm_configured
+        from 后端_核心.agent.llm_client import embedding_settings, is_llm_configured, 检查嵌入配置
         from 后端_核心.agent.memory import 校验记忆库一致性
 
         # 【关键行】embedding Key 为空 = 记忆链路整体不读写 → 跳过指纹校验。
@@ -233,6 +235,24 @@ def _启动安全自检() -> None:
             )
         else:
             校验记忆库一致性()
+
+        # 阶段 63 追加：启动期把 embedding 的**配置错配**喊出来——只告警，不拦启动。
+        # 为什么只告警：记忆是可降级依赖，配置错了只是「记忆没启用」，分析主流程
+        #   照跑；为一个可降级依赖拒绝启动，代价远大于收益（对比第 6 道指纹闸：
+        #   那条拦的是「库里有数据但语义空间变了」——那种情况下继续跑等于默默
+        #   往库里写**错语义**的向量，且无法靠删配置挽回，所以必须硬拦）。
+        # 为什么要在启动时喊：embed_text() 的失败方式只有一行 logger.warning
+        #   （llm_client.py 非 200 分支静默吞掉），/healthz.memory.ok 又是「库可读」
+        #   语义——结果是监控全绿、记忆从没工作过。E2E 实测（run=1014-100941）就是这么
+        #   撞见的：LLM_EMBEDDING_MODEL 没配，OpenAI 的模型名打到了智谱端点。
+        嵌入配置 = 检查嵌入配置()
+        if 嵌入配置["同源"] is False:
+            logger.error(
+                "向量记忆的 embedding 配置不同源 —— 记忆功能实际不可用（不影响分析主流程）：%s",
+                嵌入配置["说明"],
+            )
+        else:
+            logger.info("向量记忆 embedding 配置检查：同源=%s —— %s", 嵌入配置["同源"], 嵌入配置["说明"])
     except RuntimeError as exc:
         raise RuntimeError(f"安全拒绝启动：{exc}") from exc
     except Exception as exc:
