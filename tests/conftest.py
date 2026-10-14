@@ -2,6 +2,7 @@
 # AUTH_ENABLED/JWT_SECRET_KEY/SEED_ADMIN_PASSWORD 必须显式非默认，否则 api.main lifespan
 # 的 _启动安全自检() 会拒绝启动。
 import os
+import tempfile
 
 os.environ["AUTH_ENABLED"] = "true"
 os.environ["JWT_SECRET_KEY"] = "test-secret-0123456789abcdef0123456789abcdef"
@@ -10,3 +11,8 @@ os.environ["SEED_ADMIN_PASSWORD"] = "test-admin-password"
 # 全链路走确定性规则降级（不依赖真实网络/Key，测试快且可复现）。
 # 需要验证 LLM 行为的用例自行 monkeypatch chat_completion 或显式设置 EnvConfig.LLM_API_KEY。
 os.environ["LLM_API_KEY"] = "your_llm_api_key"
+
+# 向量记忆库重定向到系统临时目录（阶段 61 Task 3）：memory.py:53 在**导入时**读 DAA_CHROMA_PATH，
+# 不设就会回落到仓库内的 data/chroma_db——跑一次测试就污染真实记忆库。
+# 用 mkdtemp（每次唯一）而不是固定路径：固定路径会让上一次运行的残留影响下一次断言。
+os.environ["DAA_CHROMA_PATH"] = tempfile.mkdtemp(prefix="daa_chroma_test_")

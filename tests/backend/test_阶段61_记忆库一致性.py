@@ -119,21 +119,28 @@ def test_指纹不一致_端点_拒绝(monkeypatch):
 
 
 def test_不一致文案_只给真实可执行的修复路径(monkeypatch):
-    """[阶段 61 修复 B3] 报错文案不许指向不存在的 `scripts/重建记忆库.py`。
+    """[阶段 61 修复 B3] 报错文案**指向的东西必须真实存在**。
 
-    为什么锁这条：原文案让「指纹不一致 = 拒绝启动 + 唯一修复路径是一个
-    Task 3 才会存在的脚本」＝ 运维当场把服务改到起不来、文案却告诉他跑一个
-    跑不存在的命令（本轮该脚本确不存在）。现在只给真能立刻执行的两条路：
-    删库重建（点明不可逆 + 丢失全部长期记忆）或把配置改回原值。
+    为什么锁这条：原文案让「指纹不一致 = 拒绝启动 + 唯一修复路径指向一个
+    尚不存在的脚本」＝ 运维当场把服务改到起不来，文案却让他跑一条跑不通的命令。
+    Task 3 把脚本落地后，禁令就该升级成「提到即必须存在」——否则脚本哪天被
+    改名/删掉，文案又会变回一句骗人的话，而这里没有任何东西会红。
     """
+    monkeypatch.setattr(memory, "_CHROMA_DIR", str(记忆目录 := "data/chroma_db"))
     monkeypatch.setattr(EnvConfig, "LLM_EMBEDDING_MODEL", "m2", raising=False)
     with pytest.raises(RuntimeError) as 抓:
         memory.校验指纹({"embedding模型": "m1"}, memory.当前指纹())
     文案 = str(抓.value)
-    assert "scripts/重建记忆库.py" not in 文案
-    assert "重建记忆库" not in 文案
+
+    # 文案提到重建脚本 → 脚本必须真的躺在仓库里（不许指向空气）
+    if "scripts/重建记忆库.py" in 文案:
+        脚本 = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "scripts", "重建记忆库.py",
+        )
+        assert os.path.isfile(脚本), f"文案让运维跑 {脚本}，但该文件不存在"
     # 真实可执行：给出绝对目录路径 + 明确标注不可逆
-    assert os.path.abspath(memory._CHROMA_DIR) in 文案
+    assert os.path.abspath(记忆目录) in 文案
     assert "不可逆" in 文案
     assert "丢失全部长期记忆" in 文案
 
