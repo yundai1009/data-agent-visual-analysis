@@ -169,3 +169,38 @@ describe('Report 批量导出（阶段 53 · D）', () => {
     expect(await screen.findByText(/暂无报表可导出/)).toBeInTheDocument();
   });
 });
+
+// 阶段 63：E2E 实测（run=1014-100941）撞出来的徽标错标。
+// 编排器（后端_核心/agent/orchestrator.py:274/:280）会在 LLM 之前先走规则快速通道，
+// 来源分别叫「规则-受控语句」「规则-快速路由」；只有彻底降级那条才叫「规则」。
+// 前端原来只认后者，于是规则快速通道产出的报表徽标显示成「自动」——
+// 「自动」在 UI 里的另一层含义是「来源未知」，用户据此判断不了这份图表到底谁生成的。
+describe('Report 意图来源徽标（阶段 63）', () => {
+  it('来源为「规则-受控语句」→ 徽标显示「规则匹配」而不是「自动」', async () => {
+    setupMocks({ ...chartReport, 意图来源: '规则-受控语句' });
+    renderReport();
+    await screen.findByText('报表查看');
+    expect(screen.getByText('规则匹配')).toBeInTheDocument();
+    expect(screen.queryByText('自动')).not.toBeInTheDocument();
+  });
+
+  it('来源为「规则-快速路由」→ 同样显示「规则匹配」', async () => {
+    setupMocks({ ...chartReport, 意图来源: '规则-快速路由' });
+    renderReport();
+    await screen.findByText('报表查看');
+    expect(screen.getByText('规则匹配')).toBeInTheDocument();
+  });
+
+  it('来源为「LLM」→ 仍显示「AI 生成」；来源缺失 → 才是「自动」', async () => {
+    setupMocks({ ...chartReport, 意图来源: 'LLM' });
+    const { unmount } = renderReport();
+    await screen.findByText('报表查看');
+    expect(screen.getByText('AI 生成')).toBeInTheDocument();
+    unmount();
+
+    setupMocks({ ...chartReport, 意图来源: undefined });
+    renderReport();
+    await screen.findByText('报表查看');
+    expect(screen.getByText('自动')).toBeInTheDocument();
+  });
+});

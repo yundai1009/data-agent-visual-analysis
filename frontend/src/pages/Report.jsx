@@ -484,7 +484,7 @@ export default function Report() {
             </div>
           )}
           <span className="flex items-center gap-1 px-2.5 py-1 rounded text-xs bg-accent-soft text-accent border border-accent/20">
-            <Sparkles className="w-3 h-3" /> {intentSource === 'LLM' ? 'AI 生成' : intentSource === '规则' ? '规则匹配' : '自动'}
+            <Sparkles className="w-3 h-3" /> {intentSource === 'LLM' ? 'AI 生成' : String(intentSource).startsWith('规则') ? '规则匹配' : '自动'}
           </span>
           <span className="px-2.5 py-1 rounded text-xs bg-gray-50 text-gray-500 border border-gray-200">{chartTypeLabel}</span>
           {Array.isArray(chartConfig?.筛选说明) && chartConfig.筛选说明.length > 0 && (
