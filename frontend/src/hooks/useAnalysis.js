@@ -241,6 +241,9 @@ export default function useAnalysis() {
     const controller = new AbortController();
     abortRef.current = controller;
     const seq = ++generateSeqRef.current;
+    // 阶段六十八：SSE 里拿到的新报表 ID。拿到后不再留在直播面板上等用户
+    // 手动点「查看报表」，而是流一结束就自动跳到图表页。
+    let 新报表ID = null;
 
     try {
       await generateReportStream(payload, {
@@ -256,6 +259,7 @@ export default function useAnalysis() {
             setLiveDone({ 报表ID: ev.报表ID, 标题: ev.标题 });
             setShowChartSwitch(true);
             lastReportIdRef.current = ev.报表ID;
+            新报表ID = ev.报表ID || null;
             return 'stop';
           } else if (ev.type === 'error') {
             // Fix 1（阶段54-7）：SSE error 只写 liveError 会随 generating 面板卸载
@@ -292,6 +296,11 @@ export default function useAnalysis() {
         generatingRef.current = false;
       }
     }
+
+    // 阶段六十八：生成成功就直接落到图表页（下载/错误分支不会走到这里，
+    // 新报表ID 只在 done 事件里被赋值）。放在 try/finally 之后导航，
+    // 保证先复位 generating、再切路由，避免在流还开着的时候卸载页面。
+    if (新报表ID) navigate(`/report/${新报表ID}`);
     return true;
   }
 

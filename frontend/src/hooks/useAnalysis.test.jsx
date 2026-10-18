@@ -90,6 +90,31 @@ describe('useAnalysis 智能分析 Hook', () => {
     expect(result.current.generating).toBe(false);
   });
 
+  it('阶段68 成功生成图表后自动跳到图表页（回归：此前停在直播面板，须再点一次「查看报表」）', async () => {
+    mockCtx.gen.mockImplementation(async (_payload, opts) => {
+      opts.onEvent({ type: 'step', data: { 步骤: '获取数据画像' } });
+      opts.onEvent({ type: 'done', 报表ID: 'r-auto', 标题: '地区销售构成' });
+    });
+    const { result } = renderHook(() => useAnalysis(), { wrapper });
+    act(() => result.current.setNlInput('帮我按地区看销售额'));
+    await act(async () => {
+      await result.current.handleGenerate();
+    });
+    expect(mockNavigate).toHaveBeenCalledWith('/report/r-auto');
+  });
+
+  it('阶段68 生成失败不跳到图表页（只有 done 事件才带新报表 ID）', async () => {
+    mockCtx.gen.mockImplementation(async (_payload, opts) => {
+      opts.onEvent({ type: 'error', message: '分析失败：字段不存在' });
+    });
+    const { result } = renderHook(() => useAnalysis(), { wrapper });
+    await act(async () => {
+      await result.current.handleGenerate();
+    });
+    expect(result.current.error).toBe('分析失败：字段不存在');
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
   it('handleGenerate 无数据集：报错并跳转数据管理页', async () => {
     mockCtx.dataset = null;
     const { result } = renderHook(() => useAnalysis(), { wrapper });
