@@ -20,6 +20,7 @@
 # ============================================================
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import logging
@@ -527,8 +528,15 @@ def generate_report_stream(
     # 【关键行】阶段六十七 取消令牌：本次请求专属的停止信号。
     # 为什么是 per-request 的 Event 而不是全局开关：同一进程同时服务多个用户，
     # 一个用户关页面不能停掉别人的分析。
-    # 谁置位：下面 event_stream() 的 finally —— 客户端断开时 Starlette 关闭生成器
+    # 谁置位：下面 event_stream() 的 finally —— 客户端断开时 Starlette 关掉生成器
     #   （GeneratorExit）→ finally 必然执行。
+    #   ⚠️ 前提：event_stream 必须是 **async generator**（见下）。同步生成器会被
+    #   Starlette 用 iterate_in_threadpool 包一层，客户端断连只关掉外层 async 包装，
+    #   内层同步生成器的 finally 要等 worker 推结束哨兵才跑——那时分析已经跑完，
+    #   令牌等于白置位（v1 真机实测：断连后 3 秒报表就落库了，日志无一条取消）。
+    #   探针证据（.superpowers/_probe_sse.py，uvicorn 0.34.0 + starlette 1.3.1）：
+    #   同步生成器 finally 在断连后 8.5s（worker 推哨兵）才跑；async generator
+    #   在 r.close() 当刻 0.00s 就跑。
     # 谁消费：worker → _生成报表流式 → 编排Agent/_执行一轮，每轮 LLM 调用前自查。
     # 效果：用户关掉页面后，后续轮次的 LLM 请求不再发出（阶段六十二 实测单轮 10.94 秒）。
     cancel = threading.Event()
@@ -588,12 +596,20 @@ def generate_report_stream(
 
     threading.Thread(target=worker, daemon=True).start()
 
-    def event_stream():
+    async def event_stream():
         # 注意：并发名额只由 worker 释放（含客户端断开后 worker 自然结束的场景），
         # 这里不再 release，避免 BoundedSemaphore 双释放抛 ValueError。
+        # 【关键行】本函数必须是 async generator（不能改回 def + event_q.get()）：
+        # 只有 async generator 会被 Starlette 直接迭代（stream_response 里
+        # `async for`），客户端断连时 task group cancel 把 GeneratorExit 抛进
+        # 本函数，finally 才会在断连当刻执行。同步生成器会被
+        # iterate_in_threadpool 包一层，断连只关外层包装，详见上方 cancel 注释。
+        # 队列读取用 asyncio.to_thread 而不是阻塞 event_q.get()：不能卡住事件循环
+        # （Fix 3 的教训）。被取消时留在线程池里的那个 get 会被 worker 推的结束
+        # 哨兵唤醒后自然退出，不会长期占线程。
         try:
             while True:
-                ev = event_q.get()
+                ev = await asyncio.to_thread(event_q.get)
                 if ev is None:
                     break
                 yield f"data: {json.dumps(_json_safe(ev), ensure_ascii=False, default=str, allow_nan=False)}\n\n"

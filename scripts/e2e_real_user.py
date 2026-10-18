@@ -147,6 +147,10 @@ def 起后端(keep_chroma=False):
     env["AUTH_ENABLED"] = "true"
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
+    # 阶段六十九：P14 判「断开有没有传到应用层」靠 orchestrator 里那句
+    # `logger.info("第 N 轮后收到取消信号…")`。api/main.py 按 LOG_LEVEL 配应用日志，
+    # 不设就是 warning（跟打包桌面端同口径），INFO 会被丢掉 —— 这里显式开 info。
+    env["LOG_LEVEL"] = "info"
     if not keep_chroma:
         # 真库是硬的，但记忆库不跟着真库走：每轮用独立 chroma 目录，免得把用户的记忆库
         # 搅进测试（记忆条数/指纹/清理水位都会飘）。要连记忆一起验就加 --keep-chroma。
@@ -174,6 +178,39 @@ def 抓验证码(email, timeout=30):
                 return m.group(1)
         time.sleep(0.5)
     return ""
+
+
+def 等日志(pattern, timeout=60, 起点=0):
+    """在后面端日志的 [起点:] 里等某条正则出现，返回匹配到的整行文本（"" = 超时）。
+
+    为什么把日志当证据：阶段六十七的取消发生在 worker 线程里，而客户端这时候**已经断开**——
+    它恰恰是问不到的那一方，SSE 上也再不会有帧回来。所以「取消真的发生了吗」只能靠服务端
+    自己的记录来判。起点用来只认本次操作之后新写的行，避免把上一组用例留下的行当成自己的证据。
+    """
+    pat = re.compile(pattern)
+    截止 = time.time() + timeout
+    while True:
+        if BACKEND_LOG.exists():
+            try:
+                尾部 = BACKEND_LOG.read_text(encoding="utf-8", errors="replace")[起点:]
+            except Exception:  # noqa: BLE001
+                尾部 = ""
+            m = pat.search(尾部)
+            if m:
+                return m.group(0)
+        if time.time() >= 截止:
+            return ""
+        time.sleep(1)
+
+
+def 日志游标():
+    """当前后端日志长度（按字符），配合 等日志(起点=…) 只看新写入的部分。"""
+    if not BACKEND_LOG.exists():
+        return 0
+    try:
+        return len(BACKEND_LOG.read_text(encoding="utf-8", errors="replace"))
+    except Exception:  # noqa: BLE001
+        return 0
 
 
 def 端口空闲(port):
@@ -551,15 +588,41 @@ def main():
             关引导()
             t0 = time.time()
             点(page, "button:has-text('开始分析')")
+            # 阶段六十八：生成成功会**自动跳到报表页**，所以「分析完成」的页面信号已经不是
+            # 追问条，而是报表页本身（Report.jsx 的「报表查看」标题）。这里先钉跳转，
+            # 下一段再钉追问条还能不能回来。
+            跳到报表 = False
             try:
-                page.wait_for_selector("text=继续追问", timeout=180000)
-                分析用时 = time.time() - t0
-                check("分析完成（追问条出现）", True, f"{分析用时:.1f}s", group="P5 分析", cost=分析用时)
+                page.wait_for_selector("text=报表查看", timeout=180000)
+                跳到报表 = True
             except Exception:  # noqa: BLE001
-                分析用时 = time.time() - t0
-                body = page.inner_text("body")[:300]
-                check("分析完成（追问条出现）", False, f"{分析用时:.1f}s 后未见追问条；页面文本={body!r}", group="P5 分析", cost=分析用时)
+                pass
+            分析用时 = time.time() - t0
+            body = page.inner_text("body")[:300]
+            check("分析完成（阶段六十八：自动跳到报表页）", 跳到报表,
+                  f"{分析用时:.1f}s 跳到报表={跳到报表}；页面文本={body!r}",
+                  group="P5 分析", cost=分析用时)
             page.screenshot(path=str(SHOT_DIR / "06-分析完成.png"), full_page=True)
+
+            # 阶段六十九回归（真机 E2E 抓到的那一个）：自动跳转把分析页卸载了，
+            # liveDone 随之丢失，追问条（查看报表 / 存为模板 / 推荐追问，阶段 52/53 的入口）
+            # 在主导流程里再也没机会出现——旧断言在这里等 180s 也是白等。
+            # 修复是报表页「继续分析」把上一份报表用 router state 带回来。
+            追问条 = False
+            回跳说明 = ""
+            try:
+                if not page.locator("button:has-text('继续分析')").count():
+                    回跳说明 = "报表页没找到『继续分析』按钮"
+                else:
+                    点(page, "button:has-text('继续分析')")
+                    page.wait_for_selector("text=继续追问", timeout=20000)
+                    追问条 = True
+            except Exception as e:  # noqa: BLE001
+                回跳说明 = f"{type(e).__name__}"
+            if not 追问条:
+                note(f"回跳后未见追问条：{回跳说明}；页面文本={page.inner_text('body')[:200]!r}")
+            check("报表页『继续分析』回跳后追问条重新出现（阶段六十九回归）", 追问条,
+                  f"回跳说明={回跳说明 or '点到了'}", group="P5 分析")
 
             意图来源 = ""
             失败原因 = ""
@@ -886,6 +949,10 @@ def main():
         # 所以这是「本轮账号的记忆还在库里」的最后一个观察窗口。
         跑向量记忆(token, 数据集ID)
 
+        # ---------------- P14 取消/中断令牌端到端（阶段六十七）
+        # 与 P13 同一窗口：token 有效、数据集还在、P12 还没删号。
+        跑取消令牌(token, 数据集ID)
+
         # ---------------- P12 收尾：删账号 + MySQL 残留核对
         print("\n== P12 清理与残留核对 ==")
         if args.keep:
@@ -1029,6 +1096,152 @@ def 跑向量记忆(token, 数据集ID):
     后条数 = int(后.get("条数") or 0)
     check("记忆条数自增（检索+保存的读与写两段都跑通）", 后条数 > 基线,
           f"{基线} → {后条数}", group=G)
+
+
+# --------------------------------------------------------------------------- 取消令牌
+def 跑取消令牌(token, 数据集ID):
+    """P14 取消/中断令牌端到端（阶段六十七）。
+
+    为什么要有这一组：`tests/backend/test_阶段67_取消令牌.py` 证明了「令牌一旦置位就不再
+    发起新的 LLM 调用」，但那是**直接把 threading.Event 塞进函数**——真正可疑的一环恰好
+    被跳过：真机上是谁、在什么时机把令牌置位的？答案是 Starlette 在客户端断连时 aclose()
+    掉 SSE 生成器 → `event_stream()` 的 finally → `cancel.set()`。这条链路只有真机能验：
+
+      1. 用真实 HTTP 长连接 POST `/reports/generate-stream`（前端的 SSE 端点），
+         读到第一帧就**立刻关闭 socket**——等价于用户看到直播面板后直接关掉标签页。
+         （必须自己 urlopen：脚本里的 `http()` 是 urllib 一次性读全的薄封装，读不了流。）
+      2. **主证据是后端日志里的「第 N 轮后收到取消信号，跳过后续 LLM 调用」**。
+         阶段六十九真机探针（`scripts/probe_sse_断连传导.py`）证明：`event_stream` 是同步
+         生成器时断连**根本传导不进去**，要等 worker 自己跑完推哨兵（实测 8.5s vs 4.5s）；
+         改成 async generator 后断连当刻就 aclose() 到生成器 → `finally: cancel.set()`。
+         而「取消发生了」这件事只有日志看得见：客户端这时候已经断开，SSE 上再没有帧回来。
+      3. 断开后服务端应该：置位令牌 → 后续轮次不再发 LLM 请求 → **但报表照常算完落库**。
+         所以这里轮询报表列表等它出现：取消的是「继续推理」，不是「这次分析」。
+      4. 那一份报表会落到规则降级版（`意图来源` 以「规则」开头），trace 里写明断开原因、
+         状态记为「需关注」——「需关注」而不是「失败」是刻意的：用户自己关的页面不是系统错。
+         注意「意图来源=规则」**单独不构成取消证据**：含糊需求本来也会落到规则降级，
+         它只作辅助断言。
+
+    已知边界（别当成通过）：这一组只证明**断开真的传到了应用层**并改变了后续轮次的行为；
+    它不测「已飞出去的那一个 LLM 请求」是否被中断（HTTP 请求没有取消语义，阶段六十七
+    的设计本就不拦它，收益在后续轮次）。也不测并发：同一进程里另一个用户的 SSE 不受影响
+    这件事由 per-request 令牌的设计保证，真机并发验证未做。
+    """
+    G = "P14 取消"
+    print("\n== P14 取消/中断令牌端到端 ==")
+    if not token or not 数据集ID:
+        check("P14 前提：有可用 JWT 和数据集 ID", False, "缺 token 或数据集，整组跳过", group=G)
+        return
+
+    # 断开前先给「已有报表」拍全量快照：断开后靠**差集**定位本次新报表。
+    # 这一版是踩过坑改的：旧写法取「列表中第一个 ≠ 断前最新的 ID」，而 worker 还没落库时
+    # 列表是 [断前最新, 更旧的一份, …]，于是它抓到的是**上一轮 E2E 用例留下的旧报表**
+    # （run=1018-122322 实测抓到 P13 之前就存好的 58b572f6…），trace 里当然没有取消记录
+    # ——「落库」「规则降级」「trace 需关注」三条一起变成假绿。
+    st, body = http("GET", "/reports/?limit=50", token=token)
+    断前最新 = ""
+    断前集合: set = set()
+    if st == 200:
+        try:
+            列表 = json.loads(body).get("报表列表") or []
+            断前最新 = 列表[0].get("报表ID", "") if 列表 else ""
+            断前集合 = {x.get("报表ID") for x in 列表 if x.get("报表ID")}
+        except Exception as e:  # noqa: BLE001
+            note(f"P14 断开前报表列表解析失败：{type(e).__name__}")
+    note(f"P14 断开前快照：最新={断前最新!r} 已知报表={len(断前集合)} 份")
+
+    需求 = "帮我分析一下销售情况"  # 实测这两句都会真走 LLM 多轮（含糊需求最后仍可能落规则降级）
+    首条 = b""
+    断因 = ""
+    # 断开前记日志游标：只认这次断开之后新写的取消日志，别把同一次 E2E 里前几组
+    # （比如 P5）留下的行当成自己的证据。
+    游标 = 日志游标()
+    try:
+        请求 = urllib.request.Request(
+            BASE + "/reports/generate-stream",
+            data=json.dumps({"数据集ID": 数据集ID, "分析需求": 需求},
+                            ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+                "Authorization": f"Bearer {token}",
+            },
+            method="POST",
+        )
+        t0 = time.time()
+        with urllib.request.urlopen(请求, timeout=180) as r:
+            首条 = r.readline()  # 只读一帧：读完就退出 with，socket 随即关闭
+        首帧耗时 = time.time() - t0
+    except Exception as e:  # noqa: BLE001
+        断因 = f"{type(e).__name__}: {e}"
+        首帧耗时 = 0.0
+    check("P14 连上 SSE 读到第一帧后立刻断开（等价于用户关掉页面）",
+          首条.startswith(b"data:") and not 断因,
+          f"首条={首条[:70]!r} 断因={断因!r} 耗时={首帧耗时:.1f}s", group=G, cost=首帧耗时)
+
+    # ★ 主证据：断开必须真的传到应用层。worker 在下一轮开头读令牌，所以这条日志会
+    # 在断开后一两轮之内出现（单轮 LLM ~1.5s）；30s 还没出现就说明取消机制没生效。
+    取消日志 = 等日志(r"第 \d 轮后收到取消信号[^\n]*", timeout=30, 起点=游标)
+    check("P14 断开传导到应用层：后端日志出现「收到取消信号，跳过后续 LLM 调用」",
+          bool(取消日志),
+          f"命中={取消日志!r}（没命中＝event_stream 又被改回同步生成器，或令牌没被置位）",
+          group=G)
+    # 润色结论是流程里最后一个 LLM 调用（编排结束之后、报表落库之前）。它也必须被令牌拦下，
+    # 否则「断开后不再发起新的 LLM 调用」在真机上仍然不成立。没有这条日志行 = 润色没被拦。
+    润色日志 = 等日志(r"客户端已断开，跳过结论润色 LLM 调用[^\n]*", timeout=10, 起点=游标)
+    check("P14 断开后结论润色也不再发 LLM 请求（最后一个 LLM 调用同样看令牌）",
+          bool(润色日志),
+          f"命中={润色日志!r}（没命中＝_生成结论_含来源 的 cancel 参数又被摘掉了）",
+          group=G)
+
+    # 断开后 worker 还在跑：轮询等报表落库（这是「报表照常生成」的证据）。
+    # 判据 = 列表头（最新一份）的 ID 不在断开前的快照集合里 —— 只有真正新落库的那份才算。
+    新报表ID = ""
+    截止 = time.time() + 180
+    while time.time() < 截止 and not 新报表ID:
+        time.sleep(3)
+        st, body = http("GET", "/reports/?limit=5", token=token, timeout=30)
+        if st != 200:
+            continue
+        try:
+            列表 = json.loads(body).get("报表列表") or []
+        except Exception:  # noqa: BLE001
+            continue
+        if 列表:
+            头部 = 列表[0].get("报表ID", "")
+            if 头部 and 头部 not in 断前集合:
+                新报表ID = 头部
+    check("P14 客户端断开后报表仍然生成并落库（取消的是继续推理，不是这次分析）",
+          bool(新报表ID),
+          f"新报表ID={新报表ID!r} 断开前最新={断前最新!r} 断开前已知={len(断前集合)} 份"
+          f"（判据=列表头不在断开前快照里；旧写法抓过旧报表导致假绿）",
+          group=G)
+    if not 新报表ID:
+        return
+
+    st, body = http("GET", f"/reports/{新报表ID}", token=token, timeout=60)
+    意图来源 = ""
+    轨迹: list = []
+    内: dict = {}
+    if st == 200:
+        try:
+            报 = json.loads(body)
+            内 = 报.get("报表") or 报
+            意图来源 = str(内.get("意图来源", ""))
+            轨迹 = 内.get("Agent Trace") or 内.get("Agent_Trace") or []
+        except Exception as e:  # noqa: BLE001
+            note(f"P14 报表详情解析失败：{type(e).__name__}")
+    说明集 = [str(x.get("说明", "")) for x in 轨迹 if isinstance(x, dict)]
+    理由集 = [str(x.get("理由", "")) for x in 轨迹 if isinstance(x, dict)]
+    状态集 = [str(x.get("状态", "")) for x in 轨迹 if isinstance(x, dict)]
+    check("P14 断开的这一份落到规则降级（意图来源以「规则」开头，仅作辅助证据）",
+          意图来源.startswith("规则"), f"意图来源={意图来源!r} 图表类型={内.get('图表类型')!r}" if st == 200 else f"{st} {str(body)[:140]}",
+          group=G)
+    # 说明落在「说明」还是「理由」键上取决于取消发生在哪一步（轮次开头 vs 重试前），两个都认。
+    痕迹 = 说明集 + 理由集
+    check("P14 trace 写明「客户端已断开」且状态记为「需关注」（不是「失败」）",
+          any("断开" in s for s in 痕迹) and "需关注" in 状态集,
+          f"说明尾部={说明集[-3:]} 理由尾部={理由集[-3:]} 状态尾部={状态集[-3:]}", group=G)
 
 
 # --------------------------------------------------------------------------- 极限测试

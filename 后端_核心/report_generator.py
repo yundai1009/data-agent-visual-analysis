@@ -15,7 +15,7 @@ import pandas as pd
 
 from 后端_核心.profile import 生成数据画像
 from 后端_核心.data_filter import 应用筛选, 提取TopN, 匹配筛选条件, TOPN_排除图表
-from 后端_核心.agent.orchestrator import 编排Agent
+from 后端_核心.agent.orchestrator import 编排Agent, _已取消
 from 后端_核心.agent.conclusion import 润色结论
 from config.settings import LLMRequestConfig
 
@@ -1008,7 +1008,7 @@ def 生成报表数据(
     风险提示 = _字段问题提示(画像, effective_chart, x轴, y轴列表, 分析需求)
     conclusion, conclusion_source = _生成结论_含来源(
         分析需求, 画像, report_df, effective_chart, 推荐说明, 风险提示,
-        agent_trace, intent_source, llm_config=llm_config,
+        agent_trace, intent_source, llm_config=llm_config, cancel=cancel,
     )
     result = {
         "标题": chart_config["标题"],
@@ -1042,15 +1042,22 @@ def _生成结论_含来源(
     agent_trace: List[Dict[str, Any]],
     intent_source: str = "",
     llm_config: Optional[LLMRequestConfig] = None,
+    cancel: Optional["threading.Event"] = None,
 ) -> Tuple[str, str]:
     """优先用 LLM 润色结论，失败回退模板拼接。返回（结论文本, 来源）。
     来源取值："LLM" | "模板"
+
+    `cancel`（阶段六十九补的缺口）：结论润色是**流程里最后一个 LLM 调用**，早先没看取消
+    令牌，于是「客户端断开后不再发起新的 LLM 调用」这句话在真机上并不成立——P14 实测断开
+    之后仍然会飞一次润色请求。令牌已置位就直接走模板结论（语义上正好等于「按规则降级生成」）。
     """
-    if agent_trace:
+    if agent_trace and not _已取消(cancel):
         try:
             llm_结论 = 润色结论(分析需求, 画像, report_df, 推荐说明, 风险提示, llm_config=llm_config)
             if llm_结论:
                 return llm_结论, "LLM"
         except Exception as exc:
             logger.warning("结论润色异常，回退模板：%s", exc)
+    elif agent_trace:
+        logger.info("客户端已断开，跳过结论润色 LLM 调用，改用模板结论")
     return _生成结论(分析需求, 画像, report_df, 图表类型, 推荐说明, 风险提示), "模板"

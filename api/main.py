@@ -50,6 +50,22 @@ from config.settings import EnvConfig
 
 logger = logging.getLogger(__name__)
 
+# 【关键行】应用日志的落地配置（阶段六十九 P14 逼出来的一个真实缺口）。
+# 为什么必须显式配：uvicorn 自带的 LOGGING_CONFIG 只配了 uvicorn/uvicorn.error/
+# uvicorn.access 三个 logger，**没有配 root**；于是本项目的业务 logger（后端_核心/
+# api/services/repositories 共 45 处 logger.info）全部 propagate 到默认 level=WARNING、
+# 且没有 handler 的 root 上，被静默丢掉。表现是：打包后的桌面端 backend.log 里只有
+# uvicorn 的访问行，出问题时想看的业务记录一条都没有（例如阶段六十七的
+#「第 N 轮后收到取消信号」——真实用户关页面后，服务端到底有没有停手，日志里查不到）。
+# 级别由 LOG_LEVEL 控制，默认 warning：与 electron/build-backend/backend_entry.py:42
+# 的口径一致，桌面端默认不刷屏；需要排障或跑真机 E2E 时设 LOG_LEVEL=info。
+# 删除后果：业务 INFO 日志再次全部消失（WARNING 及以上仍会由 logging.lastResort 兜底打印）。
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=(os.getenv("LOG_LEVEL", "warning") or "warning").upper(),
+        format="%(levelname)s: %(message)s",
+    )
+
 # 前端静态产物目录：启动器通过 FRONTEND_DIST 环境变量选择
 # - 正式构建 frontend/dist（AUTH_REQUIRED=true）
 # - 演示构建 frontend/dist-demo（AUTH_REQUIRED=false + 自动加载示例数据）
