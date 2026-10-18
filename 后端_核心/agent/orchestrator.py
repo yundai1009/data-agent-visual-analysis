@@ -223,6 +223,20 @@ def _已取消(cancel: Optional["threading.Event"]) -> bool:
     return cancel is not None and cancel.is_set()
 
 
+def _落检查点(回调: Optional[Any], 轮次: int, messages: List[Dict[str, Any]]) -> None:
+    """每轮跑完后把执行态交给回调落库（阶段七十）。
+
+    为什么吞掉异常：检查点是**加速手段**，不是分析链路的一环。落库失败（磁盘满 / 表被
+    MySQL 锁住 / 反序列化异常）绝不能把一次本来能成的分析搞失败——大不了下次从头再跑。
+    """
+    if 回调 is None:
+        return
+    try:
+        回调(轮次=轮次, messages=messages)
+    except Exception as exc:  # noqa: BLE001 — 见 docstring：检查点失败不影响分析
+        logger.warning("执行态检查点落库失败（第 %s 轮），本次分析继续：%s", 轮次, exc)
+
+
 def 编排Agent(
     画像: Dict[str, Any],
     分析需求: str,
@@ -233,6 +247,8 @@ def 编排Agent(
     user_id: str = "",
     规则输入: Optional[str] = None,
     cancel: Optional["threading.Event"] = None,
+    检查点: Optional[Dict[str, Any]] = None,
+    落检查点: Optional[Any] = None,
 ) -> Optional[Dict[str, Any]]:
     """多轮 ReAct 编排：感知 → 推理 → 行动 → 观察 → 再推理。
 
@@ -257,6 +273,13 @@ def 编排Agent(
             注入上下文后的完整文本（含历史图表名/标题/结论——不得触发规则短路）。
         cancel: 阶段六十七 取消令牌（threading.Event）。置位后不再发起任何新的
             LLM 调用，直接走规则降级出图。None = 无取消语义（同步端点/评测脚本）。
+        检查点: 阶段七十 执行态检查点（checkpoint_repo.读取检查点 的返回值）。命中时
+            直接用存档里的 messages 接上，从「已完成轮次 + 1」轮续跑——前几轮的 LLM
+            调用不再重复花时间。None / 轮次为 0 / messages 不完整一律视为没有存档。
+            只恢复 messages，画像与 df 仍取本次请求的实时值：存档里的字段名可能已经
+            过期（数据集被改过），拿它做字段校验会放出错报表。
+        落检查点: 可选回调，每轮跑完（且该轮成功）时调用 落检查点(轮次=N, messages=...)，
+            由调用方决定落不落库、落到哪。回调异常被吞掉，不影响本次分析。
 
     Returns:
         标准化意图 dict，完整结构：
@@ -307,27 +330,58 @@ def 编排Agent(
 
     # ═══ LLM 多轮 ReAct ═══
     if enable_llm and (分析需求 or "").strip() and intent_override is None:
-        # ── 检索相似历史记忆（few-shot） ──
-        # 【关键行】从向量记忆库中检索与当前需求最相似的 top-3 条历史分析记录。
-        # 为什么：LLM 在没有参考案例时容易"凭空想象"图表类型和字段组合；
-        # few-shot 示例让 LLM 参考"类似需求上次怎么分析"，显著提升推荐准确率。
-        # 删除后果：LLM 失去历史参考，首次分析可能选错图表/字段，但不会崩溃（准确率下降）。
-        # 替代方案：RAG 检索增强 + 更复杂的 prompt 工程效果更好但成本高；
-        # 当前方案（向量检索 top-3 + 格式化为 few-shot 文本）简单实用、性价比高。
-        # 阶段 61（D2）：不再透传请求级 llm_config——embedding 是平台级能力，
-        #   跟用户所选 chat provider 走会 401/400（详见 llm_client.embedding_settings）。
-        相似记忆 = 检索相似记忆(user_id, 分析需求)
-        memory_hint = 生成_few_shot_prompt(相似记忆)
+        # ── 阶段七十：命中执行态检查点？从断点接上，而不是从第 1 轮重来 ──
+        # 【关键行】恢复的是**整段 ReAct 对话体**（messages），不是「跑到第几轮」这个数字。
+        # 为什么：第 2/3 轮的 LLM 必须看得见上一轮工具返回的真实结果才能接着推理；
+        # 只把轮次号恢复回去、messages 从零开始，等于让它凭空接话（换了道题在答）。
+        # 删除后果：续跑出来的图表与中断前那次不是一回事，用户看到的是"第二次猜测"。
+        # 替代方案：把用户的原始需求 + 上一轮结论摘要重新喂一遍（信息有损，且要多花
+        # 一次 prompt 去重建上下文）；存档 messages 最忠实。
+        恢复轮次 = 0
+        _存档 = 检查点 or {}
+        try:
+            _存档轮次 = int(_存档.get("轮次") or 0)
+        except (TypeError, ValueError):
+            # 坏存档一律当没有存档：绝不因为历史数据脏就整次分析报错
+            _存档轮次 = 0
+        _存档消息 = _存档.get("messages") or []
+        # 第 3 轮跑完结果就已经出了，没有续跑的意义；上限压到 2，避免把"再来一遍第 3 轮"
+        # 当成续跑（那只会让用户多等 10 秒且结果可能不同）。
+        if _存档轮次 >= 1 and len(_存档消息) >= 2:
+            恢复轮次 = min(_存档轮次, 2)
+            messages = list(_存档消息)
+            logger.info("命中执行态检查点，从第 %s 轮续跑（前 %s 轮 LLM 调用不再重复）", 恢复轮次 + 1, 恢复轮次)
+        else:
+            # ── 检索相似历史记忆（few-shot） ──
+            # 【关键行】从向量记忆库中检索与当前需求最相似的 top-3 条历史分析记录。
+            # 为什么：LLM 在没有参考案例时容易"凭空想象"图表类型和字段组合；
+            # few-shot 示例让 LLM 参考"类似需求上次怎么分析"，显著提升推荐准确率。
+            # 删除后果：LLM 失去历史参考，首次分析可能选错图表/字段，但不会崩溃（准确率下降）。
+            # 替代方案：RAG 检索增强 + 更复杂的 prompt 工程效果更好但成本高；
+            # 当前方案（向量检索 top-3 + 格式化为 few-shot 文本）简单实用、性价比高。
+            # 阶段 61（D2）：不再透传请求级 llm_config——embedding 是平台级能力，
+            #   跟用户所选 chat provider 走会 401/400（详见 llm_client.embedding_settings）。
+            相似记忆 = 检索相似记忆(user_id, 分析需求)
+            memory_hint = 生成_few_shot_prompt(相似记忆)
 
-        messages: List[Dict[str, Any]] = [
-            {"role": "system", "content": _SYSTEM_PROMPT + memory_hint},
-            {"role": "user", "content": 分析需求},
-        ]
-        # 上下文：供 tool executor 使用的数据
+            messages = [
+                {"role": "system", "content": _SYSTEM_PROMPT + memory_hint},
+                {"role": "user", "content": 分析需求},
+            ]
+        # 上下文：供 tool executor 使用的数据（始终用本次请求的实时画像与 df）
         context = {"画像": 画像, "df": df}
 
         # 可用的 tool schema（排除「解析为报表意图」旧 tool）
         tools = [s for s in TOOL_SCHEMAS_FULL if s["function"]["name"] != "解析为报表意图"]
+        if 恢复轮次:
+            # 续跑要在证据链第一条说清"为什么这次只跑了两轮"：否则看 trace 的人
+            # 会以为第 1 轮凭空消失了（阶段七十之前这正是"重跑"与"续跑"分不清的原因）。
+            trace.记录观察(
+                轮次=恢复轮次,
+                说明=(f"命中执行态检查点（已完成第 {恢复轮次} 轮），从第 {恢复轮次 + 1} 轮续跑，"
+                      f"前 {恢复轮次} 轮 LLM 调用不再重复"),
+                状态="成功",
+            )
 
         # ── 第 1 轮：获取数据画像 ──
         # 【关键行】ReAct 第 1 轮：让 LLM 调用「获取数据画像」工具，先感知数据长什么样。
@@ -337,8 +391,16 @@ def 编排Agent(
         # 替代方案：把完整画像直接放进 system prompt（token 成本高、画像大时超限）；
         # 当前"工具按需读取"方案符合 Function Calling 主流实践。
         # ── 阶段六十七：每轮调用前查取消令牌（客户端断开后不再发新请求）──
-        round1_ok = _执行一轮(messages, tools, context, 轮次=1, trace=trace, llm_config=llm_config, cancel=cancel)
-        if _已取消(cancel):
+        # ── 阶段七十：命中检查点时第 1 轮已是"过去完成时"，别再花一次 LLM 调用重跑 ──
+        if 恢复轮次 < 1:
+            round1_ok = _执行一轮(messages, tools, context, 轮次=1, trace=trace, llm_config=llm_config, cancel=cancel)
+            if round1_ok:
+                # 第 1 轮的真实产物（画像 tool 的返回）已经追加进 messages，存档就是"半成品"
+                _落检查点(落检查点, 1, messages)
+        else:
+            round1_ok = True
+            logger.info("第 1 轮已由执行态检查点覆盖，跳过")
+        if _已取消(cancel) and 恢复轮次 < 1:
             # 【关键行】断开后不再往下走。这里记「需关注」而不是「失败」——
             # 用户是自己关的页面，不是系统出错；谎报失败会让后来看 trace 的人
             # 去查一个不存在的 bug。记完就落到下面的规则降级，仍出一份可用报表。
@@ -355,7 +417,15 @@ def 编排Agent(
             # 删除后果：拿不到聚合结果，第 3 轮推荐图表和生成结论都无从谈起。
             # 替代方案：第 1、3 轮合并（一次调用同时感知+输出），但 LLM 一次推理的准确性
             # 低于多轮逐步推理；ReAct 多轮正是为了"每步基于真实观察再决策"。
-            round2_ok = _执行一轮(messages, tools, context, 轮次=2, trace=trace, llm_config=llm_config, cancel=cancel)
+            if 恢复轮次 < 2:
+                round2_ok = _执行一轮(messages, tools, context, 轮次=2, trace=trace, llm_config=llm_config, cancel=cancel)
+                if round2_ok:
+                    # 第 2 轮跑完就落库：哪怕紧接着就断连/进程被杀，聚合结果也已留住，
+                    # 下次同一需求能直接从这里接第 3 轮（阶段七十的核心收益）
+                    _落检查点(落检查点, 2, messages)
+            else:
+                round2_ok = True
+                logger.info("第 2 轮已由执行态检查点覆盖，跳过，直接从第 3 轮续跑")
             if _已取消(cancel):
                 # 阶段六十七：第 2 轮刚跑完就发现连接已断，不再发起第 3 轮。
                 logger.info("第 2 轮后收到取消信号，跳过后续 LLM 调用")

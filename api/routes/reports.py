@@ -410,18 +410,23 @@ def _生成报表流式(
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
     source_page: Optional[str] = None,
     cancel: Optional["threading.Event"] = None,
+    dataset_id: str = "",
 ) -> Tuple[str, Dict[str, Any]]:
     """生成报表 + 持久化；on_event 实时推送决策事件（SSE 直播）。返回 (report_id, report)。
 
     cancel（阶段六十七）：per-request 取消令牌，透传给下层编排链路。置位后不再发起
     新的 LLM 调用，但本函数**照常把报表算完并落库**——用户回到报表列表要能看到
     那一份，只是它是规则降级结果。取消的是"继续推理"，不是"这次分析"。
+    dataset_id（阶段七十）：执行态检查点的第二把钥匙，透传给 _单Agent报表/_多智能体报表
+    → 生成报表数据，决定"同一用户对同一数据集+同需求"才能续跑。
     """
     payload = _注入追问上下文(payload, user)
+    # dataset_id 优先取 payload 自带（端点会把它带上），否则用透传值
+    _数据集ID = payload.数据集ID or dataset_id or ""
     if payload.agent_mode == "multi":
-        report = _多智能体报表(df, payload, llm_config, on_event=on_event, user_id=user["user_id"], cancel=cancel)
+        report = _多智能体报表(df, payload, llm_config, on_event=on_event, user_id=user["user_id"], cancel=cancel, dataset_id=_数据集ID)
     else:
-        report = _单Agent报表(df, payload, llm_config, on_event=on_event, user_id=user["user_id"], cancel=cancel)
+        report = _单Agent报表(df, payload, llm_config, on_event=on_event, user_id=user["user_id"], cancel=cancel, dataset_id=_数据集ID)
 
     # 追溯信息落库：追问来源 + 生成模式（重放/溯源时使用）
     report["上一报表ID"] = payload.上一报表ID
@@ -1156,6 +1161,7 @@ def _单Agent报表(
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
     user_id: str = "",
     cancel: Optional["threading.Event"] = None,
+    dataset_id: str = "",
 ) -> Dict[str, Any]:
     """标准单 Agent 生成报表（阶段 29：透传筛选条件 + TopN）。"""
     return 生成报表数据(
@@ -1177,6 +1183,8 @@ def _单Agent报表(
         规则输入=payload.原始分析需求 or None,
         # 阶段六十七：取消令牌透传（同步 /generate 端点传 None = 无取消语义）
         cancel=cancel,
+        # 阶段七十：检查点第二把钥匙透传
+        dataset_id=dataset_id,
     )
 
 
@@ -1187,6 +1195,7 @@ def _多智能体报表(
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
     user_id: str = "",
     cancel: Optional["threading.Event"] = None,
+    dataset_id: str = "",
 ) -> Dict[str, Any]:
     """多智能体模式生成报表。"""
     from 后端_核心.profile import 生成数据画像
@@ -1216,6 +1225,7 @@ def _多智能体报表(
             user_id=user_id,
             规则输入=payload.原始分析需求 or None,   # Fix C：规则层只认用户本轮输入
             cancel=cancel,   # 阶段六十七：多智能体失败降级时同样带上令牌
+            dataset_id=dataset_id,   # 阶段七十：检查点第二把钥匙透传
         )
 
     # 用多智能体返回的意图走标准报表链路
@@ -1238,6 +1248,7 @@ def _多智能体报表(
         user_id=user_id,
         规则输入=payload.原始分析需求 or None,   # Fix C：规则层只认用户本轮输入
         cancel=cancel,   # 阶段六十七：llm_config=None 本就不调 LLM，令牌只为防多智能体侧漏
+        dataset_id=dataset_id,   # 阶段七十：检查点第二把钥匙透传
     )
 
 

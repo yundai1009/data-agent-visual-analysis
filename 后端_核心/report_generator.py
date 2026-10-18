@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import html
 import json
 import logging
+import os
 import threading
 
 import numpy as np
@@ -16,6 +17,7 @@ import pandas as pd
 from 后端_核心.profile import 生成数据画像
 from 后端_核心.data_filter import 应用筛选, 提取TopN, 匹配筛选条件, TOPN_排除图表
 from 后端_核心.agent.orchestrator import 编排Agent, _已取消
+from repositories import checkpoint_repo
 from 后端_核心.agent.conclusion import 润色结论
 from config.settings import LLMRequestConfig
 
@@ -25,6 +27,16 @@ from 后端_核心.field_selector import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ── 阶段七十 · 执行态检查点开关 ─────────────────────────────────────────────
+def _检查点开关启用() -> bool:
+    """读取检查点总开关，默认关闭（enabled 只读环境变量 DAA_CHECKPOINT_ENABLED）。
+
+    默认 False 的原因：既有单测全部走"无检查点"路径，打开后读取链路会凭空多出
+    一次 DB 访问；新行为必须先真机验证过再默认开。测试里用 monkeypatch 本函数。
+    """
+    return (os.getenv("DAA_CHECKPOINT_ENABLED", "") or "").strip().lower() in ("1", "true", "yes", "on")
 
 
 # - 所在目录：后端_核心/（报表生成的"总装车间"，1000+ 行核心业务文件）
@@ -145,6 +157,8 @@ def _解析自然语言意图(
     user_id: str = "",
     规则输入: Optional[str] = None,
     cancel: Optional["threading.Event"] = None,
+    检查点: Optional[Dict[str, Any]] = None,
+    落检查点: Optional[Any] = None,
 ) -> Tuple[Dict[str, Any], str, List[Dict[str, Any]], str]:
     """优先用 LLM 解析; 失败降级回规则匹配. 返回 (override, source, trace, llm_fail_reason)。
 
@@ -169,6 +183,11 @@ def _解析自然语言意图(
       - cancel：阶段六十七 取消令牌（threading.Event），透传给编排Agent。
         客户端断开后不再发起新的 LLM 调用，但仍按规则降级出一份可用的报表配置
         ——报表要落库、要在报表列表里能看到，只是没走 LLM 推理。
+      - 检查点 / 落检查点（阶段七十）：执行态检查点的「读」与「写」回调。
+        检查点 来自 checkpoint_repo.读取检查点（命中则编排器从第 N 轮续跑，
+        省掉前 N 轮 LLM 调用）；落检查点 是编排器每跑完一轮调一次、把完整
+        messages 落库（下次同需求请求读取续跑）。两者都为 None 时本函数与旧行为
+        完全一致——检查点的总开关在 生成报表数据 处，默认关闭。
     业务定位：
       - 【关键行】双引擎切换开关：LLM 智能解析优先，任何异常/None 都降级到规则。
       - 为什么：LLM 可能未配置 Key、网络波动、返回非法 JSON；规则兜底保证
@@ -181,7 +200,8 @@ def _解析自然语言意图(
         try:
             # LLM 智能解析：调编排Agent 走 3 轮 ReAct；内部失败会自己降级并返回降级结果
             agent_result = 编排Agent(画像, 分析需求, df=df, llm_config=llm_config, on_event=on_event,
-                                     user_id=user_id, 规则输入=规则输入, cancel=cancel)
+                                     user_id=user_id, 规则输入=规则输入, cancel=cancel,
+                                     检查点=检查点, 落检查点=落检查点)
             if agent_result:
                 override = {
                     "图表类型": agent_result["图表类型"],
@@ -832,6 +852,8 @@ def 生成报表数据(
     user_id: str = "",
     规则输入: Optional[str] = None,
     cancel: Optional["threading.Event"] = None,
+    dataset_id: str = "",
+    启用检查点: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """根据上传数据和页面选择生成可渲染的报表配置。
 
@@ -847,6 +869,10 @@ def 生成报表数据(
     规则输入: Fix C（阶段54-8 · LLM P1-2）——规则层（受控语句/快速路由/筛选
         兜底）识别文本；追问链时 API 层传「用户原话」，与注入上下文后的完整
         分析需求 分离，防历史图表名/标题/结论短路规则。None = 直接用 分析需求。
+    dataset_id: 阶段七十——执行态检查点的第二把钥匙。同一用户对同一数据集、
+        **同一需求**再次发起时才允许续跑（换数据集不能拿旧中间态）。
+    启用检查点: 阶段七十——None（默认）= 跟随环境变量开关（默认关）；
+        True/False = 调用方显式指定（测试用）。开关决定整条读取链是否启用。
     """
     if df.empty:
         raise ValueError("没有可用于生成报表的数据")
@@ -870,7 +896,44 @@ def 生成报表数据(
     else:
         y轴列表 = [field for field in (y轴 or []) if field]
 
-    intent_override, intent_source, agent_trace, llm_fail_reason = _解析自然语言意图(画像, 分析需求, df, llm_config=llm_config, on_event=on_event, user_id=user_id, 规则输入=规则输入, cancel=cancel)
+    # ── 阶段七十 · 执行态检查点（读 + 写回调） ─────────────────────────────
+    # 开关判定：启用检查点=None 跟随环境变量（默认关）；显式 True/False 由调用方给。
+    # 读取时机：在画像算完之后、意图解析之前——读到「最近一份可用」检查点，本次
+    # 直接把它透传给编排器从第 N 轮续跑；写入回调每跑完一轮落一次库（下次同需求
+    # 读取）。写入存的是**当前 画像**（此处为筛选前画像；若意图覆盖触发重筛，画像
+    # 会变，但续跑校验只用 messages，画像只作上下文，无影响）。
+    # 【关键】写回调与读结果解耦：只有读到了存档才装回调的话，「未命中」的分支
+    # 就一次都不落库——检查点永远建不起来，续跑机制等于没接。回调在开关打开的
+    # 时候就装上；命中与否只决定「本次要不要续跑、续跑后要不要消费」。
+    检查点: Optional[Dict[str, Any]] = None
+    落检查点: Optional[Any] = None
+    _开关 = _检查点开关启用() if 启用检查点 is None else 启用检查点
+    _数据集键 = dataset_id or None
+
+    def _落检查点回调(轮次, messages):
+        try:
+            checkpoint_repo.保存检查点(
+                user_id, _数据集键 or "", 分析需求, 画像, messages, 轮次,
+                rule_text="", model="",
+            )
+        except Exception as exc:
+            logger.warning("执行态检查点落库失败（第 %s 轮）：%s", 轮次, exc)
+
+    if _开关:
+        落检查点 = _落检查点回调
+        try:
+            检查点 = checkpoint_repo.读取检查点(user_id, 分析需求, dataset_id=_数据集键)
+            if 检查点:
+                logger.info("生成报表数据 读取到执行态检查点 %s（已完成第 %s 轮），本轮将续跑",
+                            检查点.get("检查点ID"), 检查点.get("轮次"))
+        except Exception as exc:
+            logger.warning("读取执行态检查点失败，本次按全新分析处理：%s", exc)
+            检查点 = None
+
+    intent_override, intent_source, agent_trace, llm_fail_reason = _解析自然语言意图(
+        画像, 分析需求, df, llm_config=llm_config, on_event=on_event, user_id=user_id,
+        规则输入=规则输入, cancel=cancel, 检查点=检查点, 落检查点=落检查点,
+    )
     # M23：用户原始请求语义（推荐说明文案用）——用户选了"自动推荐"时，即使
     # LLM 意图覆盖出了具体图表，文案也应说"系统自动选择"而非"用户手动选择"。
     用户请求自动推荐 = 图表类型 == "自动推荐"
@@ -1031,7 +1094,20 @@ def 生成报表数据(
     }
     result["导出数据"]["HTML"] = _生成HTML报告(result)
     result["导出数据"]["JSON"] = json.dumps(result, ensure_ascii=False, default=str)
+
+    # 阶段七十：续跑成功 → 一次性消费检查点（已消费的行下次读取读不到；未命中检查点时
+    # 本次的写入是全新存档，不消费，留给下次）。判据必须同时看「有没有读到的存档」和
+    # 「有没有可消费的 ID」——坏存档可能是个非空但没有 检查点ID 的 dict，直接
+    # `if 检查点:` 会把 消费检查点(None) 发出去。消费失败不影响已经算好的报表。
+    if 检查点 and 检查点.get("检查点ID"):
+        try:
+            checkpoint_repo.消费检查点(检查点.get("检查点ID"))
+        except Exception as exc:
+            logger.warning("消费执行态检查点失败（不影响报表）：%s", exc)
+
     return result
+
+
 def _生成结论_含来源(
     分析需求: str,
     画像: Dict[str, Any],

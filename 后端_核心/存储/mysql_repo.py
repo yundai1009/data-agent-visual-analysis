@@ -3,7 +3,7 @@
 # 【文件定位】MySQL 后端的 schema 事实来源：用一套幂等的建表 + 升级脚本，把库表结构对齐 SQLite 侧的既有语义。
 # ============================================================
 # 【做了什么】
-#   1. _建表DDL：16 张业务表 CREATE TABLE IF NOT EXISTS（datasets / users / email_codes / reports / report_templates / dashboards / share_links / favorites / audit_log / feedback / llm_usage / scheduled_jobs / event_register / event_gen / event_paywall / event_payment）；业务表主键用 VARCHAR(255) 而非自增数字，event_* 表用 INT AUTO_INCREMENT。
+#   1. _建表DDL：17 张业务表 CREATE TABLE IF NOT EXISTS（datasets / users / email_codes / reports / report_templates / dashboards / share_links / favorites / audit_log / feedback / llm_usage / scheduled_jobs / event_register / event_gen / event_paywall / event_payment / checkpoints）；业务表主键用 VARCHAR(255) 而非自增数字，event_* 表用 INT AUTO_INCREMENT。
 #   2. 幂等升级四件套：_宽列 与 _宽列改 → _确保列宽（TEXT/longtext → VARCHAR(255) 便于建索引，favorites 191→255 对齐主键宽）；_文本列改 → _确保文本列（audit_log.detail、feedback.correction → TEXT 防截断）；_确保时间列（datetime → VARCHAR(64)）；_确保大小写敏感列（users.username/email → COLLATE utf8mb4_bin）。
 #   3. _索引 与 _确保索引：先查 information_schema.STATISTICS 再 ALTER TABLE ADD [UNIQUE] INDEX，含 (user_id, created_at) 这类列表查询热路径的组合索引。
 #   4. 初始化数据库()：走 mysql_backend.get_conn() 原生连接（不经 _MySQL连接包装，避免 import 环），顺序为 建表 → 列宽 → 文本列 → collation → 时间列 → 索引，全程先查后改，重复执行安全。
@@ -222,6 +222,25 @@ _建表DDL: List[str] = [
         UNIQUE KEY `idx_event_payment_order` (`order_id`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """,
+    # 阶段七十：Agent 执行态检查点（断点续跑）——messages_json 存 ReAct 对话体，可能较长故用 LONGTEXT。
+    """
+    CREATE TABLE IF NOT EXISTS `checkpoints` (
+        `checkpoint_id` VARCHAR(255) NOT NULL,
+        `user_id`       VARCHAR(255) NOT NULL,
+        `dataset_id`    VARCHAR(255) NOT NULL,
+        `requirement`   LONGTEXT NOT NULL,
+        `rule_text`     LONGTEXT,
+        `profile_json`  LONGTEXT NOT NULL,
+        `messages_json` LONGTEXT NOT NULL,
+        `done_rounds`   INT NOT NULL DEFAULT 0,
+        `model`         VARCHAR(128) NOT NULL DEFAULT '',
+        `status`        VARCHAR(32) NOT NULL DEFAULT '可用',
+        `created_at`    VARCHAR(64) NOT NULL,
+        `updated_at`    VARCHAR(64) NOT NULL,
+        `expires_at`    VARCHAR(64) NOT NULL,
+        PRIMARY KEY (`checkpoint_id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """,
 ]
 
 # ---- 幂等升级：时间列统一为 VARCHAR(64)（业务契约，见模块 docstring） ----
@@ -242,6 +261,7 @@ _时间列: dict = {
     "event_gen": ["gen_time"],
     "event_paywall": ["hit_time"],
     "event_payment": ["pay_time"],
+    "checkpoints": ["created_at", "updated_at", "expires_at"],
 }
 
 # 需加索引的 user_id 列先转 VARCHAR(255)（longtext 无法建索引）
@@ -269,6 +289,8 @@ _索引: List[tuple] = [
     ("llm_usage", "idx_llm_usage_created", "(created_at)", False),
     ("scheduled_jobs", "idx_jobs_enabled", "(enabled)", False),
     ("event_payment", "idx_event_payment_order", "(order_id)", True),
+    # 阶段七十：检查点按 (user_id, dataset_id) 取「最近一份可用」——正是列表热路径。
+    ("checkpoints", "idx_checkpoints_user_dataset", "(user_id, dataset_id)", False),
 ]
 
 # favorites 列宽对齐：users/reports 主键都是 VARCHAR(255)，favorites 迁移产物是 191
@@ -414,4 +436,4 @@ def 初始化数据库() -> None:
                     _确保时间列(cur, 表, 列)
             for 表, 索引名, 列片段, 唯一 in _索引:
                 _确保索引(cur, 表, 索引名, 列片段, 唯一)
-    logger.info("MySQL 数据库已初始化/升级（16 张业务表）")
+    logger.info("MySQL 数据库已初始化/升级（17 张业务表）")
