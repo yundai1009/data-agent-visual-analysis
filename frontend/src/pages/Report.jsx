@@ -674,7 +674,8 @@ export default function Report() {
         </button>
         <button
           className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-deep transition-all"
-          onClick={() => navigate('/analysis')}
+          title="回到分析页，基于这份报表继续追问"
+          onClick={() => navigate('/analysis', { state: { 上一报表ID: currentReportId, 上一报表标题: report?.标题 || '' } })}
         >
           继续分析
         </button>

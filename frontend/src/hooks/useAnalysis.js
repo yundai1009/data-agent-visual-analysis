@@ -12,7 +12,7 @@
  * Analysis.jsx 只负责 JSX 渲染，从本 Hook 取状态与动作。
  */
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { generateReportStream, listTemplates, saveTemplate, deleteTemplate, runTemplate, listSchedules, createSchedule, deleteSchedule } from '../api';
 import { useApp } from '../AppContext';
 import validateChartFields from '../validators/chartFields';
@@ -31,6 +31,14 @@ export const 筛选操作列表 = ['等于', '不等于', '包含', '大于', '�
 
 export default function useAnalysis() {
   const navigate = useNavigate();
+  const location = useLocation();
+  // 阶段六十九：报表页「继续分析」用 router state 把上一份报表带回来。
+  // 为什么必须带回来：阶段六十八 生成成功就自动跳报表页，分析页一卸载
+  // liveDone / lastReportIdRef 全丢，追问条（查看报表 / 存为模板 / 推荐追问，
+  // 阶段 52/53 的入口）在主导流程里再也没机会出现——真机 E2E 抓到：
+  // 分析成功后停在报表页，等 180 秒也等不到「继续追问」。
+  const 带回报表ID = location.state?.上一报表ID || null;
+  const 带回报表标题 = location.state?.上一报表标题 || '';
   const { dataset } = useApp();
   // 表单状态：自然语言输入 / 图表类型 / 生成中标记
   const [nlInput, setNlInput] = useState('');
@@ -147,6 +155,17 @@ export default function useAnalysis() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataset?.数据集ID, profile, chartType]);
 
+  // 阶段六十九：从报表页「继续分析」跳回来时，把带回来的报表当成"刚生成完"，
+  // 让追问条及其中的「查看报表」「存为模板」入口重新可点，且 handleFollowUp
+  // 能拿到上一报表 ID（追问链路 payload.上一报表ID 靠 lastReportIdRef）。
+  // 只喂 liveDone / lastReportIdRef，不动 liveSteps：直播面板的门控是
+  // generating（Analysis.jsx），所以不会凭空冒出一个"生成中"面板。
+  useEffect(() => {
+    if (!带回报表ID) return;
+    lastReportIdRef.current = 带回报表ID;
+    setLiveDone({ 报表ID: 带回报表ID, 标题: 带回报表标题 });
+  }, [带回报表ID, 带回报表标题]);
+
   // 生成期间计时（每秒 +1）
   useEffect(() => {
     if (!generating) return;
@@ -172,7 +191,10 @@ export default function useAnalysis() {
   };
 
   // 生成报表主函数
-  async function handleGenerate(isFollowUp = false, chartTypeOverride = null) {
+  // overrideText：阶段六十九补的口。handleFollowUp 里 setNlInput(q) 是异步的，
+  // 紧跟着调 handleGenerate 读到的还是旧 followUp/nlInput（追问文本会变成 ''），
+  // 所以由调用方把最终文本显式塞进来；不传时维持原有读法，老调用点不受影响。
+  async function handleGenerate(isFollowUp = false, chartTypeOverride = null, overrideText = null) {
     if (generatingRef.current) return false;
     generatingRef.current = true;
     if (!dataset) {
@@ -210,7 +232,9 @@ export default function useAnalysis() {
 
     const payload = {
       数据集ID: dataset.数据集ID,
-      分析需求: isFollowUp ? (followUp.trim() || nlInput) : nlInput,
+      分析需求: isFollowUp
+        ? (overrideText?.trim() || followUp.trim() || nlInput)
+        : (overrideText?.trim() || nlInput),
       // 【Bug修复】追问时若用户显式选择过图表类型（非 auto）则沿用上一图表
       // （如追问"那华南区呢？"应继续用柱状图，而不是重置为自动推荐）；
       // 用户未显式选择（auto）或显式传 chartTypeOverride 时优先用 override。
@@ -419,7 +443,9 @@ export default function useAnalysis() {
       return;
     }
     setNlInput(q);
-    const started = await handleGenerate(true);
+    // 阶段六十九：把最终文本显式传进去——setNlInput 触发的是下一次渲染，
+    // 这里同步读到的 followUp/nlInput 都还是旧值。
+    const started = await handleGenerate(true, null, q);
     if (started) setFollowUp('');
   };
 
