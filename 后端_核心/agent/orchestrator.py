@@ -7,6 +7,7 @@
 3. 第 3 轮：LLM 调用「推荐图表」+「生成结论」→ 出结果
 4. 任何一轮失败 → 整体降级到关键词匹配兜底
 5. 所有调用记录在 TraceRecorder 中
+6. 取消令牌（阶段六十七）：客户端断开（SSE 关闭）后，不再发起任何新的 LLM 调用
 
 ═══════════════════════════════════════════════════════════════
 【文件总览】项目层级与调用关系
@@ -36,6 +37,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from typing import Any, Dict, List, Optional
 
 from 后端_核心.agent.llm_client import (
@@ -201,6 +203,26 @@ def 解析自然语言需求(
     }
 
 
+# ═══ 取消令牌（阶段六十七） ═══════════════════════════════════════════════════
+# 场景：SSE 流式分析（api/routes/reports.py 的 generate_report_stream）在客户端
+# 断开后，worker 线程原本没有任何停止条件，会把 3 轮 ReAct 全都跑完继续烧 Token
+# （阶段六十二 真机实测：单轮 LLM 调用 10.94 秒，用户关页面后请求照样发出）。
+# 机制：路由层 event_stream() 的 finally 置位 threading.Event；编排器在**每一轮
+# LLM 调用之前**自查，已置位就不再发起新请求，直接降级到规则出图。
+# 边界（诚实说明）：只能拦「还没发出的请求」。已经飞出去的 HTTP 请求无法中断
+# （不关 socket 就没有取消语义），所以收益是「省掉后续轮次」，不是「省掉当前轮」。
+_取消说明 = "客户端已断开（连接已关闭），已停止后续 LLM 推理，本次结果按规则降级生成"
+
+
+def _已取消(cancel: Optional["threading.Event"]) -> bool:
+    """取消令牌是否已置位（None = 本次调用没有取消语义，永远返回 False）。
+
+    为什么不做成全局标志：同一进程里同时可能跑着多个用户的请求，取消必须**按请求**
+    生效——令牌由路由层为每次请求单独创建，再沿调用链一路透传下来。
+    """
+    return cancel is not None and cancel.is_set()
+
+
 def 编排Agent(
     画像: Dict[str, Any],
     分析需求: str,
@@ -210,6 +232,7 @@ def 编排Agent(
     on_event: Optional[Any] = None,
     user_id: str = "",
     规则输入: Optional[str] = None,
+    cancel: Optional["threading.Event"] = None,
 ) -> Optional[Dict[str, Any]]:
     """多轮 ReAct 编排：感知 → 推理 → 行动 → 观察 → 再推理。
 
@@ -232,6 +255,8 @@ def 编排Agent(
         规则输入: Fix C（阶段54-8 · LLM P1-2）——规则层（受控语句/快速路由）只
             识别**用户本轮输入**；追问链时 API 层把「用户原话」传入，分析需求为
             注入上下文后的完整文本（含历史图表名/标题/结论——不得触发规则短路）。
+        cancel: 阶段六十七 取消令牌（threading.Event）。置位后不再发起任何新的
+            LLM 调用，直接走规则降级出图。None = 无取消语义（同步端点/评测脚本）。
 
     Returns:
         标准化意图 dict，完整结构：
@@ -311,8 +336,15 @@ def 编排Agent(
         # 删除后果：LLM 不知道数据有哪些字段，后续聚合/推荐全凭猜测，结果不可用。
         # 替代方案：把完整画像直接放进 system prompt（token 成本高、画像大时超限）；
         # 当前"工具按需读取"方案符合 Function Calling 主流实践。
-        round1_ok = _执行一轮(messages, tools, context, 轮次=1, trace=trace, llm_config=llm_config)
-        if not round1_ok:
+        # ── 阶段六十七：每轮调用前查取消令牌（客户端断开后不再发新请求）──
+        round1_ok = _执行一轮(messages, tools, context, 轮次=1, trace=trace, llm_config=llm_config, cancel=cancel)
+        if _已取消(cancel):
+            # 【关键行】断开后不再往下走。这里记「需关注」而不是「失败」——
+            # 用户是自己关的页面，不是系统出错；谎报失败会让后来看 trace 的人
+            # 去查一个不存在的 bug。记完就落到下面的规则降级，仍出一份可用报表。
+            logger.info("第 1 轮后收到取消信号，跳过后续 LLM 调用")
+            trace.记录观察(轮次=1, 说明=_取消说明, 状态="需关注")
+        elif not round1_ok:
             logger.warning("第 1 轮（数据画像）失败，降级")
             trace.记录观察(轮次=1, 说明="数据画像获取失败，降级到关键词匹配", 状态="失败")
         else:
@@ -323,8 +355,12 @@ def 编排Agent(
             # 删除后果：拿不到聚合结果，第 3 轮推荐图表和生成结论都无从谈起。
             # 替代方案：第 1、3 轮合并（一次调用同时感知+输出），但 LLM 一次推理的准确性
             # 低于多轮逐步推理；ReAct 多轮正是为了"每步基于真实观察再决策"。
-            round2_ok = _执行一轮(messages, tools, context, 轮次=2, trace=trace, llm_config=llm_config)
-            if not round2_ok:
+            round2_ok = _执行一轮(messages, tools, context, 轮次=2, trace=trace, llm_config=llm_config, cancel=cancel)
+            if _已取消(cancel):
+                # 阶段六十七：第 2 轮刚跑完就发现连接已断，不再发起第 3 轮。
+                logger.info("第 2 轮后收到取消信号，跳过后续 LLM 调用")
+                trace.记录观察(轮次=2, 说明=_取消说明, 状态="需关注")
+            elif not round2_ok:
                 logger.warning("第 2 轮（聚合分析）失败，降级")
                 trace.记录观察(轮次=2, 说明="聚合分析失败，降级到关键词匹配", 状态="失败")
             else:
@@ -335,8 +371,12 @@ def 编排Agent(
                 # 删除后果：拿不到 LLM 推荐的图表类型和结论，只能整链路降级到关键词匹配。
                 # 替代方案：图表推荐可以完全交给规则函数（_推荐图表类型），但规则覆盖不了
                 # 用户千变万化的自然语言描述；LLM 泛化能力强，规则做兜底是合理分工。
-                round3_ok = _执行一轮(messages, tools, context, 轮次=3, trace=trace, llm_config=llm_config)
-                if round3_ok:
+                round3_ok = _执行一轮(messages, tools, context, 轮次=3, trace=trace, llm_config=llm_config, cancel=cancel)
+                if _已取消(cancel):
+                    # 阶段六十七：3 轮里最后一次机会——此处放弃就再也不会调用 LLM 了。
+                    logger.info("第 3 轮后收到取消信号，跳过结论提炼")
+                    trace.记录观察(轮次=3, 说明=_取消说明, 状态="需关注")
+                elif round3_ok:
                     # 从多轮消息中提取最终意图
                     intent_override = _从消息提取意图(messages, 画像)
                     if intent_override:
@@ -450,6 +490,7 @@ def _执行一轮(
     轮次: int,
     trace: TraceRecorder,
     llm_config: Optional[LLMRequestConfig] = None,
+    cancel: Optional["threading.Event"] = None,
 ) -> bool:
     """执行一轮 LLM 推理 + 工具调用——ReAct 循环的最小单元。
 
@@ -462,9 +503,11 @@ def _执行一轮(
       - 轮次：当前是第几轮（1/2/3），用于 Trace 标记和 tool_call id 唯一化
       - trace：TraceRecorder 实例，用于记录每一步的证据
       - llm_config：请求级 LLM 配置（并发安全）
+      - cancel：阶段六十七 取消令牌。入口先查一次，重试分支前再查一次——
+        否则「本轮已完成、准备重试」这一瞬间用户关页面，重试请求还是会发出去。
     返回：
       - True：本轮成功（LLM 返回了合法工具调用且工具执行成功）
-      - False：失败（LLM 没返回工具调用 / 工具执行失败），上层决定是否继续或降级
+      - False：失败（LLM 没返回工具调用 / 工具执行失败 / 已被取消），上层决定是否继续或降级
 
     业务定位：ReAct 循环"一回合"的实现；编排器通过连调 3 个回合完成感知→计算→结论。
 
@@ -473,6 +516,12 @@ def _执行一轮(
     3. 将 tool_call + 结果追加到 messages
     4. 返回 True/False
     """
+    # 【关键行】阶段六十七：取消令牌入口自查——连接已断就**一次 LLM 都不调用**。
+    # 为什么放在最前面（而不是调用后再判）：判断成本是一次 bool 读取，
+    # 而放过的代价是一次真实的 LLM 计费请求。
+    if _已取消(cancel):
+        return False
+
     with 计时() as timer:
         # 【关键行】这行调用 LLM 聊天接口，把当前对话上下文 + 工具声明发给模型，让它决策调用哪个工具。
         # 为什么：LLM 负责"决定做什么"（选工具、填参数），实际执行必须回到后端受控函数，防止幻觉输出被直接执行。
@@ -503,6 +552,14 @@ def _执行一轮(
     #（"很抱歉/分析如下…"），导致该轮字段丢失而降级。重试一次并明确要求
     # 调用工具；重试仍无 tool_call 才判失败。临时提示用完即移除，不污染历史。
     if (not tc or not tc.get("name")) and 轮次 >= 2:
+        # 阶段六十七：重试也是一次真实计费请求——先查令牌再决定要不要重试。
+        # 放在 messages.append 之前：这样直接 return 时临时提示语还没写进去，
+        # 不需要 pop 还原，下一轮 LLM 也不会看到一条没有回应的话术。
+        if _已取消(cancel):
+            trace.记录LLM调用(轮次=轮次, prompt_summary=prompt_summary,
+                              耗时_ms=timer.elapsed_ms, token=token_usage,
+                              状态="需关注", 理由="客户端已断开，跳过重试调用")
+            return False
         messages.append({"role": "user", "content": "请调用工具完成本步骤的分析，必须返回工具调用，不要仅返回文字。"})
         # Fix L2（阶段54-9 · LLM P2-3）：重试分支同样防护——异常时先还原 messages
         # 再记失败 trace 返回 False（不吞异常也不丢证据）。

@@ -408,13 +408,19 @@ def _生成报表流式(
     user: dict,
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
     source_page: Optional[str] = None,
+    cancel: Optional["threading.Event"] = None,
 ) -> Tuple[str, Dict[str, Any]]:
-    """生成报表 + 持久化；on_event 实时推送决策事件（SSE 直播）。返回 (report_id, report)。"""
+    """生成报表 + 持久化；on_event 实时推送决策事件（SSE 直播）。返回 (report_id, report)。
+
+    cancel（阶段六十七）：per-request 取消令牌，透传给下层编排链路。置位后不再发起
+    新的 LLM 调用，但本函数**照常把报表算完并落库**——用户回到报表列表要能看到
+    那一份，只是它是规则降级结果。取消的是"继续推理"，不是"这次分析"。
+    """
     payload = _注入追问上下文(payload, user)
     if payload.agent_mode == "multi":
-        report = _多智能体报表(df, payload, llm_config, on_event=on_event, user_id=user["user_id"])
+        report = _多智能体报表(df, payload, llm_config, on_event=on_event, user_id=user["user_id"], cancel=cancel)
     else:
-        report = _单Agent报表(df, payload, llm_config, on_event=on_event, user_id=user["user_id"])
+        report = _单Agent报表(df, payload, llm_config, on_event=on_event, user_id=user["user_id"], cancel=cancel)
 
     # 追溯信息落库：追问来源 + 生成模式（重放/溯源时使用）
     report["上一报表ID"] = payload.上一报表ID
@@ -518,6 +524,14 @@ def generate_report_stream(
         )
 
     event_q: "queue.Queue[Optional[Dict[str, Any]]]" = queue.Queue(maxsize=_STREAM_QUEUE_MAX)
+    # 【关键行】阶段六十七 取消令牌：本次请求专属的停止信号。
+    # 为什么是 per-request 的 Event 而不是全局开关：同一进程同时服务多个用户，
+    # 一个用户关页面不能停掉别人的分析。
+    # 谁置位：下面 event_stream() 的 finally —— 客户端断开时 Starlette 关闭生成器
+    #   （GeneratorExit）→ finally 必然执行。
+    # 谁消费：worker → _生成报表流式 → 编排Agent/_执行一轮，每轮 LLM 调用前自查。
+    # 效果：用户关掉页面后，后续轮次的 LLM 请求不再发出（阶段六十二 实测单轮 10.94 秒）。
+    cancel = threading.Event()
     # 发起入口：由后端按 Referer 路径推断（用户无感知），闭包传入 worker 用于埋点
     from services.tracking import 推断发起入口
     _source_page = 推断发起入口(request.headers.get("referer"))
@@ -559,7 +573,7 @@ def generate_report_stream(
 
     def worker() -> None:
         try:
-            _生成报表流式(payload, df, llm_config, user, on_event=_push, source_page=_source_page)
+            _生成报表流式(payload, df, llm_config, user, on_event=_push, source_page=_source_page, cancel=cancel)
         except ValueError as exc:
             # 参数/字段问题（词云无词、桑基缺分组）→ 可给用户看的明确提示
             logger.warning("报表流式生成参数不满足: %s", exc)
@@ -577,11 +591,19 @@ def generate_report_stream(
     def event_stream():
         # 注意：并发名额只由 worker 释放（含客户端断开后 worker 自然结束的场景），
         # 这里不再 release，避免 BoundedSemaphore 双释放抛 ValueError。
-        while True:
-            ev = event_q.get()
-            if ev is None:
-                break
-            yield f"data: {json.dumps(_json_safe(ev), ensure_ascii=False, default=str, allow_nan=False)}\n\n"
+        try:
+            while True:
+                ev = event_q.get()
+                if ev is None:
+                    break
+                yield f"data: {json.dumps(_json_safe(ev), ensure_ascii=False, default=str, allow_nan=False)}\n\n"
+        finally:
+            # 【关键行】阶段六十七：生成器退出的**唯一可靠时机**——正常读完哨兵、
+            # 客户端断开（GeneratorExit）、异常，都是走这里。
+            # 所以置位放在 finally 而不是 "ev is None" 分支里：后者只覆盖正常结束，
+            # 而用户中途关页面恰恰不会走到那里（那正是要拦的场景）。
+            # 无脑置位也不会误伤：worker 早已跑完时再置位只是个没人读的布尔值。
+            cancel.set()
 
     return StreamingResponse(
         event_stream(),
@@ -1117,6 +1139,7 @@ def _单Agent报表(
     llm_config: LLMRequestConfig,
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
     user_id: str = "",
+    cancel: Optional["threading.Event"] = None,
 ) -> Dict[str, Any]:
     """标准单 Agent 生成报表（阶段 29：透传筛选条件 + TopN）。"""
     return 生成报表数据(
@@ -1136,6 +1159,8 @@ def _单Agent报表(
         # Fix C（阶段54-8 · LLM P1-2）：规则层只识别用户本轮输入——追问链时
         # 原始分析需求 是注入上下文前的原话；非追问时为 None，行为不变。
         规则输入=payload.原始分析需求 or None,
+        # 阶段六十七：取消令牌透传（同步 /generate 端点传 None = 无取消语义）
+        cancel=cancel,
     )
 
 
@@ -1145,6 +1170,7 @@ def _多智能体报表(
     llm_config: LLMRequestConfig,
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
     user_id: str = "",
+    cancel: Optional["threading.Event"] = None,
 ) -> Dict[str, Any]:
     """多智能体模式生成报表。"""
     from 后端_核心.profile import 生成数据画像
@@ -1154,7 +1180,7 @@ def _多智能体报表(
     # 等，会短路 模板语法/语义词 规则），必须传 payload.原始分析需求（原话）。
     # LLM 调用仍用完整 分析需求（含上下文），对齐单 Agent 的传法（L996）。
     result = 多智能体分析(画像, payload.分析需求, df, llm_config=llm_config, on_event=on_event,
-                          规则输入=payload.原始分析需求 or None)
+                          规则输入=payload.原始分析需求 or None, cancel=cancel)
     if not result:
         # 降级到单 Agent
         logger.warning("多智能体失败，降级到单 Agent")
@@ -1173,6 +1199,7 @@ def _多智能体报表(
             on_event=on_event,
             user_id=user_id,
             规则输入=payload.原始分析需求 or None,   # Fix C：规则层只认用户本轮输入
+            cancel=cancel,   # 阶段六十七：多智能体失败降级时同样带上令牌
         )
 
     # 用多智能体返回的意图走标准报表链路
@@ -1194,6 +1221,7 @@ def _多智能体报表(
         on_event=on_event,
         user_id=user_id,
         规则输入=payload.原始分析需求 or None,   # Fix C：规则层只认用户本轮输入
+        cancel=cancel,   # 阶段六十七：llm_config=None 本就不调 LLM，令牌只为防多智能体侧漏
     )
 
 

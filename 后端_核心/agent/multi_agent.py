@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any, Dict, List, Optional
 
 from 后端_核心.agent.llm_client import is_llm_configured
@@ -28,6 +29,19 @@ from config.settings import LLMRequestConfig
 
 logger = logging.getLogger(__name__)
 注册所有执行器()
+
+
+def _已取消(cancel: Optional["threading.Event"]) -> bool:
+    """阶段六十七：取消令牌是否已置位。
+
+    判定逻辑本身放在 orchestrator._已取消（单一事实来源），这里延迟导入而不是
+    在模块顶层 import：多智能体.py 是 `from .multi_agent import *` 的星号兼容层，
+    顶层多拉一个模块会改变导入顺序（orchestrator 会连带导入 memory）。
+    调用次数是每请求几次，不值得为省这点开销去冒导入顺序的风险。
+    """
+    from 后端_核心.agent.orchestrator import _已取消 as _判定
+
+    return _判定(cancel)
 
 
 # ── 各 Agent 的系统提示词 ──
@@ -85,6 +99,7 @@ def 多智能体分析(
     llm_config: Optional[LLMRequestConfig] = None,
     on_event: Optional[Any] = None,
     规则输入: Optional[str] = None,
+    cancel: Optional["threading.Event"] = None,
 ) -> Dict[str, Any]:
     """多智能体方式执行数据分析。
 
@@ -99,6 +114,8 @@ def 多智能体分析(
             API 层传「用户本轮原话」，分析需求为注入上下文后的完整文本
             （含历史标题/图表名——不得触发规则短路）。LLM 调用始终用完整
             分析需求。None = 直接用 分析需求。
+        cancel: 阶段六十七 取消令牌（threading.Event）。置位后不再发起任何新的
+            LLM 调用，直接走 _降级() 出规则版报表。None = 无取消语义。
 
     Returns:
         标准化意图 dict（含 Agent_Trace）
@@ -115,7 +132,12 @@ def 多智能体分析(
         return _降级(画像, 分析需求, trace, 规则输入=规则输入)
 
     # ── 第 1 步：数据分析师（画像 + 聚合） ──
-    data_agent_result = _运行_agent("数据分析师", 分析需求, tools, context, trace, 轮次起始=1, llm_config=llm_config)
+    # 阶段六十七：连接已断就一次 LLM 都不调——这里是多智能体链路上第一个真实的
+    # LLM 调用点。步数没走完不影响出报表：_降级() 仍返回一份规则版配置。
+    if _已取消(cancel):
+        trace.记录观察(轮次=1, 说明="客户端已断开，未发起 LLM 调用，降级到关键词匹配", 状态="需关注")
+        return _降级(画像, 分析需求, trace, 规则输入=规则输入)
+    data_agent_result = _运行_agent("数据分析师", 分析需求, tools, context, trace, 轮次起始=1, llm_config=llm_config, cancel=cancel)
     if not data_agent_result["成功"]:
         logger.warning("数据分析师失败，降级")
         trace.记录观察(轮次=1, 说明="数据分析师执行失败，降级到关键词匹配", 状态="失败")
@@ -130,6 +152,12 @@ def 多智能体分析(
     for attempt in range(max_retries + 1):
         轮次图表 = 3 + attempt * 2
 
+        # 阶段六十七：每一轮重试（含审查打回后的重做）都是一次真实计费调用，
+        # 所以在循环顶部就要查令牌——只在入口查一次会漏掉第 2、3 次尝试。
+        if _已取消(cancel):
+            trace.记录观察(轮次=轮次图表, 说明="客户端已断开，跳过图表设计师调用", 状态="需关注")
+            return _降级(画像, 分析需求, trace, 规则输入=规则输入)
+
         if attempt == 0:
             chart_prompt = f"基于以下数据画像和分析结果进行图表推荐：\n画像摘要：{_画像摘要(画像)}\n数据分析结果：{data_summary}\n\n用户需求：{分析需求}"
         else:
@@ -140,7 +168,7 @@ def 多智能体分析(
                 f"请根据审查意见修正分析方案后重新推荐。"
             )
 
-        chart_result = _运行_agent("图表设计师", chart_prompt, tools, context, trace, 轮次起始=轮次图表, llm_config=llm_config)
+        chart_result = _运行_agent("图表设计师", chart_prompt, tools, context, trace, 轮次起始=轮次图表, llm_config=llm_config, cancel=cancel)
         if not chart_result["成功"]:
             logger.warning(f"图表设计师第 {attempt+1} 次尝试失败")
             trace.记录观察(轮次=轮次图表, 说明=f"图表设计师第 {attempt+1} 次尝试失败", 状态="失败")
@@ -158,9 +186,14 @@ def 多智能体分析(
         # S12：质量审查员走纯文本（不需要工具）——旧实现强制 tool_call，
         # 审查员要么被工具流程卡死要么返回空 tool_call 导致"执行失败"，
         # 而失败分支又直接判通过，打回重做闭环永远不可达。
+        if _已取消(cancel):
+            # 阶段六十七：审查员是纯文本调用（不经过 _执行一轮），令牌不会自动拦住它，
+            # 必须在调用点自己查一次，否则断开后还会白烧一次审查请求。
+            trace.记录观察(轮次=轮次图表 + 1, 说明="客户端已断开，跳过质量审查调用", 状态="需关注")
+            return _降级(画像, 分析需求, trace, 规则输入=规则输入)
         quality_result = _运行_agent(
             "质量审查员", quality_prompt, tools, context, trace,
-            轮次起始=轮次图表 + 1, llm_config=llm_config, 需要工具=False,
+            轮次起始=轮次图表 + 1, llm_config=llm_config, 需要工具=False, cancel=cancel,
         )
 
         if not quality_result["成功"]:
@@ -223,16 +256,24 @@ def _运行_agent(
     轮次起始: int = 1,
     llm_config: Optional[LLMRequestConfig] = None,
     需要工具: bool = True,
+    cancel: Optional["threading.Event"] = None,
 ) -> Dict[str, Any]:
     """运行一个 Agent，返回执行结果。
 
     S12：``需要工具=False`` 时走纯文本回复（质量审查员用）——
     不再强制 tool_call，让"打回重做"闭环真正可达。
+
+    阶段六十七：``cancel`` 置位后本函数一次 LLM 都不调用，直接返回
+    ``{"成功": False, ...}``，由上层走既有降级路径（语义与 LLM 失败完全一致，
+    不新增分支、不新增返回形状）。
     """
     messages = [
         {"role": "system", "content": _SYSTEM_PROMPTS.get(role, _SYSTEM_PROMPTS["supervisor"])},
         {"role": "user", "content": prompt},
     ]
+
+    if _已取消(cancel):
+        return {"成功": False, "消息": messages, "摘要": "执行失败（已取消）"}
 
     if not 需要工具:
         from 后端_核心.agent.llm_client import chat_completion as _纯文本
@@ -247,7 +288,8 @@ def _运行_agent(
     for i in range(max_rounds):
         轮次 = 轮次起始 + i
         from 后端_核心.agent.orchestrator import _执行一轮 as _一轮
-        ok = _一轮(messages, tools, context, 轮次, trace, llm_config=llm_config)
+        # cancel 交给 _执行一轮 即可：它入口就查一次，所以这里不用重复判断。
+        ok = _一轮(messages, tools, context, 轮次, trace, llm_config=llm_config, cancel=cancel)
         if not ok:
             return {"成功": False, "消息": messages, "摘要": "执行失败"}
 

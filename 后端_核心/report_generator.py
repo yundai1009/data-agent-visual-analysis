@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import html
 import json
 import logging
+import threading
 
 import numpy as np
 import pandas as pd
@@ -143,6 +144,7 @@ def _解析自然语言意图(
     on_event: Optional[Any] = None,
     user_id: str = "",
     规则输入: Optional[str] = None,
+    cancel: Optional["threading.Event"] = None,
 ) -> Tuple[Dict[str, Any], str, List[Dict[str, Any]], str]:
     """优先用 LLM 解析; 失败降级回规则匹配. 返回 (override, source, trace, llm_fail_reason)。
 
@@ -164,6 +166,9 @@ def _解析自然语言意图(
       - 规则输入（Fix C · 阶段54-8）：规则层识别文本——追问链时 API 层传
         「用户原话」，与注入上下文后的完整 分析需求 分离，防历史图表名/
         标题/结论短路规则（走查 P1-2）。默认 None = 直接用 分析需求。
+      - cancel：阶段六十七 取消令牌（threading.Event），透传给编排Agent。
+        客户端断开后不再发起新的 LLM 调用，但仍按规则降级出一份可用的报表配置
+        ——报表要落库、要在报表列表里能看到，只是没走 LLM 推理。
     业务定位：
       - 【关键行】双引擎切换开关：LLM 智能解析优先，任何异常/None 都降级到规则。
       - 为什么：LLM 可能未配置 Key、网络波动、返回非法 JSON；规则兜底保证
@@ -176,7 +181,7 @@ def _解析自然语言意图(
         try:
             # LLM 智能解析：调编排Agent 走 3 轮 ReAct；内部失败会自己降级并返回降级结果
             agent_result = 编排Agent(画像, 分析需求, df=df, llm_config=llm_config, on_event=on_event,
-                                     user_id=user_id, 规则输入=规则输入)
+                                     user_id=user_id, 规则输入=规则输入, cancel=cancel)
             if agent_result:
                 override = {
                     "图表类型": agent_result["图表类型"],
@@ -826,12 +831,16 @@ def 生成报表数据(
     on_event: Optional[Any] = None,
     user_id: str = "",
     规则输入: Optional[str] = None,
+    cancel: Optional["threading.Event"] = None,
 ) -> Dict[str, Any]:
     """根据上传数据和页面选择生成可渲染的报表配置。
 
     llm_config: 请求级 LLM 配置（并发安全）；为 None 时回退 EnvConfig 全局值。
     on_event: 可选回调，trace 每记录一步即实时推送（SSE 直播）。
     user_id: 归属用户（贯穿到 Agent 记忆的隔离检索/保存）。
+    cancel: 阶段六十七 取消令牌（threading.Event）。客户端断开后不再发起新的
+        LLM 调用，但**本函数照常把报表配置算完**——报表要落库、用户回到列表页
+        要能看到刚才那一份，只是它走的是规则降级而不是 LLM 推理。
     筛选条件: 显式筛选（AND 语义），在画像/聚合/结论之前应用——
         保证图表、结论、画像三者一致地反映"筛选后的世界"。
     topN: 聚合结果保留数值最大的前 N 行（"销量 Top 10"）。
@@ -861,7 +870,7 @@ def 生成报表数据(
     else:
         y轴列表 = [field for field in (y轴 or []) if field]
 
-    intent_override, intent_source, agent_trace, llm_fail_reason = _解析自然语言意图(画像, 分析需求, df, llm_config=llm_config, on_event=on_event, user_id=user_id, 规则输入=规则输入)
+    intent_override, intent_source, agent_trace, llm_fail_reason = _解析自然语言意图(画像, 分析需求, df, llm_config=llm_config, on_event=on_event, user_id=user_id, 规则输入=规则输入, cancel=cancel)
     # M23：用户原始请求语义（推荐说明文案用）——用户选了"自动推荐"时，即使
     # LLM 意图覆盖出了具体图表，文案也应说"系统自动选择"而非"用户手动选择"。
     用户请求自动推荐 = 图表类型 == "自动推荐"
