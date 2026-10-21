@@ -24,6 +24,7 @@ const ShareView = lazy(() => import('./pages/ShareView'));
 const DataManagement = lazy(() => import('./pages/DataManagement'));
 const Analysis = lazy(() => import('./pages/Analysis'));
 const Report = lazy(() => import('./pages/Report'));
+const Compare = lazy(() => import('./pages/Compare'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Account = lazy(() => import('./pages/Account'));
 const Admin = lazy(() => import('./pages/Admin'));
@@ -175,6 +176,8 @@ function AppRouter() {
                         <Route path="/analysis" element={<ProtectedRoute><Analysis /></ProtectedRoute>} />
                         <Route path="/report" element={<ProtectedRoute><Report /></ProtectedRoute>} />
                         <Route path="/report/:reportId" element={<ProtectedRoute><Report /></ProtectedRoute>} />
+                        {/* 对比分析：多数据集横向对比（一次勾选 2~10 份数据，看同一批主体的变化） */}
+                        <Route path="/compare" element={<ProtectedRoute><Compare /></ProtectedRoute>} />
                         <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
                         <Route path="/account" element={<ProtectedRoute><Account /></ProtectedRoute>} />
                         <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />

@@ -14,7 +14,7 @@ export {
   getAccountLLMKey, fetchLLMProviders, saveCustomProvider, deleteCustomProvider, testCustomProvider,
   saveAccountLLMKey, clearAccountLLMKey,
   loadExample, getDataset, getDatasetRows, listDatasets, deleteDataset, renameDataset, mergeDatasets, cleanDataset,
-  generateReport,
+  generateReport, previewCompare, compareReport,
   listTemplates, saveTemplate, deleteTemplate, runTemplate,
   listSchedules, createSchedule, deleteSchedule, globalSearch, fetchFailedSchedules,
   listReports, getReport, exportReport, exportFullReport, exportAllReports, deleteReport,

@@ -179,7 +179,9 @@ def _处理单个上传(
 def merge_datasets(payload: dict, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     """优化③：合并多个数据集为一份（列对齐 union + 行追加），返回新数据集。
 
-    body: {"数据集ID列表": [...], "文件名": "可选新名称"}
+    body: {"数据集ID列表": [...], "文件名": "可选新名称", "来源标识": false}
+      - 来源标识=true：给合并结果加一列 `来源`，写入各输入数据集的原始文件名（去扩展名）。
+        默认 false，保持原有行为不变（旧调用方拿到的字段集合一致）。
     列对齐：各数据集列取并集，缺失列填 NaN；行上限 50 万（防画像/存储膨胀）。
     """
     import pandas as pd
@@ -203,11 +205,29 @@ def merge_datasets(payload: dict, user: dict = Depends(get_current_user)) -> Dic
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="文件名过长（最多 120 字符）")
 
     dfs: List[pd.DataFrame] = []
+    输入名: List[str] = []
     for _id in ids:
         item = _仓储.读取(user["user_id"], str(_id))
         if not item:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"数据集不存在或无权访问")
         dfs.append(item["数据"])
+        输入名.append(str(item.get("文件名") or ""))
+
+    # 可选血缘列：来源标识=true 时把每行的出处写进 `来源` 列。
+    # 动机：concat 之后 2月/3月 的行混在一起，事后没人记得哪行来自哪个文件；
+    # 对比分析正需要这一列（恒定列自动识别即可直接当来源轴）。
+    来源标识 = bool(payload.get("来源标识"))
+    if 来源标识:
+        列名 = "来源"
+        已占用 = {str(c) for df in dfs for c in df.columns}
+        if 列名 in 已占用:
+            列名 = "数据来源"
+        标好: List[pd.DataFrame] = []
+        for df, 名 in zip(dfs, 输入名):
+            副本 = df.copy()
+            副本[列名] = Path(名).stem or 名 or "未命名"
+            标好.append(副本)
+        dfs = 标好
 
     merged = pd.concat(dfs, ignore_index=True, sort=False)
     _MAX_MERGE_ROWS = 500_000

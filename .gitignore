@@ -127,3 +127,6 @@ docs/迁移窗口摘要-2026*.md
 #     所以不入库（只保留最后一轮的路径写进文档正文）。
 # ──────────────────────────────────────────────
 scripts/.e2e_real/
+
+# 根级 node_modules 只会在误把 vitest 跑在仓库根时由 vite 生成 .vite/.vitest-cache 缓存
+node_modules/

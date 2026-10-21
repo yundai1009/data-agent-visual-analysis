@@ -15,13 +15,16 @@
 import { useState, useEffect, useRef } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
-import { Database, Zap, BarChart3, LayoutDashboard, Shield, ChevronLeft, ChevronRight, LogOut, X, UserRoundPen, MessageSquareHeart, Moon, Sun, Search } from 'lucide-react';
+import { Database, Zap, BarChart3, LayoutDashboard, GitCompare, Shield, ChevronLeft, ChevronRight, LogOut, X, UserRoundPen, MessageSquareHeart, Moon, Sun, Search } from 'lucide-react';
 import { useApp } from '../AppContext';
 import { submitFeedback, globalSearch } from '../api';
 
 const navItems = [
   { to: '/data', icon: Database, label: '数据管理' },
   { to: '/analysis', icon: Zap, label: '智能分析' },
+  // 对比分析：智能分析的"横向"姊妹入口——单个数据集做分析走 /analysis，
+  // 多份数据（1月/2月/10月销售）做同比环比走 /compare，故紧邻放置。
+  { to: '/compare', icon: GitCompare, label: '对比分析' },
   { to: '/report', icon: BarChart3, label: '报表历史' },
   { to: '/dashboard', icon: LayoutDashboard, label: '图表看板' },
   { to: '/account', icon: UserRoundPen, label: '账号设置' },

@@ -36,7 +36,14 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 
-from api.contracts import ReportGenerateRequest, ReportGenerateResponse, 筛选条件模型, 完整报告导出请求
+from api.contracts import (
+    ReportGenerateRequest,
+    ReportGenerateResponse,
+    对比分析请求,
+    对比预览请求,
+    筛选条件模型,
+    完整报告导出请求,
+)
 from api.dependencies import get_current_user
 from api.routes.datasets import _仓储
 from 后端_核心.report_generator import 生成报表数据
@@ -205,12 +212,21 @@ def _准备上下文(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在")
 
     df = item["数据"]
+    llm_config = _准备LLM配置(request, user, payload.model or "")
+    return df, llm_config
 
+
+def _准备LLM配置(request: Request, user: dict, 模型覆盖: str = "") -> LLMRequestConfig:
+    """解析 LLM provider / model / key（白名单 + BYOK + 共享配额），只管 LLM，不碰数据集。
+
+    阶段 71：从 _准备上下文 拆出——对比分析要同时读 2~10 个数据集，
+    不能再让 LLM 准备逻辑绑死"单个 payload.数据集ID"。
+    """
     # LLM 配置：推荐预设（白名单）或用户自定义供应商（自担风险 BYOK）
     raw_provider = (request.headers.get("x-llm-provider") or "").strip().lower()
     is_provider_explicit = bool(raw_provider)  # 用户是否显式指定了 provider
     user_provider = raw_provider or "deepseek"
-    user_model = (request.headers.get("x-llm-model") or "").strip() or payload.model or ""
+    user_model = (request.headers.get("x-llm-model") or "").strip() or 模型覆盖 or ""
 
     providers = getattr(EnvConfig, "LLM_PROVIDERS", {})
     provider_conf = providers.get(user_provider)
@@ -298,7 +314,7 @@ def _准备上下文(
             model=user_model or EnvConfig.LLM_MODEL or provider_conf.get("default_model", ""),
             api_key=EnvConfig.LLM_API_KEY,
         )
-        return df, llm_config
+        return llm_config
 
     llm_config = LLMRequestConfig(
         provider=user_provider,
@@ -306,7 +322,7 @@ def _准备上下文(
         model=user_model or provider_conf.get("default_model", ""),
         api_key=user_api_key or EnvConfig.LLM_API_KEY,
     )
-    return df, llm_config
+    return llm_config
 
 
 def _注入追问上下文(
@@ -631,6 +647,142 @@ def generate_report_stream(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ── 阶段 71：多数据集对比 ──────────────────────────────────────────────────────
+
+
+def _读取对比数据集(数据集ID列表: list[str], user: dict) -> Tuple[list, list[str]]:
+    """读取 2~10 个数据集（严格归属校验），返回 (DataFrame 列表, 名称列表)。
+
+    名称列表用于推导来源标签（文件名兜底），因此取入库时的原始文件名。
+    """
+    from 后端_核心.对比分析 import 最大总行数, 最大数据集数, 最小数据集数
+
+    if len(数据集ID列表) < 最小数据集数:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"对比至少需要 {最小数据集数} 个数据集",
+        )
+    if len(数据集ID列表) > 最大数据集数:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"对比最多支持 {最大数据集数} 个数据集",
+        )
+    if len(set(数据集ID列表)) != len(数据集ID列表):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="对比数据集不能重复选择",
+        )
+
+    数据列表: list = []
+    名称列表: list[str] = []
+    总行数 = 0
+    for 序号, 数据集ID in enumerate(数据集ID列表):
+        item = _仓储.读取(user["user_id"], 数据集ID)
+        if not item:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"数据集不存在：{数据集ID}",
+            )
+        数据列表.append(item["数据"])
+        名称列表.append(item.get("文件名") or f"数据集{序号 + 1}")
+        总行数 += len(item["数据"])
+    if 总行数 > 最大总行数:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"参与对比的数据总行数 {总行数} 超过上限 {最大总行数}，请先筛选或拆分",
+        )
+    return 数据列表, 名称列表
+
+
+@router.post("/compare/preview")
+def 对比预览(payload: 对比预览请求, user: dict = Depends(get_current_user)) -> Dict[str, Any]:
+    """预览"这几个数据集能比什么"：共同字段、指标候选、主体轴候选、来源轴候选、推荐口径。
+
+    只读、不落库、不调 LLM——用户选完数据集先看一眼，再决定怎么比。
+    """
+    from 后端_核心.对比分析 import 生成对比预览
+
+    数据列表, 名称列表 = _读取对比数据集(payload.数据集ID列表, user)
+    结果 = 生成对比预览(
+        数据列表,
+        名称列表,
+        手动标签=list(payload.对比标签 or []) or None,
+        来源轴=payload.来源轴,
+    )
+    return _json_safe(结果)
+
+
+@router.post("/compare", response_model=ReportGenerateResponse)
+def 多数据集对比(
+    payload: 对比分析请求,
+    request: Request,
+    user: dict = Depends(get_current_user),
+) -> ReportGenerateResponse:
+    """跨数据集对比：多份文件按 来源轴 并排，主体轴 对齐，指标聚合后出图出结论。
+
+    结果按普通报表落库（`数据集ID` 记第一个数据集，完整列表在 `数据集ID列表`），
+    因此报表页/导出/分享/看板全部可直接复用。
+    """
+    from 后端_核心.对比分析 import 执行对比, 构建对比报表
+    from repositories import report_repo
+
+    with _流式并发配额(f"当前分析任务已满（并发上限 {_生成并发上限()}），请稍后重试"):
+        数据列表, 名称列表 = _读取对比数据集(payload.数据集ID列表, user)
+        llm_config = _准备LLM配置(request, user, payload.model or "")
+        try:
+            对比结果 = 执行对比(
+                数据列表,
+                名称列表,
+                对比标签=list(payload.对比标签 or []) or None,
+                来源轴=payload.来源轴,
+                主体轴=payload.维度,
+                指标=payload.指标,
+                聚合方式=payload.聚合方式,
+                图表类型=payload.图表类型,
+                分析需求=payload.分析需求,
+                筛选条件=[c.model_dump() for c in payload.筛选条件],
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+
+        报表 = 构建对比报表(
+            对比结果,
+            分析需求=payload.分析需求,
+            数据集ID列表=list(payload.数据集ID列表),
+            筛选条件=[c.model_dump() for c in payload.筛选条件],
+            llm_config=llm_config,
+            数据列表=数据列表,
+        )
+        报表["数据集ID列表"] = list(payload.数据集ID列表)
+        报表["agent_mode"] = "compare"
+
+        报表ID = report_repo.保存报表(
+            user_id=user["user_id"],
+            dataset_id=payload.数据集ID列表[0],
+            title=报表.get("标题", ""),
+            chart_type=报表.get("图表类型", ""),
+            report=报表,
+        )
+        # 预测数据采集：与单表生成对齐（对比一次 = 生成一张图）
+        try:
+            from repositories import event_repo
+            from services.tracking import 推断发起入口
+            event_repo.记录生成事件(
+                user["user_id"],
+                image_count=1,
+                analysis_type=报表.get("图表类型") or payload.图表类型 or None,
+                is_paid_quota=0,
+                source_page=推断发起入口(request.headers.get("referer")),
+            )
+        except Exception:  # noqa: BLE001 - 埋点失败不影响对比主流程
+            logger.warning("记录对比生成事件失败", exc_info=True)
+
+    return _构建对比响应(payload, 报表, 报表ID)
 
 
 # ── 历史 ──────────────────────────────────────────────────────────────────────
@@ -1049,6 +1201,14 @@ def 精细化编辑报表(
     if not 报表:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报表不存在")
 
+    # 阶段 71：对比报表是确定性跨文件计算，图表配置里的 颜色=来源 是多系列模型，
+    # 精细化编辑面板（单轴 X/Y/分组）不适配——明确拒绝而不是静默改坏。
+    if (报表["报表"] or {}).get("数据集ID列表"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="对比报表暂不支持精细化编辑，请回到对比分析页调整参数重新生成",
+        )
+
     ds = _仓储.读取(user["user_id"], 报表["数据集ID"])
     if not ds:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="关联数据集不存在")
@@ -1119,6 +1279,12 @@ def 重放报表(
 
     prev = item["报表"]
     配置 = prev.get("图表配置", {})
+
+    # 阶段 71：对比报表重放——不能走单 df 回放（原报表是一堆 df 合成的一张长表），
+    # 必须重读全部来源数据重新对比；数据集被删 → 404（由 _读取对比数据集 抛）。
+    if prev.get("数据集ID列表"):
+        return _重放对比报表(prev, request, user)
+
     payload = ReportGenerateRequest(
         数据集ID=item["数据集ID"],
         分析需求=prev.get("分析需求") or prev.get("标题", ""),
@@ -1152,6 +1318,77 @@ def 重放报表(
 
 
 # ── 生成 ──────────────────────────────────────────────────────────────────────
+
+
+def _重放对比报表(
+    prev: Dict[str, Any],
+    request: Request,
+    user: dict,
+) -> ReportGenerateResponse:
+    """阶段 71：重放一份对比报表——按原报表的对比配置重读全部来源、重新对比。
+
+    对比是确定性计算，重放不复用旧结果而是重算（数据可能已更新），
+    语义与单表重放一致：产出**新**报表，不动原报表。
+    """
+    from 后端_核心.对比分析 import 执行对比, 构建对比报表
+    from repositories import report_repo
+
+    对比配置 = prev.get("对比配置") or {}
+    数据集ID列表 = list(prev.get("数据集ID列表") or [])
+    if len(数据集ID列表) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="原对比报表缺少来源数据集列表，无法重放",
+        )
+
+    payload = 对比分析请求(
+        数据集ID列表=数据集ID列表,
+        对比标签=list(对比配置.get("标签") or []),
+        分析需求=prev.get("分析需求") or "",
+        维度=对比配置.get("主体轴"),
+        指标=对比配置.get("指标"),
+        聚合方式=对比配置.get("聚合方式") or "求和",
+        图表类型=prev.get("图表类型") or "自动推荐",
+        来源轴=对比配置.get("来源轴"),
+    )
+    with _流式并发配额(f"当前分析任务已满（并发上限 {_生成并发上限()}），请稍后重试"):
+        数据列表, 名称列表 = _读取对比数据集(数据集ID列表, user)
+        llm_config = _准备LLM配置(request, user, payload.model or "")
+        try:
+            对比结果 = 执行对比(
+                数据列表,
+                名称列表,
+                对比标签=list(payload.对比标签 or []) or None,
+                来源轴=payload.来源轴,
+                主体轴=payload.维度,
+                指标=payload.指标,
+                聚合方式=payload.聚合方式,
+                图表类型=payload.图表类型,
+                分析需求=payload.分析需求,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+        报表 = 构建对比报表(
+            对比结果,
+            分析需求=payload.分析需求,
+            数据集ID列表=数据集ID列表,
+            llm_config=llm_config,
+            数据列表=数据列表,
+        )
+        报表["数据集ID列表"] = 数据集ID列表
+        报表["agent_mode"] = "compare"
+        报表["来源报表ID"] = prev.get("来源报表ID") or ""
+        新ID = report_repo.保存报表(
+            user_id=user["user_id"],
+            dataset_id=数据集ID列表[0],
+            title=报表.get("标题", ""),
+            chart_type=报表.get("图表类型", ""),
+            report=报表,
+        )
+    return _构建对比响应(payload, 报表, 新ID)
 
 
 def _单Agent报表(
@@ -1274,4 +1511,36 @@ def _构建响应(payload: ReportGenerateRequest, report: Dict[str, Any], report
         意图来源=report.get("意图来源", "无"),
         LLM失败原因=report.get("LLM失败原因", ""),
         agent_mode=payload.agent_mode,
+    )
+
+
+def _构建对比响应(
+    payload: 对比分析请求,
+    报表: Dict[str, Any],
+    报表ID: str = "",
+) -> ReportGenerateResponse:
+    """对比报表 → API 响应。
+
+    `数据集ID` 用列表首个（契约里是必填单值，历史能力都按它寻址），
+    完整来源列表放 `数据集ID列表`；`agent_mode="compare"` 让前端能区分对比报表。
+    """
+    return ReportGenerateResponse(
+        报表ID=报表ID or uuid4().hex,
+        数据集ID=payload.数据集ID列表[0],
+        标题=报表.get("标题", "未命名报表"),
+        图表类型=报表.get("图表类型", "自动推荐"),
+        图表配置=报表.get("图表配置", {}),
+        报表数据=报表.get("报表数据", []),
+        数据画像=报表.get("数据画像", {}),
+        推荐说明=报表.get("推荐说明", {}),
+        风险提示=报表.get("风险提示", []),
+        **{"Agent Trace": 报表.get("Agent Trace", [])},
+        导出数据=报表.get("导出数据", []),
+        结论=报表.get("结论", ""),
+        # 对比结论只来自 LLM 解读或规则模板，没有意图解析环节
+        意图来源=报表.get("结论来源") or "规则",
+        LLM失败原因=报表.get("LLM失败原因", ""),
+        agent_mode="compare",
+        数据集ID列表=list(payload.数据集ID列表),
+        对比配置=报表.get("对比配置"),
     )

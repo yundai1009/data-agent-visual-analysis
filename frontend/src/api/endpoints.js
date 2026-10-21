@@ -166,6 +166,29 @@ export async function generateReport(payload) {
   });
 }
 
+// ---- 多数据集对比（对比分析页）----
+// 业务定位：Compare.jsx 第一步勾选 2~10 个数据集后做"只读预检"——不发 LLM、不落库，
+// 只回共同字段/指标候选/主体轴候选/来源轴候选/推荐口径，用来给下拉框填选项与默认值。
+// 因此这里用默认 30s 超时即可（纯数据计算，不排队等模型）。
+
+export async function previewCompare(payload) {
+  return request('/reports/compare/preview', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+// 生成对比报表：和 runTemplate 同理，走完整 LLM Agent 链路（数据对齐 + 解读结论），
+// 30s 默认超时容易在数据集较大 / 模型排队时被掐断 → 显式传 180s。
+
+export async function compareReport(payload) {
+  return request('/reports/compare', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    _customTimeout: 180000, // 3 分钟：与 runTemplate / SSE 分析超时对齐
+  });
+}
+
 // 分析直播：SSE 流式获取 Agent 实时决策事件（fetch + ReadableStream 解析）
 // options.onEvent(ev)：每个 "data: {json}" 事件回调；返回 'stop' 可中断消费
 // options.signal：AbortSignal（用户取消）

@@ -159,8 +159,44 @@ class ReportGenerateResponse(BaseModel):
     # LLM 失败原因：降级到规则时透传，前端明示"为什么是规则匹配"
     LLM失败原因: str = ""
     agent_mode: str = "single"
+    # 阶段 71：多数据集对比。单表报表为空列表/None，对比报表回填
+    # （否则 response_model 会把它们过滤掉，前端拿不到对比元信息）。
+    数据集ID列表: list[str] = Field(default_factory=list)
+    对比配置: Optional[Dict[str, Any]] = None
 
     model_config = ConfigDict(populate_by_name=True)
+
+
+class 对比分析请求(BaseModel):
+    """阶段 71：多数据集对比请求（2~10 个数据集横向比）。
+
+    三轴模型：
+    - 来源轴（谁跟谁比）：1月/2月/3月，或 华东/华南/华北，或 线上/线下；
+      取值优先 对比标签（手动）> 数据集内恒定列（来源轴 指定列名）> 文件名。
+    - 主体轴（比哪些对象）：共同分类列，如 地区/产品/渠道。
+    - 指标：共同数值列。
+
+    对比维度**不限于时间**，因此 来源轴 不叫 月份轴。
+    """
+
+    数据集ID列表: list[str] = Field(..., min_length=2, max_length=10)
+    对比标签: list[str] = Field(default_factory=list, max_length=10)  # 与 数据集ID列表 同序；空=自动推导
+    分析需求: str = Field("", max_length=2000)
+    维度: Optional[str] = Field(None, max_length=64)  # 主体轴，None=自动
+    指标: Optional[str] = Field(None, max_length=64)  # None=自动
+    聚合方式: str = Field("求和", max_length=16)
+    图表类型: str = Field("自动推荐", max_length=32)
+    来源轴: Optional[str] = Field(None, max_length=64)  # 取标签用的列名，None=自动
+    筛选条件: list[筛选条件模型] = Field(default_factory=list, max_length=10)
+    model: Optional[str] = Field(None, max_length=64)
+
+
+class 对比预览请求(BaseModel):
+    """阶段 71：对比预览（只读，不落库）。用户选完数据集后先看能比什么。"""
+
+    数据集ID列表: list[str] = Field(..., min_length=2, max_length=10)
+    对比标签: list[str] = Field(default_factory=list, max_length=10)
+    来源轴: Optional[str] = Field(None, max_length=64)
 
 
 # 看板请求体（新建/更新）：名称 + 归属用户的报表ID列表。
