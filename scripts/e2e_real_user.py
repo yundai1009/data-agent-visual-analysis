@@ -10,7 +10,8 @@
 #     走 dry-run 分支 `logger.warning(...)`；root logger 无 handler 时 Python 用 `logging.lastResort`
 #     把 WARNING 级打到 stderr，所以这段日志确实会出现。
 #   - `跑主链路`：注册 → 登录 → 上传 CSV → 画像 → 智能分析（打**真实 LLM**）→ 报表 → 导出三种格式
-#     → 分享链接 + 匿名新标签页访问 → 图表看板 + 关系视图 → 账号页导出我的数据 → 登出后受保护页被拒。
+#     → 分享链接 + 匿名新标签页访问 → 图表看板 + 关系视图 → 多数据集对比（阶段七十二新增 P15）
+#     → 账号页导出我的数据 → 登出后受保护页被拒。
 #     每步截图落 `scripts/.e2e_real/<时间戳>/`。
 #   - `跑极限测试`：大文件 / 超宽表 / 路径穿越文件名 / SQL 注入串 / XSS 串 / 20 并发 / 无 token /
 #     越权读别人报表 / 十万字需求 / 伪造 JWT / 重复注册 / 错验证码。
@@ -862,6 +863,268 @@ def main():
             else:
                 check("关系视图切换按钮存在", False, "新无看板用户也拿不到 title='关系视图'", group="P8 看板")
 
+            # ---------------- P15 多数据集对比（阶段七十一 跨数据集对比 真机链路）
+            print("\n== P15 多数据集对比分析 ==")
+            # 阶段七十一加的「跨文件对比」：来源轴（谁跟谁比）+ 主体轴（比哪些对象）+ 指标。
+            # 单测跑在 sqlite + pandas 上，真机上才可能挂的是这几处，所以 P15 专门埋它们：
+            #  ① 中文文件名 → 来源标签（去扩展名之后是不是「1月」，编码会不会掉字）；
+            #  ② `1月 < 2月 < 10月` 的排序（字典序会排成 1月/10月/2月）；
+            #  ③ 标签重排之后数据不能被搬错位 —— 所以**故意按 10月/1月/2月 乱序上传**；
+            #  ④ 堆积柱状图真按 `来源` 分三个系列；
+            #  ⑤ 对比报表是普通报表：导出 CSV 里必须带「来源」列；
+            #  ⑥ 精细化编辑对对比报表必须 400（单轴面板不适配多系列模型）；
+            #  ⑦ 重跑必须三个数据集一起重算，不能退化成只跑第一个；
+            #  ⑧ 对比报表进看板后关系视图必须优雅退化（只画第一个来源），不能崩。
+            月度 = [("10月", 2.0), ("1月", 1.0), ("2月", 1.5)]  # 故意乱序上传
+            for 名, 倍 in 月度:
+                行 = ["地区,销售额,订单量"]
+                for 序号, 地区 in enumerate(("华东", "华南", "华北")):
+                    基准 = (序号 + 1) * 100
+                    行.append(f"{地区},{int(基准 * 倍)},{int(基准 * 倍 / 10)}")
+                (SHOT_DIR / f"{名}.csv").write_text("\n".join(行) + "\n", encoding="utf-8")
+            page.goto(BASE + "/data", wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(1500)
+            try:
+                # DataManagement.jsx 的 input 带 multiple → 一次塞 3 个文件，
+                # 走的是和真实用户完全一样的多文件上传路径（中文文件名由浏览器按 UTF-8 编码）。
+                page.set_input_files("#file-input", [str(SHOT_DIR / f"{名}.csv") for 名, _ in 月度])
+            except Exception as e:  # noqa: BLE001
+                note(f"P15 多文件上传失败：{type(e).__name__}")
+            # 数据集列表藏在「我的数据集」下拉里（DataManagement.jsx:390 `dsOpen && …`），
+            # 不点开下拉页面上根本没有这份列表——首轮真机就是在这里误判成"上传没成功"。
+            # 文件名用子串匹配：行里除了文件名还有「N 行 · M 列」，精确匹配会漏。
+            if not 点(page, "button:has-text('我的数据集')", 15000):
+                note("P15 打不开「我的数据集」下拉，后面的列表断言只能靠页面片段自证")
+            for 名, _ in 月度:
+                try:
+                    page.wait_for_selector(f"text={名}.csv", timeout=30000)
+                    check(f"上传「{名}.csv」后出现在数据集列表", True, group="P15 对比")
+                except Exception as e:  # noqa: BLE001
+                    片段 = ""
+                    try:
+                        片段 = page.locator("body").inner_text()[:240].replace("\n", " | ")
+                    except Exception:  # noqa: BLE001
+                        pass
+                    check(f"上传「{名}.csv」后出现在数据集列表", False,
+                          f"{type(e).__name__} 页面片段={片段}", group="P15 对比")
+            try:
+                page.mouse.click(5, 5)      # 点一下遮罩把下拉关掉，别挡住后面
+            except Exception:  # noqa: BLE001
+                pass
+            page.screenshot(path=str(SHOT_DIR / "14-对比-三份月度数据.png"), full_page=True)
+
+            月度ID: dict = {}
+            st, body = http("GET", "/datasets/?limit=50", token=token)
+            if st == 200:
+                try:
+                    for 项 in json.loads(body).get("数据集列表") or []:
+                        文件 = str(项.get("文件名", ""))
+                        for 名, _ in 月度:
+                            if 文件 == f"{名}.csv":
+                                月度ID[名] = 项.get("数据集ID", "") or ""
+                except Exception:  # noqa: BLE001
+                    月度ID = {}
+            齐了 = len([v for v in 月度ID.values() if v]) == 3
+            check("三份月度数据集都能在 API 里按文件名找到", 齐了,
+                  f"找到={sorted(k for k, v in 月度ID.items() if v)}", group="P15 对比")
+
+            对比报表ID = ""
+            if 齐了:
+                对比ID = [月度ID[名] for 名, _ in 月度]  # 乱序：10月 / 1月 / 2月
+                推荐 = {}
+                st, body = http("POST", "/reports/compare/preview", {"数据集ID列表": 对比ID}, token=token)
+                if st == 200:
+                    try:
+                        推荐 = json.loads(body).get("推荐") or {}
+                    except Exception:  # noqa: BLE001
+                        推荐 = {}
+                check("POST /reports/compare/preview 返回 200", st == 200,
+                      f"{st} {str(body)[:120]}", group="P15 对比")
+                check("中文文件名推导出「10月/1月/2月」来源标签（按上传顺序，还没排过序）",
+                      list(推荐.get("来源标签") or []) == ["10月", "1月", "2月"],
+                      f"标签={推荐.get('来源标签')} 推导方式={推荐.get('推导方式')}", group="P15 对比")
+                check("预检推荐 主体轴=地区 / 指标=销售额 / 轴类型=时间型",
+                      推荐.get("主体轴") == "地区" and 推荐.get("指标") == "销售额"
+                      and 推荐.get("轴类型") == "时间型",
+                      f"主体轴={推荐.get('主体轴')} 指标={推荐.get('指标')} 轴类型={推荐.get('轴类型')}",
+                      group="P15 对比")
+
+                t0 = time.time()
+                生成 = {}
+                st, body = http("POST", "/reports/compare", {"数据集ID列表": 对比ID}, token=token, timeout=300)
+                if st == 200:
+                    try:
+                        生成 = json.loads(body)
+                    except Exception:  # noqa: BLE001
+                        生成 = {}
+                对比报表ID = 生成.get("报表ID", "") or ""
+                check("POST /reports/compare 生成对比报表", st == 200 and bool(对比报表ID),
+                      f"{st} {str(body)[:140]}", group="P15 对比", cost=time.time() - t0)
+                配置 = 生成.get("图表配置") or {}
+                check("图表按「来源」分系列（stacked_bar + 颜色=来源 + X轴=地区 + Y轴=销售额）",
+                      配置.get("类型") == "stacked_bar" and 配置.get("颜色") == "来源"
+                      and 配置.get("X轴") == "地区" and list(配置.get("Y轴") or []) == ["销售额"],
+                      f"类型={配置.get('类型')} 颜色={配置.get('颜色')} "
+                      f"X轴={配置.get('X轴')} Y轴={配置.get('Y轴')}", group="P15 对比")
+                对比配置 = 生成.get("对比配置") or {}
+                check("乱序上传后来源标签被排成 1月/2月/10月（不是字典序的 1月/10月/2月）",
+                      list(对比配置.get("标签") or []) == ["1月", "2月", "10月"],
+                      f"标签={对比配置.get('标签')}", group="P15 对比")
+                行表 = {}
+                for 行 in (生成.get("报表数据") or []):
+                    行表[(str(行.get("主体")), str(行.get("来源")))] = 行.get("销售额")
+                check("标签重排没把数据搬错位（华北 1月=300 / 2月=450 / 10月=600）",
+                      行表.get(("华北", "1月")) == 300 and 行表.get(("华北", "2月")) == 450
+                      and 行表.get(("华北", "10月")) == 600,
+                      f"1月={行表.get(('华北', '1月'))} 2月={行表.get(('华北', '2月'))} "
+                      f"10月={行表.get(('华北', '10月'))}", group="P15 对比")
+                结论 = str(生成.get("结论") or "")
+                check("结论里写得出变化量与变化率（含 % 和主体轴名）",
+                      "%" in 结论 and "地区" in 结论, 结论[:120], group="P15 对比")
+                check("对比报表带 agent_mode=compare 与完整的三个数据集ID",
+                      生成.get("agent_mode") == "compare"
+                      and len(生成.get("数据集ID列表") or []) == 3,
+                      f"agent_mode={生成.get('agent_mode')} "
+                      f"数据集={len(生成.get('数据集ID列表') or [])}", group="P15 对比")
+                导出 = 生成.get("导出数据") or {}
+                check("导出数据含 HTML 报告与推荐文件名 compare-report.html",
+                      bool(导出.get("HTML")) and len(str(导出.get("HTML"))) > 500
+                      and 导出.get("推荐文件名") == "compare-report.html",
+                      f"HTML={len(str(导出.get('HTML') or ''))}字节 "
+                      f"文件名={导出.get('推荐文件名')}", group="P15 对比")
+
+            if 对比报表ID:
+                落库 = {}
+                st, body = http("GET", f"/reports/{对比报表ID}", token=token)
+                if st == 200:
+                    try:
+                        落库 = json.loads(body)
+                    except Exception:  # noqa: BLE001
+                        落库 = {}
+                存报表 = 落库.get("报表") or {}
+                check("对比报表已按普通报表落库（数据集ID列表 3 个 + agent_mode=compare）",
+                      st == 200 and len(存报表.get("数据集ID列表") or []) == 3
+                      and 存报表.get("agent_mode") == "compare",
+                      f"{st} agent_mode={存报表.get('agent_mode')} "
+                      f"数据集={len(存报表.get('数据集ID列表') or [])}", group="P15 对比")
+                st, body = http("POST", f"/reports/{对比报表ID}/refine",
+                                {"指令": "把横轴换成产品线"}, token=token)
+                拒因 = ""
+                try:
+                    拒因 = str(json.loads(body).get("message") or "")
+                except Exception:  # noqa: BLE001
+                    拒因 = str(body)[:80]
+                check("对比报表的精细化编辑被明确拒绝（400 且说清为什么）",
+                      st == 400 and "对比报表" in 拒因, f"{st} {拒因[:100]}", group="P15 对比")
+                st, 原始 = http("GET", f"/reports/{对比报表ID}/export?format=csv", token=token, raw=True)
+                CSV文本 = 原始.decode("utf-8-sig", "replace") if isinstance(原始, (bytes, bytearray)) else str(原始)
+                表头 = CSV文本.splitlines()[0] if CSV文本.splitlines() else ""
+                check("导出 CSV 带「来源」列（长表结构没在导出层被吃掉）",
+                      st == 200 and "来源" in 表头 and "主体" in 表头,
+                      f"{st} 表头={表头[:80]}", group="P15 对比")
+                t0 = time.time()
+                重放 = {}
+                st, body = http("POST", f"/reports/{对比报表ID}/replay", token=token, timeout=300)
+                if st == 200:
+                    try:
+                        重放 = json.loads(body)
+                    except Exception:  # noqa: BLE001
+                        重放 = {}
+                check("对比报表重跑仍按三个数据集重算（新报表ID + 数据集列表完整）",
+                      st == 200 and 重放.get("报表ID") and 重放.get("报表ID") != 对比报表ID
+                      and len(重放.get("数据集ID列表") or []) == 3,
+                      f"{st} 新ID={str(重放.get('报表ID'))[:8]} "
+                      f"数据集={len(重放.get('数据集ID列表') or [])}",
+                      group="P15 对比", cost=time.time() - t0)
+
+            # 浏览器：真实走一遍「对比分析」页（前端不是后端的附属品，得自己点一遍）
+            page.goto(BASE + "/compare", wait_until="domcontentloaded", timeout=30000)
+            try:
+                page.wait_for_selector("h1:has-text('对比分析')", timeout=20000)
+                check("「对比分析」页能打开", True, group="P15 对比")
+            except Exception as e:  # noqa: BLE001
+                check("「对比分析」页能打开", False, type(e).__name__, group="P15 对比")
+            page.wait_for_timeout(1500)
+            for 名, _ in 月度:
+                try:
+                    page.locator(f"input[type='checkbox'][aria-label='{名}.csv']").first.check(timeout=8000)
+                except Exception as e:  # noqa: BLE001
+                    print(f"  [勾不上] {名}.csv -- {type(e).__name__}")
+            try:
+                page.wait_for_selector("text=当前推导", timeout=25000)
+                推导 = page.locator("text=/当前推导/").first.inner_text(timeout=5000)
+            except Exception as e:  # noqa: BLE001
+                推导 = type(e).__name__
+            check("勾选三份数据后前端预检真的打到了后端（出现「当前推导：文件名」）",
+                  "文件名" in 推导, 推导[:80], group="P15 对比")
+            主体轴值 = ""
+            指标值 = ""
+            try:
+                主体轴值 = page.locator("select[aria-label='主体轴']").first.input_value(timeout=5000)
+                指标值 = page.locator("select[aria-label='指标']").first.input_value(timeout=5000)
+            except Exception:  # noqa: BLE001
+                pass
+            check("预检推荐值已回填下拉框（主体轴=地区 / 指标=销售额）",
+                  主体轴值 == "地区" and 指标值 == "销售额",
+                  f"主体轴={主体轴值} 指标={指标值}", group="P15 对比")
+            try:
+                已选文案 = page.locator("text=/已选 \\d+\\/10/").first.inner_text(timeout=5000)
+            except Exception:  # noqa: BLE001
+                已选文案 = ""
+            check("计数文案显示已选 3 份", "3/10" in str(已选文案), str(已选文案), group="P15 对比")
+            page.screenshot(path=str(SHOT_DIR / "15-对比分析页-已选三份.png"), full_page=True)
+            t0 = time.time()
+            点(page, "button:has-text('生成对比报表')")
+            try:
+                page.wait_for_url(re.compile(r"/report/[0-9a-zA-Z]+"), timeout=180000)
+                page.wait_for_selector("h1:has-text('报表查看')", timeout=30000)
+                check("点「生成对比报表」后落到报表页", True, page.url, group="P15 对比",
+                      cost=time.time() - t0)
+            except Exception as e:  # noqa: BLE001
+                check("点「生成对比报表」后落到报表页", False, f"{type(e).__name__} {page.url}",
+                      group="P15 对比")
+            page.wait_for_timeout(3500)
+            画布数 = page.locator("canvas").count()
+            check("对比报表页把多系列图渲染出来了", 画布数 > 0, f"canvas×{画布数}", group="P15 对比")
+            page.screenshot(path=str(SHOT_DIR / "16-对比报表页.png"), full_page=True)
+            try:
+                点(page, "span:text-is('数据表')")
+                page.wait_for_timeout(1200)
+                表格 = page.locator("table").first.inner_text() if page.locator("table").count() else ""
+            except Exception:  # noqa: BLE001
+                表格 = ""
+            check("报表页「数据表」里能看到 来源 列与三个月数值",
+                  "来源" in 表格 and "华北" in 表格 and "600" in 表格,
+                  表格[:140].replace("\n", " | "), group="P15 对比")
+
+            # 看板 + 关系视图：对比报表的 数据集ID 只有一个（第一个来源），
+            # 血缘图必须优雅退化（只画第一个数据集）而不是崩。
+            if 对比报表ID:
+                st, body = http("POST", "/dashboards/",
+                                {"名称": "E2E 对比看板", "报表ID列表": [对比报表ID]}, token=token)
+                看板ID = ""
+                if st == 200:
+                    try:
+                        看板ID = json.loads(body).get("看板ID", "") or ""
+                    except Exception:  # noqa: BLE001
+                        看板ID = ""
+                check("对比报表可以放进看板", bool(看板ID), f"{st} {str(body)[:100]}", group="P15 对比")
+                if 看板ID:
+                    page.goto(BASE + "/dashboard", wait_until="domcontentloaded", timeout=30000)
+                    page.wait_for_timeout(3000)
+                    if page.locator("[title='关系视图']").count():
+                        点(page, "[title='关系视图']")
+                        page.wait_for_timeout(4000)
+                        血缘画布 = page.locator("canvas").count()
+                        空态 = page.locator("[data-testid='血缘图空态']").count()
+                        check("含对比报表的看板切关系视图不崩（画布或明确空态）",
+                              血缘画布 > 0 or 空态 > 0, f"canvas×{血缘画布} 空态×{空态}",
+                              group="P15 对比")
+                        page.screenshot(path=str(SHOT_DIR / "17-对比看板-关系视图.png"), full_page=True)
+                    else:
+                        check("含对比报表的看板切关系视图不崩（画布或明确空态）", False,
+                              "不是最新看板，找不到 title='关系视图'", group="P15 对比")
+
             # ---------------- P9 账号页：导出我的数据（验阶段六十一修的 RFC5987 bug 在真浏览器里生效）
             print("\n== P9 账号页 + 导出我的数据 ==")
             page.goto(BASE + "/account", wait_until="domcontentloaded", timeout=30000)
@@ -975,9 +1238,14 @@ def main():
                 残留["users"] = cur.fetchone()[0]
             except Exception as e:  # noqa: BLE001
                 残留["users"] = f"查询失败 {type(e).__name__}"
-            check("真库里本轮测试数据已清干净",
-                  all(v == 0 for v in 残留.values()),
-                  残留, group="P12 清理")
+            if args.keep:
+                # `--keep` 的字面定义就是「数据留在库里方便现场复看」，
+                # 此时再断言残留为 0 是自相矛盾（阶段七十二修）：改成只打快照不判失败。
+                note(f"--keep：本轮账号残留快照（不判失败）= {残留}")
+            else:
+                check("真库里本轮测试数据已清干净",
+                      all(v == 0 for v in 残留.values()),
+                      残留, group="P12 清理")
             cur.execute("SELECT COUNT(*) FROM users")
             note(f"真库 users 总行数（清理后）= {cur.fetchone()[0]}")
             cur.execute("SELECT COUNT(*) FROM datasets")
