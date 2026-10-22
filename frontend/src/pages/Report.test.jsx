@@ -204,3 +204,24 @@ describe('Report 意图来源徽标（阶段 63）', () => {
     expect(screen.getByText('自动')).toBeInTheDocument();
   });
 });
+
+// 发布前走查撞出来的：报表标题只画在 ECharts 画布里，页面 DOM 里根本没有。
+// 访客有多份报表时只能看到「1 / 3」分页，不知道自己在看哪一张。
+describe('报表明细页显式展示报表标题（发布前走查）', () => {
+  it('报表标题以文本形式出现在页面上，而不只是在画布里', async () => {
+    renderReport();
+    await screen.findByText('报表查看');
+    // chartReport.标题 = '销售分析'；下面的 h1 是固定的「报表查看」
+    const 标题 = await screen.findByText('销售分析');
+    expect(标题).toBeInTheDocument();
+    expect(标题.tagName).not.toBe('CANVAS');
+    expect(screen.getByRole('heading', { name: '报表查看' })).toBeInTheDocument();
+  });
+
+  it('报表没有标题时不渲染空标题行', async () => {
+    setupMocks({ ...chartReport, 标题: '' });
+    renderReport();
+    await screen.findByText('报表查看');
+    expect(screen.queryByText('销售分析')).not.toBeInTheDocument();
+  });
+});

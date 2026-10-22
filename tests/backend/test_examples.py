@@ -23,7 +23,7 @@ from fastapi import HTTPException
 
 from api.routes import examples as ex
 
-示例表头 = "月份,地区,销售额,订单数,工作经验要求,岗位类型"
+示例表头 = "月份,地区,销售额,订单数,渠道,产品类别"
 样例内容 = "月份,地区,销售额\n2024-01,北京,12450\n"
 
 

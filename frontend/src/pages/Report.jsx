@@ -386,6 +386,11 @@ export default function Report() {
       <div className="flex items-center justify-between mb-7">
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-gray-900">报表查看</h1>
+          {/* 报表标题只存在于 ECharts 画布里，页面本身不显示；陌生人多份报表时
+              只看「1 / 3」分页不知道看的是哪张，所以把标题提到标题下方显式展示 */}
+          {report.标题 && (
+            <p className="text-sm font-medium text-gray-800 mt-1 break-words">{report.标题}</p>
+          )}
           <p className="text-xs text-gray-400 mt-1">
             AI 自动生成的智能分析报告
             {dataProfile.行数 ? ` · 数据集共 ${dataProfile.行数} 行 ${dataProfile.列数} 列` : ''}
