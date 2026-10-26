@@ -43,6 +43,19 @@ if 项目根.name != "electron" or not (项目根 / "build-backend" / "daa-backe
 # electron/dist-backend/_internal/（与 Task1 主进程 spawn 路径 / Task5 extraResources 对齐）
 CONF['distpath'] = str(项目根)
 
+# 前端产物（阶段七十七 D4 收尾）：让 dist-backend 自身也自带一份前端，
+# 不必只依赖 electron-builder 的 extraResources 第二次拷贝。
+# 刻意做成「有就收、没有就跳过」——缺 frontend/dist 时 spec 不该构建失败
+# （那种情况下 extraResources 仍会拷；两头都缺才是真问题）。
+# 落 _internal/frontend/dist/，与主进程 spawnBackend 的兜底路径
+# resources/backend/_internal/frontend/dist 对齐。
+_前端产物 = []
+_前端dist = 项目根.parent / "frontend" / "dist"
+if (_前端dist / "index.html").is_file():
+    _前端产物.append((str(_前端dist / "index.html"), str(Path("frontend") / "dist")))
+    if (_前端dist / "assets").is_dir():
+        _前端产物.append((str(_前端dist / "assets"), str(Path("frontend") / "dist" / "assets")))
+
 # 项目自身代码：uvicorn 通过字符串 "api.main:app" 动态加载，PyInstaller 无法静态追踪，
 # 必须显式收集（api/config/repositories/services/后端_核心 全部子模块）
 项目包 = []
@@ -59,7 +72,15 @@ a = Analysis(
         # 落 _internal/data/examples/，运行时由 api/routes/examples.py 复制到可写数据目录。
         (str(项目根.parent / "data" / "examples" / "sales_2024.csv"),
          str(Path("data") / "examples")),
-    ],
+    ] + _前端产物,
+
+    # 前端产物（阶段七十七）：D4 收尾——让 dist-backend 自身也自带一份前端，
+    # 不再只依赖 electron-builder 的 extraResources 第二次拷贝。
+    # 刻意做成「有就收、没有就跳过」：缺 frontend/dist 时 spec 不该直接构建失败
+    # （那时 electron-builder 的 extraResources 仍会拷；两头都缺才是真问题）。
+    # 落 _internal/frontend/dist/{index.html, assets/}，与主进程 spawnBackend 的
+    # 兜底路径 resources/backend/_internal/frontend/dist 对齐。
+
     hiddenimports=[
         "uvicorn",
         "uvicorn.logging",

@@ -20,7 +20,7 @@ const STEPS = [
   {
     icon: Upload,
     title: '① 上传你的数据',
-    desc: '支持 CSV / Excel，上传后自动识别字段与数据质量，可一键清洗。',
+    desc: '支持 CSV / Excel，也可直接点「导入示例数据」体验。上传后自动识别字段与数据质量，可一键清洗。',
     route: '/data',
     btn: '去上传数据',
   },

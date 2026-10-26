@@ -153,12 +153,14 @@ class AuthResponse(BaseModel):
 
 
 @router.post("/send-code")
-def send_code(payload: SendCodeRequest, request: Request) -> Dict[str, str]:
+def send_code(payload: SendCodeRequest, request: Request) -> Dict[str, Any]:
     """发送注册验证码到邮箱。
 
     - 同邮箱 60 秒限频（429）+ M5 同 IP 限频（防邮件轰炸）；
     - M2：已注册邮箱与未注册响应完全一致（防邮箱枚举），但不再实际发码；
-    - 未配置 SMTP 时 dry-run：验证码打印到后端日志（本地调试可用）。
+    - 未配置 SMTP 时 dry-run：验证码打印到后端日志（本地调试可用）；
+    - 阶段七十七 E1：dry-run 时响应体带 `email_sent: False` + 明示文案，
+      前端据此提示「演示环境未开启邮件」，不再让用户等一封永远不来的信。
     """
     email = payload.email.strip().lower()
     client_host = request.client.host if request.client else "unknown"
@@ -180,7 +182,11 @@ def send_code(payload: SendCodeRequest, request: Request) -> Dict[str, str]:
     expires_at = (datetime.now(timezone.utc) + timedelta(seconds=email_service.CODE_TTL_SECONDS)).isoformat()
     email_code_repo.保存验证码(email, email_service.验证码哈希(code), expires_at)
     email_service.发送验证码邮件(email, code)
-    return {"message": "验证码已发送"}
+    if email_service.邮件服务可用():
+        return {"message": "验证码已发送"}
+    # 邮件服务未配置（演示/本地环境）：验证码仍入库可登录，但必须如实告诉前端——
+    # 收不到信的"成功"比失败更糟。前端据此显示「请联系管理员开通账号」。
+    return {"message": "验证码已发送（演示环境未开启邮件，请联系管理员直接开通账号）", "email_sent": False}
 
 
 @router.post("/register", response_model=AuthResponse)
@@ -518,7 +524,7 @@ def change_username(payload: dict, user: dict = Depends(get_current_user)) -> Di
     return {"message": "用户名已修改", "username": new_username, "access_token": new_token}
 
 @router.post("/reset-code")
-def send_reset_code(payload: SendCodeRequest, request: Request) -> Dict[str, str]:
+def send_reset_code(payload: SendCodeRequest, request: Request) -> Dict[str, Any]:
     """发送密码重置验证码：邮箱须已注册；60s 限频；M5 同 IP 限频；未注册邮箱响应一致防枚举。"""
     email = payload.email.strip().lower()
     client_host = request.client.host if request.client else "unknown"
@@ -537,7 +543,11 @@ def send_reset_code(payload: SendCodeRequest, request: Request) -> Dict[str, str
     expires_at = (datetime.now(timezone.utc) + timedelta(seconds=email_service.CODE_TTL_SECONDS)).isoformat()
     email_code_repo.保存验证码(email, email_service.验证码哈希(code), expires_at)
     email_service.发送验证码邮件(email, code)
-    return {"message": "验证码已发送"}
+    if email_service.邮件服务可用():
+        return {"message": "验证码已发送"}
+    # 邮件服务未配置（演示/本地环境）：验证码仍入库可登录，但必须如实告诉前端——
+    # 收不到信的"成功"比失败更糟。前端据此显示「请联系管理员开通账号」。
+    return {"message": "验证码已发送（演示环境未开启邮件，请联系管理员直接开通账号）", "email_sent": False}
 
 
 @router.post("/reset-password")

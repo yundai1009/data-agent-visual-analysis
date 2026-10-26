@@ -67,9 +67,16 @@ export default function Login() {
     setError('');
     setSending(true);
     try {
-      await (mode === 'reset' ? sendResetCode(target) : sendCode(target));
+      const rsp = await (mode === 'reset' ? sendResetCode(target) : sendCode(target));
       // 【Bug9 修复】await 后检查挂载位，避免 setState 更新已卸载组件
       if (!mountedRef.current) return;
+      // 阶段七十七 E1：邮件服务未配置（演示/本地环境）时，send-code/reset-code
+      // 仍返回 200 但带 email_sent:False + 明示文案；不再让用户等一封永远不来的信。
+      if (rsp && rsp.email_sent === false) {
+        setError(rsp.message || '邮件服务未开启，请联系管理员直接开通账号');
+        setSending(false);
+        return;
+      }
       setCooldown(60);
     } catch (err) {
       if (!mountedRef.current) return;

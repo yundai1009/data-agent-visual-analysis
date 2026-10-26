@@ -73,11 +73,23 @@ def _send_smtp(email: str, code: str) -> None:
         server.sendmail(sender, [email], msg.as_string())
 
 
+def 邮件服务可用() -> bool:
+    """是否真的能发信（配了 SMTP_HOST 且没开 DRY_RUN）。
+
+    阶段七十七 E1：路由层需要这个判断，才能把「dry-run 假装成功」改成如实告知。
+    单独抽出来而不是让调用方自己去读 EnvConfig——配置判定的真相只有这里一处。
+    """
+    return bool(EnvConfig.SMTP_HOST) and not EnvConfig.SMTP_DRY_RUN
+
+
 def 发送验证码邮件(email: str, code: str) -> bool:
     """发送验证码邮件。
 
     - dry-run（未配 SMTP_HOST 或 SMTP_DRY_RUN=true）：验证码打印到后端日志，返回 True
     - 真实发送：成功返回 True；失败打日志返回 False（验证码仍入库，可重发）
+
+    注意返回 True **不等于**用户收到了信：dry-run 也返回 True。调用方要区分两种 True
+    必须同时看 `邮件服务可用()`（阶段七十七 E1 就踩在这上面）。
     """
     if EnvConfig.SMTP_DRY_RUN or not EnvConfig.SMTP_HOST:
         if EnvConfig.SMTP_HOST and EnvConfig.SMTP_DRY_RUN:

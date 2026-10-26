@@ -263,9 +263,19 @@ export default function Dashboard() {
   // 血缘图数据：看板详情（含图表配置）× 报表列表（含数据集ID）× 数据集列表（含文件名）
   const 报表索引 = useMemo(() => new Map(allReports.map((r) => [r.报表ID, r])), [allReports]);
   const 数据集索引 = useMemo(() => new Map(数据集列表.map((d) => [d.数据集ID, d])), [数据集列表]);
+  // 对比报表在 listReports 里只回了一个「首来源」数据集ID，完整来源在 看板详情.报表列表[i].报表.数据集ID列表。
+  // 单报表没这个字段，取不到时回落到 [数据集ID]，行为和以前完全一致。
+  const 报表源列表索引 = useMemo(() => {
+    const m = new Map();
+    (detail?.报表列表 || []).forEach((项) => {
+      const 列表 = 项?.报表?.数据集ID列表;
+      if (Array.isArray(列表) && 列表.length > 0) m.set(项.报表ID, 列表);
+    });
+    return m;
+  }, [detail?.报表列表]);
   const 血缘 = useMemo(
-    () => 构建血缘图({ 报表列表: detail?.报表列表 || [], 报表索引, 数据集索引 }),
-    [detail?.报表列表, 报表索引, 数据集索引],
+    () => 构建血缘图({ 报表列表: detail?.报表列表 || [], 报表索引, 数据集索引, 报表源列表索引 }),
+    [detail?.报表列表, 报表索引, 数据集索引, 报表源列表索引],
   );
   const 选中节点 = 选中节点ID ? 血缘.节点索引[选中节点ID] || null : null;
 
