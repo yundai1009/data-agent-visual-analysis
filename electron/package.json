@@ -10,7 +10,12 @@
     "test": "node --test \"tests/**/*.test.js\"",
     "build:backend": "pyinstaller --clean --noconfirm build-backend/daa-backend.spec",
     "dist": "npm run build:backend && electron-builder --win nsis portable",
-    "dist:dir": "npm run build:backend && electron-builder --win dir"
+    "dist:dir": "npm run build:backend && electron-builder --win dir",
+    "build:ui": "cd ../frontend && npm run build",
+    "push:ui": "node 脚本/推送前端.js",
+    "refresh:ui": "npm run build:ui && npm run push:ui",
+    "restart:ui": "node 脚本/重启桌面版.js",
+    "reload:ui": "npm run refresh:ui && npm run restart:ui"
   },
   "devDependencies": {
     "electron": "^33.0.0",
@@ -28,6 +33,7 @@
       "preload.js",
       "核心/**/*",
       "配置页/**/*",
+      "脚本/*.js",
       "build/托盘图标.png",
       "build/logo.ico"
     ],

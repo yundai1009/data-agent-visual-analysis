@@ -18,13 +18,22 @@ function 默认补丁() {
 /**
  * @param {object} 基础环境 process.env 的副本
  * @param {object} 设置 userData/settings.json 内容（可能为空）
+ * @param {object} [选项] { 前端目录?: string } 显式指定 FRONTEND_DIST
  * @returns {object} 合并后的后端环境变量
  */
-function 构建后端环境(基础环境, 设置 = {}) {
+function 构建后端环境(基础环境, 设置 = {}, 选项 = {}) {
   const env = { ...基础环境, ...默认补丁() };
   const 端口 = 设置.端口 != null ? String(设置.端口) : '8000';
   env.API_PORT = 端口;
   env.PORT = 端口;
+
+  // 阶段七十五：前端产物路径显式注入。
+  // 之前 frontend/dist 靠 extraResources 拷进安装包，每改一行前端都要重打整个包；
+  // 现在开发模式直接指向仓库 dist（npm run build 后即生效），
+  // 打包模式由 main.js 传 resources 里的副本进来，自包含性不变。
+  if (选项.前端目录 && String(选项.前端目录).trim() !== '') {
+    env.FRONTEND_DIST = String(选项.前端目录);
+  }
 
   const 数据库 = 设置.数据库 || {};
   if (数据库.模式 === 'mysql') {

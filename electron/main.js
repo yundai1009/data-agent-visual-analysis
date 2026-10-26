@@ -15,6 +15,7 @@ const { spawn } = require('node:child_process');
 const { 探测空闲端口 } = require('./核心/端口探测');
 const { 读设置, 写设置 } = require('./核心/设置存取');
 const { 构建后端环境 } = require('./核心/后端配置');
+const { 解析前端目录, 前端目录来源 } = require('./核心/前端产物');
 const { 比对版本 } = require('./核心/版本比对');
 const { 设置转表单, 表单转设置, 校验表单, 是否需要重启, 随机强密钥 } = require('./核心/配置模型');
 
@@ -30,10 +31,36 @@ let 托盘 = null;
 // 全局保存本次启动端口（will-navigate 校验用）；声明前置避免 TDZ 隐患
 let 全局端口 = 8000;
 
-/** 找到打包进 extraResources 的后端可执行文件；开发模式（electron .）下不存在则抛错提示先打包。 */
+/** 开发模式下没有 PyInstaller 产物时，用系统 Python 直接跑后端源码。
+ *  优先 py -3（Windows launcher，装过多版本 Python 时不会串到 Python 2），回落 python。
+ *  打包版永远走 daa-backend.exe，不会用到这条路径（用户机器上未必有 Python）。 */
+function 后端兜底命令() {
+  return ['py', '-3', '-m', 'uvicorn', 'api.main:app', '--host', '127.0.0.1', '--port', String(全局端口)];
+}
+
+/** 找到打包进 extraResources 的后端可执行文件；开发模式（electron .）下不存在则返回 null，
+ *  由调用方决定走 PyInstaller 兜底还是直接报错。 */
 function 后端入口() {
   const packaged = path.join(process.resourcesPath, 'backend', 'daa-backend.exe');
   return fs.existsSync(packaged) ? packaged : null;
+}
+
+/** 安装包里的前端副本（`backend/_internal/frontend/dist/`）；不存在返回 null。 */
+function 前端副本路径() {
+  const packaged = path.join(process.resourcesPath, 'backend', '_internal', 'frontend', 'dist');
+  return fs.existsSync(packaged) ? packaged : null;
+}
+
+/** 用户覆盖层：把新 dist 放进 %APPDATA%\数据分析Agent\frontend\dist 就能换掉安装包里的界面，
+ *  不用重新打包（阶段七十五，对应 npm run push:ui 脚本）。 */
+function 用户覆盖路径() {
+  return path.join(数据根目录(), 'frontend', 'dist');
+}
+
+/** 仓库根：打包模式下 main.js 在 app.asar 里（__dirname = .../resources/app.asar），
+ *  仓库 dist 不存在；开发模式下 __dirname = <仓库>/electron，仓库根就是上一级。 */
+function 仓库根() {
+  return app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '..');
 }
 
 function spawnBackend(port) {
@@ -45,22 +72,30 @@ function spawnBackend(port) {
   // 注意：设置/数据/日志统一放 数据根目录()（= %APPDATA%\数据分析Agent），不用 app.getPath('userData')
   // —— 后者按应用名自动生成 %APPDATA%\自助式数据分析Agent平台，与 db/日志目录不一致会导致配置读空。
   const 用户设置 = 读设置(数据目录);
-  const env = 构建后端环境(process.env, { ...用户设置, 端口: port });
+  // 阶段七十五：前端产物路径显式注入。
+  // 在此之前 frontend/dist 靠 extraResources 拷进安装包，每改一行前端都要 npm run dist
+  // 重打整个包（PyInstaller + electron-builder 各跑一遍）。现在开发模式直接指向仓库
+  // frontend/dist，改完 npm run build 刷新窗口就生效；打包模式仍用 resources 里的副本，
+  // 离线分发的自包含性不变。解析规则在 核心/前端产物.js，有单测覆盖。
+  const 前端目录 = 解析前端目录(仓库根(), 前端副本路径(), 用户覆盖路径());
+  console.log(`前端产物：${前端目录来源(仓库根(), 前端副本路径(), 用户覆盖路径())} → ${前端目录 || '（后端默认）'}`);
+  const env = 构建后端环境(process.env, { ...用户设置, 端口: port }, { 前端目录 });
   env.DAA_SQLITE_PATH = path.join(dataDir, 'daa.db');
   const exe = 后端入口();
+  const proc = exe
+    ? spawn(exe, [], { env, cwd: dataDir, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    // 开发模式（npm start）没有 PyInstaller 产物：直接让系统 Python 跑同一份后端代码。
+    // 这条路只为开发存在，打包版始终走 exe（用户机器上未必有 Python）。
+    : spawn(后端兜底命令()[0], 后端兜底命令().slice(1), {
+      env, cwd: dataDir, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+    });
   if (!exe) {
-    throw new Error('未找到后端可执行文件，请先执行 npm run build:backend');
+    console.log('未找到 dist-backend/daa-backend.exe，开发模式走系统 Python 跑后端');
   }
-  const proc = spawn(exe, [], {
-    env,
-    cwd: dataDir,
-    windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
   // 日志落 %APPDATA%\数据分析Agent\logs\backend.log
   const logDir = path.join(数据目录, 'logs');
   fs.mkdirSync(logDir, { recursive: true });
-  const logStream = fs.createWriteStream(path.join(logDir, 'backend.log'), { flags: 'a' });
+  const logStream = fs.createWriteStream(path.join(logDir, 'logs', 'backend.log'), { flags: 'a' });
   proc.stdout.pipe(logStream);
   proc.stderr.pipe(logStream);
   proc.on('exit', (code) => {

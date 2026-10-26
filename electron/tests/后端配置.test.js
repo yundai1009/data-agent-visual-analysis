@@ -54,3 +54,27 @@ test('mysql + 真实认证组合', () => {
   assert.strictEqual(env.DB_BACKEND, 'mysql');
   assert.strictEqual(env.AUTH_ENABLED, 'true');
 });
+
+// ---- 阶段七十五：前端产物路径显式注入 ----
+// 用户抱怨「每一次更新桌面版都需要重新打包太麻烦了」：根因是 frontend/dist 被
+// extraResources 拷进安装包。现在由 main.js 显式传 FRONTEND_DIST，开发模式指向仓库 dist。
+test('选项.前端目录 透传成 FRONTEND_DIST', () => {
+  const env = 构建后端环境(基础, {}, { 前端目录: 'D:/repo/frontend/dist' });
+  assert.strictEqual(env.FRONTEND_DIST, 'D:/repo/frontend/dist');
+});
+
+test('前端目录为空/空白：不注入，保留后端自己的默认值', () => {
+  assert.ok(!('FRONTEND_DIST' in 构建后端环境(基础, {}, { 前端目录: '' })));
+  assert.ok(!('FRONTEND_DIST' in 构建后端环境(基础, {}, { 前端目录: '   ' })));
+  assert.ok(!('FRONTEND_DIST' in 构建后端环境(基础, {})));
+});
+
+test('注入 FRONTEND_DIST 不影响数据库/认证分支', () => {
+  const env = 构建后端环境(基础, {
+    数据库: { 模式: 'mysql', 主机: 'h', 用户: 'u', 密码: 'p', 库名: 'daa' },
+    认证模式: 'real', JWT密钥: 'k', 预置管理员口令: 'p',
+  }, { 前端目录: '/x/frontend/dist' });
+  assert.strictEqual(env.FRONTEND_DIST, '/x/frontend/dist');
+  assert.strictEqual(env.DB_BACKEND, 'mysql');
+  assert.strictEqual(env.AUTH_ENABLED, 'true');
+});
