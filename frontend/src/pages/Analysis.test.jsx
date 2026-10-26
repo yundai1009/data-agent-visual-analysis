@@ -61,6 +61,10 @@ function renderPage() {
 describe('Analysis 智能分析页', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // 这几条用例测的是「模型/Agent 模式」区块的文案，而该区块在基础版被收起来
+    // （阶段七十四 C：需要判断力的选项不给新手看到）。所以必须显式进专业版，
+    // 否则测的是"它不存在"，而不是"它文案对不对"。
+    window.history.replaceState({}, '', '/?mode=pro');
     Object.assign(mockState.state, {
       generating: false,
       error: '',
@@ -290,6 +294,8 @@ describe('Analysis 智能分析页', () => {
 describe('Analysis 模型下拉（阶段七十四 A3）', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // 模型下拉只在专业版出现（基础版收起"选哪个模型"这类需要判断力的选项）。
+    window.history.replaceState({}, '', '/?mode=pro');
     // 注意：必须用 mockResolvedValue 而不是 mockResolvedValueOnce。
     // StrictMode 下 effect 会 mount→unmount→mount 跑两次，组件里用 alive 标志
     // 丢弃第一次的结果，于是会发第二次请求——once 队列在第一次就被吃光，

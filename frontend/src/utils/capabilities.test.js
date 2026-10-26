@@ -32,17 +32,18 @@ describe('capabilities 产品模式能力表（阶段七十四 C）', () => {
     window.history.replaceState({}, '', '/');
   });
 
-  it('默认是专业版：现有用户界面一行都不变', () => {
-    expect(默认模式).toBe(模式.专业版);
-    expect(取模式()).toBe(模式.专业版);
+  it('默认是基础版：新用户第一眼只有上传 → 分析 → 看报表三步', () => {
+    expect(默认模式).toBe(模式.基础版);
+    expect(取模式()).toBe(模式.基础版);
+    // 基础版保留对比能力本身，只是侧栏那个术语入口收起来
     expect(有能力('对比分析入口')).toBe(true);
-    expect(有能力('模型选择')).toBe(true);
+    expect(有能力('模型选择')).toBe(false);
   });
 
-  it('URL ?mode=basic 优先于 localStorage', () => {
-    设模式(模式.专业版);
-    window.history.replaceState({}, '', '/?mode=basic');
-    expect(取模式()).toBe(模式.基础版);
+  it('URL ?mode=pro 打开专业版，优先于 localStorage', () => {
+    设模式(模式.基础版);
+    window.history.replaceState({}, '', '/?mode=pro');
+    expect(取模式()).toBe(模式.专业版);
   });
 
   it('URL 参数非法时回落 localStorage，再回落默认值', () => {

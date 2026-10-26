@@ -171,27 +171,27 @@ describe('Account 用量透明（阶段 53 · C10）', () => {
       window.history.replaceState({}, '', '/');
     });
 
-    it('默认显示专业版为当前模式', () => {
+    it('默认显示基础版为当前模式（新用户第一眼只看三步主链路）', () => {
       renderPage();
+      expect(screen.getByText(/基础版 · 当前/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '切换到专业版' })).toHaveAttribute('aria-pressed', 'false');
+    });
+
+    it('点「专业版」→ 写入 localStorage 并立刻切换当前标记（不刷新页面）', () => {
+      renderPage();
+      fireEvent.click(screen.getByRole('button', { name: '切换到专业版' }));
+
+      expect(localStorage.getItem('daa_mode')).toBe('pro');
       expect(screen.getByText(/专业版 · 当前/)).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: '切换到基础版' })).toHaveAttribute('aria-pressed', 'false');
+      expect(screen.getByRole('button', { name: '切换到专业版' })).toHaveAttribute('aria-pressed', 'true');
     });
 
-    it('点「基础版」→ 写入 localStorage 并立刻切换当前标记（不刷新页面）', () => {
+    it('已经在专业版时再点一次不会写脏数据', () => {
+      localStorage.setItem('daa_mode', 'pro');
       renderPage();
-      fireEvent.click(screen.getByRole('button', { name: '切换到基础版' }));
-
-      expect(localStorage.getItem('daa_mode')).toBe('basic');
-      expect(screen.getByText(/基础版 · 当前/)).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: '切换到基础版' })).toHaveAttribute('aria-pressed', 'true');
-    });
-
-    it('已经在基础版时再点一次不会写脏数据', () => {
-      localStorage.setItem('daa_mode', 'basic');
-      renderPage();
-      fireEvent.click(screen.getByRole('button', { name: '切换到基础版' }));
-      expect(localStorage.getItem('daa_mode')).toBe('basic');
-      expect(screen.getByText(/基础版 · 当前/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: '切换到专业版' }));
+      expect(localStorage.getItem('daa_mode')).toBe('pro');
+      expect(screen.getByText(/专业版 · 当前/)).toBeInTheDocument();
     });
   });
 });
