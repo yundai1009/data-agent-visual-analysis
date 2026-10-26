@@ -14,6 +14,13 @@ import { DEV_PROXY } from './dev-proxy.js'
 export default defineConfig({
   plugins: [react(), tailwindcss(), cspPlugin()],
   build: {
+    // 阶段七十四补：每次构建前清空 dist。
+    // 不加这一行时，带 hash 的旧 chunk 会一直堆在 dist/assets 里（实测累积到
+    // 6 份 EChartsChart-*.js 与几十份历史 chunk），而这些文件会被原样推进
+    // 桌面版的前端覆盖层、也会被 extraResources 打进安装包——包越来越大，
+    // 里面还躺着已经不可能被 index.html 引用的死代码。翻旧代码时最容易
+    // 被这种东西骗：明明改了，看到的还是旧的。
+    emptyOutDir: true,
     // echarts(≈647KB) 是 EChartsChart 内动态 import 的懒加载 chunk，仅报表页用到时加载；
     // 阈值声明为 800 免除噪音警告（该 chunk 不出现在登录/数据管理首屏）。
     chunkSizeWarningLimit: 800,
