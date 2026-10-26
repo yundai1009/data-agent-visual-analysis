@@ -82,6 +82,17 @@ export default function Compare() {
     return m;
   }, [dsList]);
 
+  // 阶段七十四 · B：从数据管理页带 ?datasets=ID,ID 过来时按顺序预选。
+  // 刻意等列表加载完（依赖 dsList）再解析：列表为空时解析会静默失败，
+  // 用户看到的是"没选上"，比报错更难排查。未匹配到的 ID 直接忽略，
+  // 已被删除的数据集不该让整个页面报错。
+  const 预选签名 = useMemo(() => new URLSearchParams(window.location.search).get('datasets') || '', []);
+  useEffect(() => {
+    if (!预选签名 || dsList.length === 0) return;
+    const 要选 = 预选签名.split(',').filter((id) => 数据集表.has(id));
+    if (要选.length) setSelected(要选);
+  }, [预选签名, dsList, 数据集表]);
+
   const 勾选数据集 = (id) => {
     setSelNotice('');
     if (selected.includes(id)) {

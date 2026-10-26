@@ -161,4 +161,37 @@ describe('Account 用量透明（阶段 53 · C10）', () => {
     expect(screen.getByText(/^账号设置/)).toBeInTheDocument();
     expect(screen.getByText(/用量加载失败/)).toBeInTheDocument();
   });
+
+  // ---- 阶段七十四 · C：产品模式开关 ----
+  // 反馈诉求是把「基础版 / 专业版」做成能力隔离。落地方式是切 localStorage，
+  // 不刷新页面（刷新会白屏一下，观感像崩了）。
+  describe('产品模式开关（阶段七十四 C）', () => {
+    beforeEach(() => {
+      localStorage.clear();
+      window.history.replaceState({}, '', '/');
+    });
+
+    it('默认显示专业版为当前模式', () => {
+      renderPage();
+      expect(screen.getByText(/专业版 · 当前/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '切换到基础版' })).toHaveAttribute('aria-pressed', 'false');
+    });
+
+    it('点「基础版」→ 写入 localStorage 并立刻切换当前标记（不刷新页面）', () => {
+      renderPage();
+      fireEvent.click(screen.getByRole('button', { name: '切换到基础版' }));
+
+      expect(localStorage.getItem('daa_mode')).toBe('basic');
+      expect(screen.getByText(/基础版 · 当前/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '切换到基础版' })).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    it('已经在基础版时再点一次不会写脏数据', () => {
+      localStorage.setItem('daa_mode', 'basic');
+      renderPage();
+      fireEvent.click(screen.getByRole('button', { name: '切换到基础版' }));
+      expect(localStorage.getItem('daa_mode')).toBe('basic');
+      expect(screen.getByText(/基础版 · 当前/)).toBeInTheDocument();
+    });
+  });
 });

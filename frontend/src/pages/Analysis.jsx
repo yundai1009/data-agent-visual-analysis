@@ -6,9 +6,10 @@
  * ============================================================================= */
 import { Zap, Sparkles, BarChart3, LineChart, PieChart, ScatterChart, Table, Layers, Loader2, Cpu, GitBranch, X, Brain, Wrench, Eye, AlertTriangle, MessageSquare, ArrowRight, Bookmark } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import LLMConfig from '../components/LLMConfig';
-import useAnalysis, { chartMap } from '../hooks/useAnalysis';
+import { 有能力 } from '../utils/capabilities';import useAnalysis, { chartMap } from '../hooks/useAnalysis';
+import { fetchLLMProviders } from '../api';  // 阶段七十四 · A3：模型下拉读活的 provider 配置
 
 // 图表类型选择面板：id（英文键）+ 图标 + 展示名，网格渲染
 const chartTypes = [
@@ -44,7 +45,13 @@ const templates = [
   { label: '交叉分析', icon: GitBranch, text: '按【地区】和【产品类别】做【销售额】交叉分析' },
 ];
 
-// 可选模型下拉
+// 阶段七十四 · A3：模型下拉不再硬编码
+// 背景（上线后收到的用户反馈）：「LLM 模型配置列表缺少最新模型」。
+// 根因：这里写死 4 个 id，而后端 `config/providers.toml` 已经有 17 家
+// provider、上百个模型，并且 `GET /auth/llm-providers` 早就能把它们下发。
+// 也就是说前端一直在用一张手抄的过期清单，而服务端有一份活的。
+// 现在改为：挂载时拉一次接口，按 provider 分组展开模型列表；
+// 接口失败时退回下面这份静态清单（保证离线/降级时页面仍然可用，不会空下拉）。
 const models = [
   { id: '', label: '系统默认' },
   { id: 'gpt-4o-mini', label: 'GPT-4o Mini' },
@@ -88,6 +95,29 @@ export default function Analysis() {
 
   // 阶段 53 · B8：字段列表折叠状态（>10 个字段时默认收起）
   const [showAllFields, setShowAllFields] = useState(false);
+
+  // 阶段七十四 · A3：模型下拉的选项来自后端 provider 配置（活的），静态清单只作降级兜底。
+  // 结构：providers = [{ id, label, models: [...], default }]，来自 GET /auth/llm-providers。
+  const [llmProviders, setLlmProviders] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    fetchLLMProviders()
+      .then((res) => { if (alive) setLlmProviders(res?.providers || []); })
+      .catch(() => { /* 接口不可用 → 保持空，下面自动回落到静态清单 */ });
+    return () => { alive = false; };
+  }, []);
+
+  // 分组渲染：每个 provider 一个 <optgroup>，只有真·可选项的 provider 才出现。
+  // 首项「系统默认」始终在，避免用户被逼着必须先选模型。
+  const 模型分组 = llmProviders
+    .filter((p) => Array.isArray(p.models) && p.models.length > 0)
+    .map((p) => ({
+      label: `${p.label || p.id}${p.custom ? '（自定义）' : ''}`,
+      options: p.models.map((m) => ({
+        id: m,
+        label: m === p.default ? `${m}（默认）` : m,
+      })),
+    }));
 
   return (
     <div className="p-8 max-w-5xl mx-auto">
@@ -410,11 +440,26 @@ export default function Analysis() {
         </div>
 
         {/* 模型 + Agent 模式 */}
+        {/* 阶段七十四 · C：基础版把「选哪个模型」「单/多智能体」这类需要判断力的
+            选项收起来——0 基础用户不知道该选什么，看到只会犹豫。专业版原样保留。
+            能力表在 utils/capabilities.js，改规则只改那一个文件。 */}
+        {有能力('模型选择') && (
         <div className="flex items-center gap-4 mt-3">
           <div className="flex items-center gap-2">
             <Cpu className="w-4 h-4 text-gray-400" />
             <select className="border border-gray-200 rounded-lg px-3 py-2 text-xs bg-white focus:outline-none focus:border-accent" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
-              {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+              {模型分组.length > 0 ? (
+                <>
+                  <option value="">系统默认</option>
+                  {模型分组.map((g) => (
+                    <optgroup key={g.label} label={g.label}>
+                      {g.options.map((m) => <option key={`${g.label}-${m.id}`} value={m.id}>{m.label}</option>)}
+                    </optgroup>
+                  ))}
+                </>
+              ) : (
+                models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)
+              )}
             </select>
           </div>
           <div className="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
@@ -431,6 +476,7 @@ export default function Analysis() {
             <span className="text-[11px] text-accent">多智能体协同：需求拆给多个专职 AI 分头分析后汇总，复杂维度更全面，耗时略长</span>
           )}
         </div>
+        )}
 
         {/* 图表类型 */}
         <div className="mt-6">

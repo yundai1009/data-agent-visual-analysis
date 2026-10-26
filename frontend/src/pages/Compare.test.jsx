@@ -149,4 +149,35 @@ describe('Compare 对比分析页', () => {
     expect(await screen.findByText(/最多同时对比 10 个数据集/)).toBeInTheDocument();
     expect(screen.getByText(/已选 10\/10/)).toBeInTheDocument();
   });
+
+  // ---- 阶段七十四 · B：从数据管理页带 ?datasets=ID,ID 过来时预选 ----
+  // 用户反馈「对比分析找不到」的真正修法：不指望用户自己去侧栏找这个词，
+  // 而是在"刚上传完/刚勾选完"的那一刻给一个入口，带参数跳过来直接选好。
+  describe('从 ?datasets= 预选（阶段七十四 B）', () => {
+    const 原始地址 = window.location.search;
+
+    afterEach(() => {
+      window.history.replaceState({}, '', `/${原始地址}`);
+    });
+
+    it('按 URL 顺序预选，且顺序 = 对比顺序', async () => {
+      window.history.replaceState({}, '', '/compare?datasets=d3,d1');
+      render(<Compare />);
+
+      // 列表是异步的 → 等「已选 2/10」出现，证明预选在列表到达后才生效
+      await waitFor(() => expect(screen.getByText(/已选 2\/10/)).toBeInTheDocument());
+      // 标签框只有 placeholder（值来自后端推导或手改），所以断言 placeholder：
+      // d3 在前 → 第一个框兜底文案是 d3 的文件名。这证明顺序按 URL 而不是按列表。
+      expect(screen.getByLabelText('来源标签 1')).toHaveAttribute('placeholder', '销售10月');
+      expect(screen.getByLabelText('来源标签 2')).toHaveAttribute('placeholder', '销售1月');
+    });
+
+    it('URL 里混入不存在的 ID 时忽略它，不影响可用的那几个', async () => {
+      window.history.replaceState({}, '', '/compare?datasets=不存在,d2');
+      render(<Compare />);
+
+      await waitFor(() => expect(screen.getByText(/已选 1\/10/)).toBeInTheDocument());
+      expect(screen.getByLabelText('来源标签 1')).toHaveAttribute('placeholder', '销售2月');
+    });
+  });
 });

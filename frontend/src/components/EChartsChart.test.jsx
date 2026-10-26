@@ -117,3 +117,53 @@ describe('EChartsChart buildOption · 展示类编辑键消费', () => {
     expect(opt.legend.data).toEqual(['华东组', '华南组']);
   });
 });
+
+// 阶段七十四 · A1：图表默认直接展示关键信息（不传「显示数据标签」也算开）。
+// 背景是上线后收到的用户反馈：饼图必须把鼠标悬浮到扇区上才看得见类别和占比。
+// 根因是旧逻辑把 undefined 当成 false，report 的图表配置里压根没有这个键。
+describe('EChartsChart buildOption · 阶段七十四 标签默认开启', () => {
+  const base = { X轴: '地区', Y轴: ['销售额'], 数据: [{ 地区: '华东', 销售额: 100 }, { 地区: '华北', 销售额: 150 }] };
+
+  test('柱状图不传「显示数据标签」→ 默认显示数值', () => {
+    const opt = buildOption('bar', base);
+    expect(opt.series[0].label.show).toBe(true);
+  });
+
+  test('柱状图默认带 labelLayout.hideOverlap，密集时不糊成一团', () => {
+    const opt = buildOption('bar', base);
+    expect(opt.series[0].labelLayout).toEqual({ hideOverlap: true });
+  });
+
+  test('饼图不传「显示数据标签」→ 默认显示，且 formatter 仍是名称+占比', () => {
+    const opt = buildOption('pie', { ...base, 名称: '地区', 值: '销售额' });
+    const label = opt.series[0].label;
+    expect(label.show).toBe(true);
+    expect(typeof label.formatter).toBe('function');
+    expect(label.formatter({ name: '华东', percent: 40 })).toContain('华东');
+    expect(label.formatter({ name: '华东', percent: 40 })).toContain('40.0%');
+  });
+
+  test('饼图不做 hideOverlap（交给 ECharts 自动避让，别把标签藏掉）', () => {
+    const opt = buildOption('pie', { ...base, 名称: '地区', 值: '销售额' });
+    expect(opt.series[0].labelLayout).toBeUndefined();
+  });
+
+  test('折线图不传「显示数据标签」→ 默认显示', () => {
+    const opt = buildOption('line', base);
+    expect(opt.series[0].label.show).toBe(true);
+  });
+
+  test('分组柱状图（stacked_bar）也消费标签开关：默认开、显式 false 关', () => {
+    const rows = [{ 地区: '华东', 渠道: '线上', 销售额: 100 }, { 地区: '华北', 渠道: '线下', 销售额: 150 }];
+    const 开 = buildOption('stacked_bar', { ...base, 颜色: '渠道', 数据: rows });
+    expect(开.series.every(s => s.label.show === true)).toBe(true);
+    const 关 = buildOption('stacked_bar', { ...base, 颜色: '渠道', 显示数据标签: false, 数据: rows });
+    expect(关.series.every(s => s.label.show === false)).toBe(true);
+  });
+
+  test('显式关掉时非饼图不再挂 labelLayout（关就是关）', () => {
+    const opt = buildOption('bar', { ...base, 显示数据标签: false });
+    expect(opt.series[0].label.show).toBe(false);
+    expect(opt.series[0].labelLayout).toBeUndefined();
+  });
+});

@@ -12,12 +12,13 @@
  *   - api.js submitFeedback() —— 提交反馈到后端 /feedback
  *   - react-router-dom NavLink + useNavigate —— 导航高亮与路由跳转
  * ============================================================================= */
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { Database, Zap, BarChart3, LayoutDashboard, GitCompare, Shield, ChevronLeft, ChevronRight, LogOut, X, UserRoundPen, MessageSquareHeart, Moon, Sun, Search } from 'lucide-react';
 import { useApp } from '../AppContext';
 import { submitFeedback, globalSearch } from '../api';
+import { 取模式, 过滤侧栏项, 模式 } from '../utils/capabilities';
 
 const navItems = [
   { to: '/data', icon: Database, label: '数据管理' },
@@ -103,6 +104,19 @@ export default function Sidebar({ collapsed, onToggle }) {
     navigate('/login');
   };
 
+  // 阶段七十四 · C：产品模式（基础版/专业版）。能力表在 utils/capabilities.js，
+  // 这里是唯一的消费点——侧栏按模式过滤，不在每个页面各判一次。
+  // 基础版收掉「对比分析 / 图表看板」这类术语入口：对比能力仍从数据管理页的
+  // 「对比这几份」进入（那个入口不需要先懂术语），看板由报表页「生成看板」带入。
+  const 当前模式 = 取模式();
+  const 可见菜单 = useMemo(() => {
+    const 普通 = 过滤侧栏项(navItems, 当前模式);
+    // 管理后台是**权限**门槛而不是模式门槛：管理员在基础版里也要能进，
+    // 所以它不参与模式过滤，只在角色判断通过时追加。
+    const 是管理员 = user?.role === 'admin' || user?.roles?.includes?.('admin');
+    return 是管理员 ? [...普通, adminNav] : 普通;
+  }, [user?.role, user?.roles, 当前模式]);
+
 
   return (
     <aside
@@ -176,7 +190,7 @@ export default function Sidebar({ collapsed, onToggle }) {
       {/* Nav */}
       {/* 导航项渲染：navItems + 管理员入口（条件拼接）*/}
       <nav className="flex-1 p-2 space-y-0.5 mt-1">
-        {[...navItems, ...((user?.role === 'admin' || user?.roles?.includes?.('admin')) ? [adminNav] : [])].map((item) => (
+        {可见菜单.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
@@ -216,6 +230,13 @@ export default function Sidebar({ collapsed, onToggle }) {
           </div>
           <div className={`transition-opacity duration-200 ${collapsed ? 'opacity-0 w-0' : 'opacity-100'}`}>
             <p className="text-xs font-medium text-slate-200 whitespace-nowrap">{user?.username || '未登录'}</p>
+            {/* 阶段七十四 · C：把当前模式显式摆出来。用户切错了要有迹可循，
+                不能让他以为"功能丢了"。折叠时 tooltip 仍能说明。 */}
+            {!collapsed && (
+              <p className="text-[10px] text-slate-500 whitespace-nowrap" title="在「账号设置 → 产品模式」里切换">
+                {当前模式 === 模式.基础版 ? '基础模式' : '专业模式'}
+              </p>
+            )}
           </div>
           <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 ml-auto" />
         </div>

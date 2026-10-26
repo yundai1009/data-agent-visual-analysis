@@ -52,6 +52,7 @@ const navMock = vi.hoisted(() => ({ navigate: vi.fn() }));
 vi.mock('react-router-dom', () => ({ useNavigate: () => navMock.navigate }));
 
 import Analysis from './Analysis';
+import { fetchLLMProviders } from '../api';
 
 function renderPage() {
   return render(<Analysis />);
@@ -279,5 +280,59 @@ describe('Analysis 智能分析页', () => {
     expect(screen.queryByRole('button', { name: '字段15' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '展开全部 20 个字段' }));
     expect(screen.getByRole('button', { name: '字段15' })).toBeInTheDocument();
+  });
+});
+
+// ---- 阶段七十四 · A3：模型下拉读后端活的 provider 配置 ----
+// 用户反馈「LLM 模型配置列表缺少最新模型」：页面里原来写死 4 个 id，
+// 而后端 config/providers.toml 有 17 家 provider、上百个模型，
+// 且 GET /auth/llm-providers 早就能下发。这三条锁住「用活的、失败能降级」。
+describe('Analysis 模型下拉（阶段七十四 A3）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // 注意：必须用 mockResolvedValue 而不是 mockResolvedValueOnce。
+    // StrictMode 下 effect 会 mount→unmount→mount 跑两次，组件里用 alive 标志
+    // 丢弃第一次的结果，于是会发第二次请求——once 队列在第一次就被吃光，
+    // 第二次拿到默认值，下拉看起来永远是空的（这个坑真踩过）。
+    vi.mocked(fetchLLMProviders).mockResolvedValue({ providers: [] });
+    Object.assign(mockState.state, {
+      dataset: { 数据集ID: 'd1', 文件名: '销售.csv' },
+      selectedModel: '', setSelectedModel: vi.fn(),
+    });
+  });
+
+  it('按 provider 分组渲染后端下发的模型，默认模型标注「（默认）」', async () => {
+    vi.mocked(fetchLLMProviders).mockResolvedValue({
+      providers: [
+        { id: 'zhipu', label: '智谱', models: ['glm-4-flash', 'glm-4-plus'], default: 'glm-4-flash' },
+        { id: 'deepseek', label: 'DeepSeek', models: ['deepseek-chat'], default: 'deepseek-chat' },
+      ],
+    });
+    renderPage();
+    // 异步拉接口 → 用 findBy 等条件成立，不等固定毫秒
+    expect(await screen.findByRole('option', { name: 'glm-4-flash（默认）' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'glm-4-plus' })).toBeInTheDocument();
+    expect(screen.getAllByRole('group', { name: '智谱' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('group', { name: 'DeepSeek' }).length).toBeGreaterThan(0);
+  });
+
+  it('接口挂了 → 回落到内置静态清单，不出现空下拉', async () => {
+    vi.mocked(fetchLLMProviders).mockRejectedValue(new Error('network down'));
+    renderPage();
+    // 静态清单里一定有这两项；接口失败不应把下拉变成空的
+    expect(await screen.findByRole('option', { name: 'GPT-4o' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'DeepSeek Chat' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: '系统默认' })).toBeInTheDocument();
+  });
+
+  it('选中的模型写回 selectedModel（模型名直接透传给后端）', async () => {
+    vi.mocked(fetchLLMProviders).mockResolvedValue({
+      providers: [{ id: 'zhipu', label: '智谱', models: ['glm-4-plus'], default: 'glm-4-plus' }],
+    });
+    renderPage();
+    const 选项 = await screen.findByRole('option', { name: 'glm-4-plus（默认）' });
+    const 下拉 = 选项.closest('select');
+    fireEvent.change(下拉, { target: { value: 'glm-4-plus' } });
+    expect(mockState.state.setSelectedModel).toHaveBeenCalledWith('glm-4-plus');
   });
 });

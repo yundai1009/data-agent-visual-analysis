@@ -174,6 +174,22 @@ export default function EChartsChart({ chartType, chartConfig, height = 320 }) {
   );
 }
 
+// 阶段七十四 · A2：默认子标题——「这张图在比什么」。
+// 标题是用户原话（可能是"那华南区呢"这种半个问句），子标题补上结构信息：
+// 按哪个维度 + 哪个指标 + 什么图表。后端 chart_config.子标题 已给则优先用后端的。
+function 默认子标题(type, xField, yFields, groupField) {
+  const 指标 = (yFields || [])[0];
+  const 维度 = xField || '分类';
+  if (!指标) return '';
+  const 动作 = {
+    bar: '对比', stacked_bar: '分组成组对比', line: '趋势', area: '趋势',
+    pie: '占比', donut: '占比', funnel: '转化', scatter: '相关关系',
+    radar: '多维对比', heatmap: '分布',
+  }[type] || '分布';
+  const 分组 = groupField ? ` · 按${groupField}分组` : '';
+  return `按${维度}的${指标}${动作}${分组}`;
+}
+
 // oxlint-disable-next-line react/only-export-components -- 导出 buildOption 供单测直接断言图表配置（防回归）
 export function buildOption(chartType, config) {
   const rows = Array.isArray(config?.数据) ? config.数据 : [];
@@ -193,8 +209,11 @@ export function buildOption(chartType, config) {
   const title = config.标题 || '';
   const nameField = config.名称;
   const valueField = config.值;
-  // 阶段55 修复：展示类编辑键消费（前后端契约对齐——后端 refine 写这些键，前端必须渲染）
-  const 子标题 = config.子标题;
+  // 阶段七十四 · A2：标题仍是用户意图（后端契约），子标题是「图里画的是什么」。
+  // 默认给一个结构式子标题（图表类型 + 指标 + 分类维度），后端已给则用后端的。
+  // 注意：这里必须用 chartType 参数而不是下面的 type 常量——type 在这一行之后才初始化
+  // （TDZ 会抛 "Cannot access 'type' before initialization"，第一版就踩了这个）。
+  const 子标题 = config.子标题 || 默认子标题(chartType || 'bar', xField, yFields, groupField);
   const 系列颜色 = config.系列颜色;
   const 显示标签 = config.显示数据标签;
   const 图例位置 = config.图例位置;
@@ -207,16 +226,22 @@ export function buildOption(chartType, config) {
   function 轴(name, extra = {}) {
     return { ...extra, name, nameTextStyle: { color: '#475569' } };
   }
-  // 系列样式工厂：颜色 + 数据标签（阶段55 键消费）
+  // 阶段七十四 · A1（图表可读性）：标签默认开启
+  // 背景：报表的图表配置里根本没有「显示数据标签」这个键（undefined），
+  // 旧逻辑是 undefined → series.label ? series.label.show : false，
+  // 于是所有类型默认都不标标签——饼图虽然写了 formatter 也没用（show 一直是 falsy），
+  // 用户必须把鼠标悬浮到扇区上才知道这是哪个类别、占比多少。
+  // 新策略：不传 = 默认显示；显式传 false 才关（精细化编辑里仍然能关掉）。
+  const 标签默认开 = () => (显示标签 === undefined ? true : 显示标签);
+  // 系列样式工厂：颜色 + 数据标签（阶段55 键消费；阶段74 默认开启）
   function 系列样式(series, labelOverride) {
     if (Array.isArray(系列颜色) && 系列颜色.length > 0) {
       series.itemStyle = { ...(series.itemStyle || {}), color: 系列颜色[0] };
     }
-    series.label = {
-      ...(series.label || {}),
-      show: 显示标签 === undefined ? (series.label ? series.label.show : false) : 显示标签,
-      ...(labelOverride || {}),
-    };
+    const 开 = 标签默认开();
+    series.label = { ...(series.label || {}), show: 开, ...(labelOverride || {}) };
+    // 非饼图：标签密集时自动隐藏互相压住的那几个，否则柱状/折线会糊成一团墨
+    if (开 && series.type !== 'pie') series.labelLayout = { hideOverlap: true };
     return series;
   }
   // 图例配置工厂：位置 + 名称映射（阶段55 键消费）
@@ -363,6 +388,10 @@ export function buildOption(chartType, config) {
         name: (图例名称映射 && 图例名称映射[g]) || g, type: 'bar', stack: 'total',
         data: xVals.map(xv => { const m = rows.find(r => String(r[xField] ?? '') === xv && String(r[groupField] ?? '') === g); return m ? Number(m[yf]) || 0 : 0; }),
         itemStyle: { color: (Array.isArray(系列颜色) && 系列颜色[i % 系列颜色.length]) || COLORS[i % COLORS.length] },
+        // 阶段七十四 · A1：分组/堆积柱状图此前完全没消费「显示数据标签」，
+        // 每个色块只能靠悬浮才知道多高。默认开标签 + 重叠自动隐藏。
+        label: { show: 标签默认开() },
+        labelLayout: { hideOverlap: true },
         animationDelay: (idx) => idx * 50,
       })),
     };

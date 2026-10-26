@@ -2,7 +2,7 @@
 // 覆盖列表加载 / 空态 / 删除确认流程 / 搜索 / 上传成功与部分失败提示。
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 
 const mockApi = vi.hoisted(() => ({
   listDatasets: vi.fn().mockResolvedValue({ 数据集列表: [], 统计: { 总数: 0, 总行数: 0 } }),
@@ -180,5 +180,51 @@ describe('DataManagement 数据管理页', () => {
     fireEvent.click(screen.getByLabelText('另存为新数据集（保留原始数据）'));
     // 默认名归一化为单个 -已清洗，不再叠加
     expect(screen.getByPlaceholderText('新数据集名称（默认：销售.csv-已清洗）')).toBeInTheDocument();
+  });
+
+  // ---- 阶段七十四 · B：勾选 ≥2 份直接跳对比页 ----
+  // 反馈原话是「对比分析功能缺失、连开发者本人都无法定位」。代码一直在
+  // （Sidebar 里有 /compare），缺的是"在用户刚上传完数据的那个时刻告诉他"。
+  // 这里锁住：勾 2 份 → 出现入口 → 点它带 ID 跳到 /compare?datasets=d1,d2。
+  describe('勾选多份数据 → 直接对比（阶段七十四 B）', () => {
+    const 跳转记录 = { 搜索串: '' };
+    function 记地址() {
+      const 地址 = useLocation();
+      跳转记录.搜索串 = 地址.search;
+      return null;
+    }
+
+    it('勾 2 份后出现「对比这几份」，点击后带上所选 ID 跳转', async () => {
+      mockApi.listDatasets.mockResolvedValue(样本列表);
+      render(
+        <MemoryRouter>
+          <记地址 />
+          <DataManagement />
+        </MemoryRouter>
+      );
+      fireEvent.click(screen.getByRole('button', { name: /我的数据集/ }));
+
+      // 勾选本身就是"合并"用的那个 checkbox（同一批勾选，两个入口共用），
+      // 这正是设计意图：用户不需要理解"这是给合并用的还是给对比用的"。
+      const 勾选框 = await screen.findAllByTitle('勾选后可合并');
+      fireEvent.click(勾选框[0]);
+      fireEvent.click(勾选框[1]);
+
+      const 对比按钮 = await screen.findByRole('button', { name: /对比这几份/ });
+      fireEvent.click(对比按钮);
+
+      await waitFor(() => expect(跳转记录.搜索串).toBe('?datasets=d1,d2'));
+    });
+
+    it('只勾 1 份时不显示「对比这几份」（对比至少要 2 份）', async () => {
+      mockApi.listDatasets.mockResolvedValue(样本列表);
+      renderPage();
+      fireEvent.click(screen.getByRole('button', { name: /我的数据集/ }));
+      const 勾选框 = await screen.findAllByTitle('勾选后可合并');
+      fireEvent.click(勾选框[0]);
+
+      await waitFor(() => expect(screen.getByRole('button', { name: /删除所选/ })).toBeInTheDocument());
+      expect(screen.queryByRole('button', { name: /对比这几份/ })).not.toBeInTheDocument();
+    });
   });
 });

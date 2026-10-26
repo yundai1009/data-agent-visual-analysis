@@ -138,6 +138,61 @@ def _截断标题(文本: str, 上限: int = 60) -> str:
     return 文本[:上限].rstrip() + "…"
 
 
+def _生成图表标题(
+    分析需求: str,
+    图表类型: str,
+    x轴: str,
+    y轴列表: List[str],
+    分组字段: str,
+    聚合方式: str,
+    report_df: "pd.DataFrame",
+) -> str:
+    """阶段七十四 · A2：按数据生成「这张图到底画了什么」的结构化标题。
+
+    背景（上线后收到的用户反馈）："追问生成图表 / 直接生成图表时，自动生成的标题
+    无法精准概括图表内容"。根因不是 LLM 不好，而是**这里压根没走 LLM**——
+    过去标题直接取 `_截断标题(分析需求)`，也就是用户输入框里那句话。于是标题要么是
+    一整句口语（"那华南区呢"），要么是半个问句，看标题无法知道这张图在说什么。
+
+    ⚠️ 刻意不改 `chart_config["标题"]`：它是报表标题（`result["标题"]`）的唯一来源，
+    被既有契约锁死——`test_修复f4标题与显式图表`（长需求截断到 60 字 + "…"）、
+    `test_api_integration`（追问不得被上文污染，标题必须正是本次需求）、
+    `test_修复追问上下文劫持`（标题要含模板语法源）。这些契约本身是对的
+    （标题=用户意图），缺的是「数据侧说明」。
+    所以本函数产出的是 **子标题**：标题继续讲"用户要什么"，子标题补"图里画的是什么"。
+
+    三要素固定次序：动作/口径（聚合方式）→ 指标 → 按什么分类。
+    纯函数，无 IO、无 LLM 调用，可单测。
+    """
+    指标 = (y轴列表 or [None])[0]
+    x = x轴 or (report_df.columns[0] if len(report_df.columns) else None)
+    动作 = {
+        "求和": "求和", "平均值": "平均", "计数": "计数",
+        "最大值": "取最大", "最小值": "取最小", "去重计数": "去重计数",
+        "sum": "求和", "mean": "平均", "count": "计数",
+        "max": "取最大", "min": "取最小",
+    }.get(聚合方式, "")
+
+    if 图表类型 in ("饼图", "环形图"):
+        return f"按{x or '分类'}拆分 {指标 or '数量'} 的占比"
+    if 图表类型 == "漏斗图":
+        return f"{x or '阶段'} 的{指标 or '数量'}转化"
+    if 图表类型 == "词云":
+        return f"{指标}的词频分布" if 指标 and "词频" not in 指标 else "词频分布"
+    if 图表类型 == "散点图":
+        return f"{x or 'X'} 与 {指标 or 'Y'} 的相关关系"
+    if 图表类型 == "热力图" and 分组字段:
+        return f"{x or 'X'} × {分组字段} 的{指标 or '数值'}分布"
+    if 分组字段 and 指标:
+        return f"按{x or '分类'}、{分组字段}分组{动作}的{指标}"
+    if x and 指标:
+        左边 = f"按{x}分组"
+        return f"{左边}{动作}的{指标}" if 动作 else f"{左边}的{指标}"
+    if x:
+        return f"按{x}的分布"
+    return ""
+
+
 def _转换日期列(df: pd.DataFrame, columns: List[str]) -> pd.DataFrame:
     result = df.copy()
     for column in columns:
@@ -1029,6 +1084,8 @@ def 生成报表数据(
 
     plotly_type = 图表类型映射.get(effective_chart, "table")
     report_rows = _可_json行(report_df)
+    # 阶段七十四 · A2：标题仍是用户意图（契约锁死），另给一行「图里画的是什么」的结构说明
+    结构子标题 = _生成图表标题(分析需求, effective_chart, x轴, y轴列表, 分组字段, 聚合方式, report_df)
     chart_config: Dict[str, Any] = {
         "类型": plotly_type,
         "标题": _截断标题(分析需求) or f"上传数据{effective_chart}",
@@ -1041,6 +1098,8 @@ def 生成报表数据(
         "TopN": topN,
         "对比": 对比,
     }
+    if 结构子标题:
+        chart_config["子标题"] = 结构子标题
 
     if plotly_type in ("pie", "donut") and x轴 and y轴列表:
         chart_config["名称"] = x轴

@@ -12,9 +12,10 @@
  * ============================================================================= */
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { UserRoundPen, KeyRound, UserX, Gauge } from 'lucide-react';
+import { UserRoundPen, KeyRound, UserX, Gauge, LayoutGrid } from 'lucide-react';
 import { useApp } from '../AppContext';
 import { changeUsername, changePassword, deleteAccount, getMyUsage } from '../api';
+import { 取模式, 设模式, 模式 } from '../utils/capabilities';
 
 // 三个共享样式串：普通输入框 / 主按钮（蓝）/ 危险按钮（红）
 const inputCls =
@@ -62,6 +63,9 @@ export default function Account() {
   // 阶段 53 · C10：用量概览（挂载即加载；失败不阻塞其余功能）
   const [usage, setUsage] = useState(null);
   const [usageErr, setUsageErr] = useState('');
+  // 阶段七十四 · C：产品模式。刻意不用 window.location.reload()——那会把整页
+  // 白一下再回来，观感像"崩了"。这里只切本地 state，侧栏/各页面自己读能力表。
+  const [当前模式, set当前模式] = useState(() => 取模式());
   useEffect(() => {
     let alive = true;
     getMyUsage()
@@ -190,6 +194,44 @@ export default function Account() {
         ) : (
           <p className="text-xs text-gray-400">用量加载中…</p>
         )}
+      </Section>
+
+      {/* 阶段七十四 · C：产品模式——反馈「偏离初始定位，复杂度对 0 基础用户偏高」。
+          做法是一个构建 + 能力表（utils/capabilities.js），不是一个功能两套代码。
+          切换后整页不重载，只做一次本地状态刷新让侧栏重新过滤。 */}
+      <Section
+        icon={LayoutGrid}
+        title="产品模式"
+        desc="基础版只留「上传数据 → 说一句话 → 看报表」这条主链路，模型/模板/定时这类选项收起来；专业版放开全部功能。随时可切，数据不受影响。"
+      >
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {[
+            { 值: 模式.基础版, 名: '基础版', 说明: '给第一次用的人：只需要上传、提问、看结果' },
+            { 值: 模式.专业版, 名: '专业版', 说明: '全部功能：多份数据对比、看板、自选模型、模板与定时' },
+          ].map((项) => {
+            const 选中 = 当前模式 === 项.值;
+            return (
+              <button
+                key={项.值}
+                aria-pressed={选中}
+                aria-label={`切换到${项.名}`}
+                onClick={() => {
+                  if (选中) return;
+                  设模式(项.值);
+                  set当前模式(项.值);
+                }}
+                className={`text-left rounded-xl border p-3 transition-all ${
+                  选中
+                    ? 'border-accent bg-accent-soft/60'
+                    : 'border-gray-200 hover:border-accent/40 hover:bg-gray-50'
+                }`}
+              >
+                <p className="text-xs font-semibold text-gray-900">{项.名}{选中 && ' · 当前'}</p>
+                <p className="text-[11px] text-gray-500 mt-1 leading-relaxed">{项.说明}</p>
+              </button>
+            );
+          })}
+        </div>
       </Section>
 
       {/* 修改用户名 */}

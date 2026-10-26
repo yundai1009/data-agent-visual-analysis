@@ -459,6 +459,15 @@ export default function DataManagement() {
                       className="mt-2 w-full py-1.5 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-deep transition-all"
                     >合并所选（{mergeSel.size} 个数据集）</button>
                   )}
+                  {/* 阶段七十四 · B：勾选 ≥2 份就能直接对比，不用自己去左侧找「对比分析」。
+                      这是可发现性的关键补丁——功能一直在，但没有人在"刚上传完数据"这个
+                      时刻告诉他可以去对比。跳转带 ?datasets=ID,ID，对比页据此预选。 */}
+                  {mergeSel.size >= 2 && (
+                    <button
+                      onClick={() => { setDsOpen(false); navigate(`/compare?datasets=${Array.from(mergeSel).join(',')}`); }}
+                      className="mt-1.5 w-full py-1.5 rounded-lg border border-accent/40 text-accent text-xs font-medium hover:bg-accent-soft transition-all"
+                    >对比这几份（{mergeSel.size} 个数据集）</button>
+                  )}
                   {/* 优化③：批量删除所选 */}
                   {mergeSel.size >= 1 && (
                     <button
