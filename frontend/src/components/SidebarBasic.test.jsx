@@ -29,17 +29,17 @@ beforeEach(() => {
   window.history.replaceState({}, '', '/');
 });
 
-describe('默认基础版下的侧边栏（阶段七十四 C · 默认模式翻转）', () => {
-  it('默认不渲染「对比分析」这个术语入口', () => {
+describe('默认基础版下的侧边栏（阶段七十六 · 对比分析入口加回）', () => {
+  it('默认仍渲染「对比分析」入口（阶段七十六按用户要求从基础版加回）', () => {
     renderSidebar();
     expect(screen.getByText('数据管理')).toBeInTheDocument();
     expect(screen.getByText('智能分析')).toBeInTheDocument();
     expect(screen.getByText('报表历史')).toBeInTheDocument();
-    // 「对比分析」是行话，新手不认识——入口改到数据管理页的「对比这几份」
-    expect(screen.queryByText('对比分析')).not.toBeInTheDocument();
+    // C3 拍板：基础版也保留「对比分析」侧栏入口（与数据管理页「对比这几份」并存）
+    expect(screen.getByText('对比分析')).toBeInTheDocument();
   });
 
-  it('?mode=pro 时「对比分析」入口回来', () => {
+  it('?mode=pro 时仍是全量入口', () => {
     window.history.replaceState({}, '', '/?mode=pro');
     renderSidebar();
     expect(screen.getByText('对比分析')).toBeInTheDocument();

@@ -32,7 +32,7 @@ const 存储键 = 'daa_mode';
  */
 export const 能力表 = {
   侧栏项: {
-    basic: ['/data', '/analysis', '/report', '/dashboard', '/account'],
+    basic: ['/data', '/analysis', '/compare', '/report', '/dashboard', '/account'],
     pro: ['/data', '/analysis', '/compare', '/report', '/dashboard', '/account'],
   },
   模型选择: { basic: false, pro: true },
@@ -41,8 +41,10 @@ export const 能力表 = {
   定时任务: { basic: false, pro: true },
   高级清洗: { basic: false, pro: true },
   血缘图: { basic: false, pro: true },
-  // 对比分析在基础版**保留**：入口改成「在数据管理页勾选 ≥2 份 → 对比这几份」，
-  // 用户不需要先认识"对比分析"这个词。侧栏项在基础版收起，避免新手被术语劝退。
+  // 对比分析在基础版**保留侧栏入口**（阶段七十六按用户要求加回）：
+  // 早先的取舍是"基础版收起术语入口，只走数据管理页勾 ≥2 份 → 对比这几份"，
+  // 但用户实测后明确要求加回——能力可以渐进披露，入口不能藏。
+  // 两条路并存：侧栏直接进 / 数据管理页上下文进，用户从哪条进都能到。
   对比分析入口: { basic: true, pro: true },
 };
 

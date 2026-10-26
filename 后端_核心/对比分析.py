@@ -182,21 +182,52 @@ def 推导来源标签(名称列表: Sequence[str]) -> List[str]:
 # 二、结构解析：共同字段 / 来源轴 / 主体轴 / 指标
 # ═══════════════════════════════════════════════════════════════
 
+# 列名语义别名：业务上指同一件事但写法不同（避免「销售额」/「销售金额」这种对齐失败）
+_列名别名组: List[List[str]] = [
+    ["销售额", "销售金额", "销售总额", "成交额", "GMV"],
+    ["销量", "销售量", "销量额", "销售数量"],
+    ["订单数", "订单量", "订单个数"],
+    ["利润", "净利润", "毛利"],
+    ["地区", "区域", "城市", "省份", "大区"],
+    ["日期", "时间", "月份", "年份", "下单日期"],
+]
+
+
+def _列名归一(列名: str) -> str:
+    """把列名归一到它的别名组代表（首组长串），无别名则原样返回。
+
+    用于「共同字段」判定：销售额 / 销售金额 应视为同一列。
+    """
+    原名 = str(列名).strip()
+    for 组 in _列名别名组:
+        if 原名 in 组:
+            return 组[0]
+    return 原名
+
+
 def _共同字段(数据列表: Sequence[pd.DataFrame]) -> List[str]:
-    """所有数据集都有的列名（保持第一个数据集的列顺序）。"""
+    """所有数据集都有的列名（保持第一个数据集的列顺序）。
+
+    2026-10-26 增强：先按语义别名归一再求交集，使「销售额」/「销售金额」这类
+    写法不同的同义列也能对齐（D2）。归一只影响「是否算共同字段」的判定，
+    返回仍用第一个数据集里的原始列名，下游取数不丢真实列名。
+    """
     if not 数据列表:
         return []
-    共同 = set(str(c) for c in 数据列表[0].columns)
+    原始列 = [str(c) for c in 数据列表[0].columns]
+    归一集合0 = {_列名归一(c) for c in 原始列}
+    共同归一 = set(归一集合0)
     for df in 数据列表[1:]:
-        共同 &= set(str(c) for c in df.columns)
-    return [str(c) for c in 数据列表[0].columns if str(c) in 共同]
+        共同归一 &= {_列名归一(str(c)) for c in df.columns}
+    return [c for c in 原始列 if _列名归一(c) in 共同归一]
 
 
 def _全数值列(数据列表: Sequence[pd.DataFrame], 列: str) -> bool:
     for df in 数据列表:
-        if 列 not in df.columns:
+        实际 = _解析实际列名(df, 列)
+        if 实际 is None:
             return False
-        系列 = df[列]
+        系列 = df[实际]
         if not pd.api.types.is_numeric_dtype(系列):
             return False
         if pd.api.types.is_bool_dtype(系列):
@@ -406,7 +437,24 @@ def 生成对比预览(
 # 三、对比计算：透视成"来源 × 主体"的宽表
 # ═══════════════════════════════════════════════════════════════
 
-def _单集聚合(
+def _解析实际列名(df: pd.DataFrame, 列: Optional[str]) -> Optional[str]:
+    """在 df 里找到与「列」语义相同的真实列名；找不到返回 None。
+
+    先精确匹配（绝大多数情况），匹配不到再按别名组找——这样「指标=销售额」
+    在只有「销售金额」的数据集上也能取到数，而不是静默产出一行空数据。
+    """
+    if not 列:
+        return None
+    if 列 in df.columns:
+        return 列
+    归一 = _列名归一(列)
+    for c in df.columns:
+        if _列名归一(str(c)) == 归一:
+            return str(c)
+    return None
+
+
+def _聚合单数据集(
     df: pd.DataFrame,
     主体轴: Optional[str],
     指标: Optional[str],
@@ -414,34 +462,36 @@ def _单集聚合(
 ) -> Tuple[List[Dict[str, Any]], str]:
     """单个数据集按主体轴聚合指标 → [{"主体": 值, "值": 数值}] + 实际值列名。"""
     聚合 = 聚合映射.get(聚合方式, "sum")
+    实际主体 = _解析实际列名(df, 主体轴)
+    实际指标 = _解析实际列名(df, 指标)
     if 聚合方式 == "计数" or not 指标:
-        if 主体轴:
-            分组 = df.groupby(主体轴, dropna=False).size().reset_index(name="记录数")
+        if 实际主体:
+            分组 = df.groupby(实际主体, dropna=False).size().reset_index(name="记录数")
         else:
             分组 = pd.DataFrame({列_主体: [主体_全部], "记录数": [int(len(df))]})
         return (
-            [{列_主体: str(行[主体轴 or 列_主体]), "值": float(行["记录数"])} for _, 行 in 分组.iterrows()],
+            [{列_主体: str(行[实际主体 or 列_主体]), "值": float(行["记录数"])} for _, 行 in 分组.iterrows()],
             "记录数",
         )
-    if not 主体轴:
+    if not 实际主体:
         # 没有主体轴：整个数据集聚合成一行（"只看总量变化"）
-        if 指标 not in df.columns:
+        if not 实际指标:
             return [], 指标
-        数值 = pd.to_numeric(df[指标], errors="coerce").dropna()
+        数值 = pd.to_numeric(df[实际指标], errors="coerce").dropna()
         if 数值.empty:
             return [], 指标
-        return [{列_主体: 主体_全部, "值": float(getattr(数值, 聚合)())}], 指标
-    if 指标 not in df.columns:
+        return [{列_主体: 主体_全部, "值": float(getattr(数值, 聚合)())}], 实际指标
+    if not 实际指标:
         return [], 指标
-    工作 = df[[主体轴, 指标]].copy()
-    工作[指标] = pd.to_numeric(工作[指标], errors="coerce")
-    工作 = 工作.dropna(subset=[指标])
+    工作 = df[[实际主体, 实际指标]].copy()
+    工作[实际指标] = pd.to_numeric(工作[实际指标], errors="coerce")
+    工作 = 工作.dropna(subset=[实际指标])
     if 工作.empty:
         return [], 指标
-    分组 = 工作.groupby(主体轴, dropna=False)[指标].agg(聚合).reset_index()
+    分组 = 工作.groupby(实际主体, dropna=False)[实际指标].agg(聚合).reset_index()
     return (
-        [{列_主体: str(行[主体轴]), "值": float(行[指标])} for _, 行 in 分组.iterrows()],
-        指标,
+        [{列_主体: str(行[实际主体]), "值": float(行[实际指标])} for _, 行 in 分组.iterrows()],
+        实际指标,
     )
 
 
@@ -597,7 +647,7 @@ def 执行对比(
     各集主体: List[set] = []
     for 序号, df in enumerate(过滤后):
         标签值 = 标签[序号] if 序号 < len(标签) else f"数据集{序号 + 1}"
-        行列表, 实际指标名 = _单集聚合(df, 主体轴名, 数值指标, 聚合口径)
+        行列表, 实际指标名 = _聚合单数据集(df, 主体轴名, 数值指标, 聚合口径)
         if not 行列表:
             警告.append(f"数据集「{标签值}」没有可用数据（{实际指标名} 全为空或缺失）")
         各集主体.append({行[列_主体] for 行 in 行列表})
