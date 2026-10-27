@@ -74,7 +74,15 @@ function 主() {
 
   // 覆盖而不是合并：旧构建残留的 hash 文件名不会被任何 index.html 引用，
   // 留着只会让目录越来越胖（本仓库曾在 dist/assets 堆过 6 份历史 EChartsChart-*.js）。
-  fs.rmSync(目标, { recursive: true, force: true });
+  // 用 核心/删目录.js 而不是直接 fs.rmSync：目标路径 %APPDATA%\数据分析Agent\... 含中文，
+  // 而 rmSync 在非 ASCII 路径上会静默不删（阶段八十一实测，node v24.9.0/win32）。
+  const { 删目录 } = require('../核心/删目录');
+  if (!删目录(目标)) {
+    console.error(`[失败] 删不掉旧覆盖层，中止：${目标}`);
+    console.error('       不删就复制会留下旧 hash chunk，桌面版可能继续加载旧界面。');
+    process.exitCode = 1;
+    return;
+  }
   复制树(源, 目标);
 
   const 有入口 = fs.existsSync(path.join(目标, 'index.html'));

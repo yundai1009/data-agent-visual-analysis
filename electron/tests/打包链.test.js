@@ -43,5 +43,6 @@ test('自检脚本真实存在，且不靠 fs.cpSync 拷目录', () => {
 
 test('推送前端脚本是覆盖而非合并（旧 hash chunk 不许残留）', () => {
   const 源码 = fs.readFileSync(path.join(electron根, '脚本', '推送前端.js'), 'utf8');
-  assert.match(源码, /rmSync\(目标/, '必须先删目标目录：旧构建的 hash 文件名没人引用，留着只会让覆盖层越来越胖');
+  assert.match(源码, /删目录\(目标/, '必须先删目标目录：旧构建的 hash 文件名没人引用，留着只会让覆盖层越来越胖');
+  assert.ok(!/fs\.rmSync\(目标/.test(源码), '目标路径含中文（%APPDATA%\\数据分析Agent\\…），裸 fs.rmSync 会静默不删（阶段八十一）：必须用 核心/删目录.js 的 删目录()');
 });

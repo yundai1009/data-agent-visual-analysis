@@ -9,7 +9,8 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "node 脚本/清空dist.cjs && vite build",
+    "clean": "node 脚本/清空dist.cjs",
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run"

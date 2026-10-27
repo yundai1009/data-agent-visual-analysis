@@ -14,12 +14,16 @@ import { DEV_PROXY } from './dev-proxy.js'
 export default defineConfig({
   plugins: [react(), tailwindcss(), cspPlugin()],
   build: {
-    // 阶段七十四补：每次构建前清空 dist。
-    // 不加这一行时，带 hash 的旧 chunk 会一直堆在 dist/assets 里（实测累积到
-    // 6 份 EChartsChart-*.js 与几十份历史 chunk），而这些文件会被原样推进
-    // 桌面版的前端覆盖层、也会被 extraResources 打进安装包——包越来越大，
-    // 里面还躺着已经不可能被 index.html 引用的死代码。翻旧代码时最容易
-    // 被这种东西骗：明明改了，看到的还是旧的。
+    // 阶段八十一纠正：`emptyOutDir` 保留，但**不要指望它**。
+    // 阶段七十四曾在这里写「加这一行就每次构建前清空 dist」——那是错的。
+    // 实测（vite 8.1.x / node v24.9.0 / win32）：这个仓库里 emptyOutDir 完全
+    // 不生效，种进 dist/assets 的 STALE-probe.js 构建完还在原地。
+    // 根因不在 Vite 配置，在 Node：Vite 的 emptyDir 内部逐项调 `fs.rmSync`，
+    // 而 fs.rmSync 在**路径含非 ASCII 字符**时会静默不删、也不抛异常，
+    // 而本仓库根目录叫「自助式数据分析Agent平台」。
+    // 真正的保证是构建前那道脚本：`package.json` 的 build = 「清空dist.cjs && vite build」，
+    // 它先试 rmSync、再用手写递归兜底，并以 existsSync 判定成败。
+    // 留着 emptyOutDir 是为了 ASCII 路径下（别人 clone 到 C:\work\daa 之类）仍然有效。
     emptyOutDir: true,
     // echarts(≈647KB) 是 EChartsChart 内动态 import 的懒加载 chunk，仅报表页用到时加载；
     // 阈值声明为 800 免除噪音警告（该 chunk 不出现在登录/数据管理首屏）。
