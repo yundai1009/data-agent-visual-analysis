@@ -78,3 +78,43 @@ test('注入 FRONTEND_DIST 不影响数据库/认证分支', () => {
   assert.strictEqual(env.DB_BACKEND, 'mysql');
   assert.strictEqual(env.AUTH_ENABLED, 'true');
 });
+
+// ---- 阶段七十九：邮件服务（SMTP）环境变量注入 ----
+// 用户选 A「收件人自填邮箱直接注册」：后端本来就支持任意邮箱，卡点在桌面版没有 SMTP 入口、
+// 也没往子进程 env 里注入 SMTP_*。这组用例锁住「什么时候注入、注入成什么样」。
+test('real + SMTP 主机：注入 SMTP_* 并显式关掉 dry-run', () => {
+  const env = 构建后端环境(基础, {
+    认证模式: 'real', JWT密钥: 'k'.repeat(64), 预置管理员口令: 'p',
+    邮件服务: { 主机: 'smtp.qq.com', 端口: 465, 用户: '123@qq.com', 密码: '授权码', 发件人: '123@qq.com' },
+  });
+  assert.strictEqual(env.SMTP_HOST, 'smtp.qq.com');
+  assert.strictEqual(env.SMTP_PORT, '465');
+  assert.strictEqual(env.SMTP_USER, '123@qq.com');
+  assert.strictEqual(env.SMTP_PASS, '授权码');
+  assert.strictEqual(env.SMTP_FROM, '123@qq.com');
+  assert.strictEqual(env.SMTP_DRY_RUN, 'false', '配了主机就是想让信真发，必须显式关 dry-run');
+});
+
+test('real + SMTP 发件人留空：回落成用户名（与后端 SMTP_FROM or SMTP_USER 一致）', () => {
+  const env = 构建后端环境(基础, {
+    认证模式: 'real', JWT密钥: 'k', 预置管理员口令: 'p',
+    邮件服务: { 主机: 'smtp.163.com', 端口: 465, 用户: 'a@163.com', 密码: 'x' },
+  });
+  assert.strictEqual(env.SMTP_FROM, 'a@163.com');
+});
+
+test('real 但没填 SMTP 主机：不注入任何 SMTP_*（后端走 dry-run 并如实告知）', () => {
+  const env = 构建后端环境(基础, { 认证模式: 'real', JWT密钥: 'k', 预置管理员口令: 'p' });
+  for (const 键 of ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM', 'SMTP_DRY_RUN']) {
+    assert.ok(!(键 in env), `${键} 不该被注入`);
+  }
+});
+
+test('demo 模式即使配了邮件也不注入（免登录，注册流程不存在）', () => {
+  const env = 构建后端环境(基础, {
+    认证模式: 'demo',
+    邮件服务: { 主机: 'smtp.qq.com', 端口: 465, 用户: 'a@qq.com', 密码: 'x' },
+  });
+  assert.strictEqual(env.AUTH_ENABLED, 'false');
+  assert.ok(!('SMTP_HOST' in env), 'demo 模式不该注入 SMTP_HOST');
+});

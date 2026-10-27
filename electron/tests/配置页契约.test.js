@@ -101,3 +101,62 @@ test('配置页不加载任何外部资源（离线可用 + 无远程内容）',
     '配置页不应引用远程地址');
   assert.ok(!/<iframe/i.test(html), '配置页不应内嵌 iframe');
 });
+
+// ---- 阶段七十九：SMTP 字段组（挂在「真实认证」下，demo 模式下被隐藏）----
+test('SMTP 五个字段的 id 都在 HTML 里，且都是 password(密码) 或 text(其余)', () => {
+  for (const [id, 应该是] of [
+    ['邮件主机', 'text'], ['邮件端口', 'number'], ['邮件用户', 'text'],
+    ['邮件密码', 'password'], ['邮件发件人', 'text'],
+  ]) {
+    assert.ok(htmlId.includes(id), `HTML 缺少 id="${id}"`);
+    const 标签 = html.match(new RegExp(`<input[^>]*id="${id}"[^>]*>`));
+    assert.ok(标签 && 标签[0].includes(`type="${应该是}"`), `id="${id}" 类型应为 ${应该是}`);
+  }
+});
+
+test('SMTP 字段的显示切换按钮指向 邮件密码', () => {
+  const 目标 = 收集(html, /data-切换密码="([^"]+)"/g);
+  assert.ok(目标.includes('邮件密码'), 'SMTP 密码应有显示切换');
+});
+
+test('SMTP 字段组在「真实认证」fieldset 内（demo 时连隐藏带不显示）', () => {
+  // 认证字段本身含一个嵌套 fieldset（SMTP），所以不能只截到「下一个 <fieldset」——
+  // 那样截到的是 SMTP 那个内层，反而把被测字段排除了。这里按 depth 走一遍找真正的闭合点。
+  const 起点 = html.indexOf('id="认证字段"');
+  assert.ok(起点 >= 0, '缺少 认证字段 fieldset');
+  const 开 = html.lastIndexOf('<fieldset', 起点);
+  assert.ok(开 >= 0, '找不到 认证字段 的起始标签');
+  let 深度 = 0;
+  let 游标 = 开;
+  let 结束 = html.length;
+  while (游标 < html.length) {
+    const 下一个开 = html.indexOf('<fieldset', 游标 + 1);
+    const 下一个闭 = html.indexOf('</fieldset>', 游标 + 1);
+    if (下一个闭 < 0) break;
+    if (下一个开 >= 0 && 下一个开 < 下一个闭) { 深度 += 1; 游标 = 下一个开; continue; }
+    深度 -= 1;
+    游标 = 下一个闭;
+    if (深度 <= 0) { 结束 = 下一个闭 + '</fieldset>'.length; break; }
+  }
+  const 区块 = html.slice(开, 结束);
+  for (const id of ['邮件主机', '邮件端口', '邮件用户', '邮件密码', '邮件发件人']) {
+    assert.ok(区块.includes(`id="${id}"`), `SMTP 字段 ${id} 应在 认证字段 内`);
+  }
+});
+
+test('SMTP 字段被纳入页面 字段 映射表（读表单靠它往返）', () => {
+  const 字段块 = 内联脚本.match(/var 字段 = \{([\s\S]*?)\};/);
+  assert.ok(字段块, '找不到 字段 映射表');
+  const 映射 = 字段块[1];
+  for (const id of ['邮件主机', '邮件端口', '邮件用户', '邮件密码', '邮件发件人']) {
+    assert.ok(映射.includes(id), `字段映射表缺 ${id}`);
+  }
+});
+
+test('SMTP 主机/端口/用户/密码/发件人 既是 HTML id 又是 字段 映射值，且二者一致', () => {
+  const 字段块 = 内联脚本.match(/var 字段 = \{([\s\S]*?)\};/);
+  const 映射值 = 收集(字段块[1], /'(邮件[^']+)'/g);
+  for (const v of 映射值) {
+    assert.ok(htmlId.includes(v), `字段映射值 ${v} 在 HTML 里没有对应 id`);
+  }
+});

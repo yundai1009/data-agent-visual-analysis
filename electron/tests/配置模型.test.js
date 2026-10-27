@@ -47,11 +47,14 @@ test('设置转表单：非法取值不外泄，落到安全默认', () => {
 });
 
 test('表单转设置：MySQL 分支逐字段映射', () => {
+  // 阶段七十九：「邮件服务: null」是新增的整段删除标记（演示模式不配 SMTP），
+  // 属于补丁形状的契约扩展，不是放宽断言——下面新增的 SMTP 用例会各自断言真正的值。
   assert.deepStrictEqual(表单转设置(mysql表单()), {
     数据库: { 模式: 'mysql', 主机: 'db.local', 端口: 3307, 用户: 'u', 密码: 'p@ss', 库名: 'daa2' },
     认证模式: 'demo',
     JWT密钥: null,
     预置管理员口令: null,
+    邮件服务: null,
   });
 });
 
@@ -66,6 +69,7 @@ test('表单转设置：切回演示模式用 null 表达删除（写设置的�
   assert.strictEqual(补丁.认证模式, 'demo');
   assert.strictEqual(补丁.JWT密钥, null);
   assert.strictEqual(补丁.预置管理员口令, null);
+  assert.strictEqual(补丁.邮件服务, null, '演示模式免登录，SMTP 配置也要一起清掉');
 });
 
 test('校验：默认表单与合法 MySQL / 真实认证都通过', () => {
@@ -75,6 +79,20 @@ test('校验：默认表单与合法 MySQL / 真实认证都通过', () => {
   // 端口边界：1 与 65535 合法，字符串数字也合法（表单读出来就是字符串）
   assert.strictEqual(校验表单({ ...mysql表单(), 端口: '1' }).ok, true);
   assert.strictEqual(校验表单({ ...mysql表单(), 端口: '65535' }).ok, true);
+});
+
+test('校验：SMTP 留空放行（继续 dry-run），填了主机就要凑齐发信最低要求', () => {
+  // 阶段七十九：阶段一不配 SMTP 是合法默认（demo 模式注册无意义，real 模式会走 dry-run 并如实告知）。
+  assert.deepStrictEqual(校验表单(real表单()).错误, []);
+  // 只填主机、其余留空 —— 必须报「用户名」与「密码」缺失
+  const 半填 = 校验表单({ ...real表单(), 邮件主机: 'smtp.qq.com', 邮件用户: '', 邮件密码: '' });
+  assert.strictEqual(半填.ok, false);
+  assert.ok(半填.错误.some(e => /SMTP 用户名/.test(e)), '缺 SMTP 用户名应报');
+  assert.ok(半填.错误.some(e => /授权码/.test(e)), '缺 SMTP 密码应提示「授权码」而非「密码」');
+  // 端口非法也要拦
+  assert.ok(校验表单({ ...real表单(), 邮件主机: 'smtp.qq.com', 邮件用户: 'a@b.com', 邮件密码: 'x', 邮件端口: '70000' }).错误.some(e => /SMTP 端口/.test(e)), 'SMTP 端口越界应报');
+  // 完整填好则通过
+  assert.strictEqual(校验表单({ ...real表单(), 邮件主机: 'smtp.qq.com', 邮件端口: 465, 邮件用户: '123@qq.com', 邮件密码: 'abcd', 邮件发件人: '123@qq.com' }).ok, true);
 });
 
 test('校验：MySQL 必填项逐条给出人话错误', () => {
@@ -139,6 +157,37 @@ test('生效配置：只暴露真正会进 env 的字段', () => {
   assert.strictEqual(c.数据库.模式, 'mysql');
   assert.strictEqual(c.认证.模式, 'real');
   assert.strictEqual(c.认证.JWT密钥, 'k');
+  assert.strictEqual(c.认证.邮件, null, 'real 但没填 SMTP 主机，邮件不应参与重启判定');
+});
+
+test('生效配置：real + SMTP 主机非空才把邮件纳入（触发重启判定的范围）', () => {
+  const c = 生效配置({ 认证模式: 'real', JWT密钥: 'k'.repeat(64), 预置管理员口令: 'p', 邮件服务: { 主机: 'smtp.qq.com', 端口: 465, 用户: '123@qq.com', 密码: 'auth', 发件人: '123@qq.com' } });
+  assert.deepStrictEqual(c.认证.邮件, { 主机: 'smtp.qq.com', 端口: 465, 用户: '123@qq.com', 密码: 'auth', 发件人: '123@qq.com' });
+});
+
+test('表单转设置：real + SMTP 主机非空写整段，空主机写 null', () => {
+  const 有邮件 = 表单转设置({ ...real表单(), 邮件主机: 'smtp.qq.com', 邮件端口: 465, 邮件用户: '123@qq.com', 邮件密码: 'auth', 邮件发件人: '123@qq.com' });
+  assert.deepStrictEqual(有邮件.邮件服务, { 主机: 'smtp.qq.com', 端口: 465, 用户: '123@qq.com', 密码: 'auth', 发件人: '123@qq.com' });
+  const 空邮件 = 表单转设置({ ...real表单(), 邮件主机: '  ', 邮件用户: '123@qq.com', 邮件密码: 'auth' });
+  assert.strictEqual(空邮件.邮件服务, null, '主机留空（含纯空格）应回落 null，不写空段');
+});
+
+test('设置转表单：邮件字段能正确回填', () => {
+  const 回填 = 设置转表单({ 认证模式: 'real', JWT密钥: 'k'.repeat(64), 预置管理员口令: 'p', 邮件服务: { 主机: 'smtp.qq.com', 端口: '465', 用户: '123@qq.com', 密码: 'auth', 发件人: '123@qq.com' } });
+  assert.strictEqual(回填.邮件主机, 'smtp.qq.com');
+  assert.strictEqual(回填.邮件端口, 465, '端口应转成数字');
+  assert.strictEqual(回填.邮件用户, '123@qq.com');
+  assert.strictEqual(回填.邮件密码, 'auth');
+  assert.strictEqual(回填.邮件发件人, '123@qq.com');
+});
+
+test('是否需要重启：real 下 SMTP 主机新增/变更要触发重启，demo 下改邮件不算', () => {
+  const real无邮 = { 认证模式: 'real', JWT密钥: 'k'.repeat(64), 预置管理员口令: 'p' };
+  const real有邮 = { ...real无邮, 邮件服务: { 主机: 'smtp.qq.com', 端口: 465, 用户: '123@qq.com', 密码: 'auth', 发件人: '123@qq.com' } };
+  assert.strictEqual(是否需要重启(real无邮, real有邮), true, '新增 SMTP 要重启后端');
+  assert.strictEqual(是否需要重启(real有邮, { ...real有邮, 邮件服务: { ...real有邮.邮件服务, 密码: 'new' } }), true, 'SMTP 密码变了要重启');
+  const demo = { 数据库: { 模式: 'sqlite' }, 认证模式: 'demo' };
+  assert.strictEqual(是否需要重启(demo, { ...demo, 邮件服务: { 主机: 'smtp.qq.com' } }), false, 'demo 模式不进 env，改邮件不算变化');
 });
 
 test('往返：设置 → 表单 → 设置，生效配置不变', () => {

@@ -103,6 +103,15 @@
       <div class="行"><label>JWT 密钥</label><input type="password" id="JWT密钥" placeholder="至少 32 个字符"><button type="button" id="生成密钥">生成强密钥</button><button type="button" data-切换密码="JWT密钥">显示</button></div>
       <div class="行"><label>预置管理员口令</label><input type="password" id="预置口令" placeholder="首次登录用的 admin 口令"><button type="button" data-切换密码="预置口令">显示</button></div>
       <p class="说明">密钥只存在于本机配置文件中，不随安装包分发；请勿把配置文件提交到代码仓库。</p>
+      <fieldset>
+        <legend>邮件服务（SMTP，可选）</legend>
+        <p class="说明">填了主机，访客才能在登录页自助注册 / 找回密码（验证码真正发到邮箱）。留空则继续演示模式：验证码只打在后端日志里，界面会如实告知「未开启邮件，请联系管理员开通」。</p>
+        <div class="行"><label>SMTP 主机</label><input type="text" id="邮件主机" placeholder="smtp.qq.com"></div>
+        <div class="行"><label>SMTP 端口</label><input type="number" id="邮件端口" min="1" max="65535" step="1" placeholder="465（SSL）"></div>
+        <div class="行"><label>SMTP 用户名</label><input type="text" id="邮件用户" placeholder="发件邮箱，如 123@qq.com"></div>
+        <div class="行"><label>SMTP 密码</label><input type="password" id="邮件密码" placeholder="QQ/163 是「授权码」，不是邮箱登录密码"><button type="button" data-切换密码="邮件密码">显示</button></div>
+        <div class="行"><label>发件人</label><input type="text" id="邮件发件人" placeholder="留空则同 SMTP 用户名"></div>
+      </fieldset>
     </fieldset>
   </section>
 
@@ -130,6 +139,8 @@
     主机: 'MySQL主机', 端口: 'MySQL端口', 用户: 'MySQL用户',
     密码: 'MySQL密码', 库名: 'MySQL库名',
     JWT密钥: 'JWT密钥', 预置管理员口令: '预置口令',
+    邮件主机: '邮件主机', 邮件端口: '邮件端口', 邮件用户: '邮件用户',
+    邮件密码: '邮件密码', 邮件发件人: '邮件发件人',
   };
 
   function 读表单() {

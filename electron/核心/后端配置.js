@@ -50,6 +50,22 @@ function 构建后端环境(基础环境, 设置 = {}, 选项 = {}) {
     env.AUTH_ENABLED = 'true';
     if (设置.JWT密钥) env.JWT_SECRET_KEY = String(设置.JWT密钥);
     if (设置.预置管理员口令) env.SEED_ADMIN_PASSWORD = String(设置.预置管理员口令);
+
+    // 阶段七十九：邮件服务（SMTP）。只有填了主机才注入——空主机时后端走 dry-run，
+    // 验证码只打日志但界面会如实告知「演示环境未开启邮件」，不会假装发送成功。
+    // 发件人缺省回落成用户名：后端 SMTP_FROM 为空时本来就是 `SMTP_FROM or SMTP_USER`，
+    // 这里显式补一次是为了让 env 自解释，排查时不用再翻后端源码。
+    const 邮件 = 设置.邮件服务 || {};
+    const 邮件主机 = String(邮件.主机 || '').trim();
+    if (邮件主机) {
+      env.SMTP_HOST = 邮件主机;
+      env.SMTP_PORT = String(邮件.端口 || 465);
+      env.SMTP_USER = String(邮件.用户 || '').trim();
+      env.SMTP_PASS = String(邮件.密码 || '');
+      env.SMTP_FROM = String(邮件.发件人 || '').trim() || env.SMTP_USER;
+      // 显式关掉 dry-run：用户既然配了主机，就是想让信真的发出去
+      env.SMTP_DRY_RUN = 'false';
+    }
   }
 
   return env;
