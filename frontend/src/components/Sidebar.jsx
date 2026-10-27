@@ -15,10 +15,10 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
-import { Database, Zap, BarChart3, LayoutDashboard, GitCompare, Shield, ChevronLeft, ChevronRight, LogOut, X, UserRoundPen, MessageSquareHeart, Moon, Sun, Search } from 'lucide-react';
+import { Database, Zap, BarChart3, LayoutDashboard, GitCompare, Shield, ChevronLeft, ChevronRight, LogOut, X, UserRoundPen, MessageSquareHeart, Moon, Sun, Search, Sparkles } from 'lucide-react';
 import { useApp } from '../AppContext';
 import { submitFeedback, globalSearch } from '../api';
-import { 取模式, 过滤侧栏项, 模式 } from '../utils/capabilities';
+import { 取模式, 设模式, 过滤侧栏项, 模式 } from '../utils/capabilities';
 
 const navItems = [
   { to: '/data', icon: Database, label: '数据管理' },
@@ -108,7 +108,15 @@ export default function Sidebar({ collapsed, onToggle }) {
   // 这里是唯一的消费点——侧栏按模式过滤，不在每个页面各判一次。
   // 基础版收掉「对比分析 / 图表看板」这类术语入口：对比能力仍从数据管理页的
   // 「对比这几份」进入（那个入口不需要先懂术语），看板由报表页「生成看板」带入。
+  // 阶段八十二：模式要能「就地切换」——原来只有账号设置页里的两张卡，
+  // 位置太深，用户压根不知道有专业版这回事。这里加一个显式入口。
+  // 切换后整页重载：全站能力门都读 localStorage，重载才能保证没有
+  // 「侧栏变了、页面还是旧的」这种半应用中间态；这是模式切换，不是日常操作。
   const 当前模式 = 取模式();
+  const 切到专业版 = () => {
+    设模式(模式.专业版);
+    window.location.reload();
+  };
   const 可见菜单 = useMemo(() => {
     const 普通 = 过滤侧栏项(navItems, 当前模式);
     // 管理后台是**权限**门槛而不是模式门槛：管理员在基础版里也要能进，
@@ -219,6 +227,22 @@ export default function Sidebar({ collapsed, onToggle }) {
         ))}
       </nav>
 
+      {/* 阶段八十二：专业版显式入口。基础版不藏能力，只把「需要判断力的选项」收起来，
+          所以要在侧栏明确告诉用户"还有一层"。折叠态不显示（w-14 塞不下文字）。
+          切回基础版仍在「账号设置 → 产品模式」两张卡里——双向都保留。 */}
+      {!collapsed && 当前模式 === 模式.基础版 && (
+        <button
+          onClick={切到专业版}
+          className="mx-2 mb-2 flex items-center gap-2 px-3 py-2 rounded-lg text-left text-xs text-slate-300 hover:text-white transition-all"
+          style={{ background: 'rgba(46,122,184,.16)', border: '1px solid rgba(74,138,194,.28)' }}
+          title="专业版：自己选模型、多智能体协同、模板与定时任务、高级清洗、看板血缘图"
+          aria-label="切换到专业版"
+        >
+          <Sparkles className="w-3.5 h-3.5 shrink-0 text-accent-soft" />
+          <span className="whitespace-nowrap">切换到专业版</span>
+        </button>
+      )}
+
       {/* User + Toggle 底部区域：用户信息、反馈入口、退出、折叠 */}
       <div className="p-2 border-t border-white/[0.06] space-y-1">
         <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg">
@@ -233,7 +257,7 @@ export default function Sidebar({ collapsed, onToggle }) {
             {/* 阶段七十四 · C：把当前模式显式摆出来。用户切错了要有迹可循，
                 不能让他以为"功能丢了"。折叠时 tooltip 仍能说明。 */}
             {!collapsed && (
-              <p className="text-[10px] text-slate-500 whitespace-nowrap" title="在「账号设置 → 产品模式」里切换">
+              <p className="text-[10px] text-slate-500 whitespace-nowrap" title="在「账号设置 → 产品模式」里可切回基础版">
                 {当前模式 === 模式.基础版 ? '基础模式' : '专业模式'}
               </p>
             )}

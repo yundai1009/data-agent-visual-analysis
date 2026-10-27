@@ -173,7 +173,13 @@ export default function Analysis() {
         </div>
         <div className="flex items-center justify-between px-5 py-3 bg-gray-50/80 border-t border-gray-100 rounded-b-xl">
           <div className="flex items-center gap-3 flex-wrap">
-            <LLMConfig />
+            {/* 阶段八十二：基础版漏了这两处专业控件——「+ AI 模型」按钮与四个模板
+                快捷词一直无条件渲染，用户看到它们就以为自己进的是专业版（真实反馈：
+                「我不是想要一开始点进去是基础版吗？为什么点进去直接就是专业版？」）。
+                能力表里 '模型选择' 与 '模板' 在基础版都是 false，所以这里必须跟表走，
+                不要再单独写条件——规则只有 utils/capabilities.js 一处。 */}
+            {有能力('模型选择') && <LLMConfig />}
+            {有能力('模板') && (
             <div className="hidden sm:flex gap-1.5 flex-wrap">
               {templates.map((t) => (
                 <span key={t.label} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-xs text-gray-500 cursor-pointer hover:bg-gray-100 hover:text-gray-700 transition-all border border-gray-200"
@@ -182,6 +188,7 @@ export default function Analysis() {
                 </span>
               ))}
             </div>
+            )}
           </div>
           <button disabled={generating}
             className="flex items-center gap-2 px-5 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-deep transition-all active:scale-[.98] disabled:opacity-50"

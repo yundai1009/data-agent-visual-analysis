@@ -342,3 +342,46 @@ describe('Analysis 模型下拉（阶段七十四 A3）', () => {
     expect(mockState.state.setSelectedModel).toHaveBeenCalledWith('glm-4-plus');
   });
 });
+
+// ---- 阶段八十二：基础版必须真的「基础」 ----
+// 真实反馈：「我不是想要一开始点进去是基础版吗？为什么我点进去直接就是专业版？」
+// 查下来默认模式确实是 basic（localStorage 无 daa_mode），但页面上仍摆着
+// 「+ AI 模型」与四个模板快捷词——两处都是无条件渲染，没跟能力表走。
+// 于是"基础版"在视觉上和专业版没有差别，用户当然认为自己在专业版。
+// 这两条锁住「基础版不出现专业控件」，不是锁文案。
+describe('Analysis 基础版收起专业控件（阶段八十二）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // 不给 ?mode=pro，也不写 localStorage → 取模式() 落到 默认模式 = 基础版
+    window.history.replaceState({}, '', '/');
+    localStorage.clear();
+    vi.mocked(fetchLLMProviders).mockResolvedValue({ providers: [] });
+    Object.assign(mockState.state, {
+      generating: false,
+      error: '',
+      advice: '',
+      liveSteps: [],
+      liveError: '',
+      liveDone: null,
+      dataset: { 数据集ID: 'd1', 文件名: '销售.csv' },
+      fields: [],
+    });
+  });
+
+  it('基础版不出现「+ AI 模型」按钮与模板快捷词', () => {
+    renderPage();
+    expect(screen.queryByText('+ AI 模型')).not.toBeInTheDocument();
+    expect(screen.queryByText('占比分布')).not.toBeInTheDocument();
+    expect(screen.queryByText('交叉分析')).not.toBeInTheDocument();
+    // 主链路必须还在：输入框与「开始分析」不因为收控件而消失
+    expect(screen.getByText('开始分析')).toBeInTheDocument();
+  });
+
+  it('?mode=pro 时两处控件都回来（同一份能力表，只改模式）', () => {
+    window.history.replaceState({}, '', '/?mode=pro');
+    renderPage();
+    expect(screen.getByText('+ AI 模型')).toBeInTheDocument();
+    expect(screen.getByText('占比分布')).toBeInTheDocument();
+    expect(screen.getByText('交叉分析')).toBeInTheDocument();
+  });
+});
