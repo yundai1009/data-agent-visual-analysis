@@ -29,6 +29,9 @@ export const chartMap = {
 // 筛选操作列表（阶段 29）
 export const 筛选操作列表 = ['等于', '不等于', '包含', '大于', '大于等于', '小于', '小于等于', '为空', '不为空'];
 
+// 阶段八十四（第 13 项）：需求输入草稿键——全局单键，切换页面后回到分析页可恢复
+const 草稿键 = 'daa_nl_draft';
+
 export default function useAnalysis() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -41,7 +44,11 @@ export default function useAnalysis() {
   const 带回报表标题 = location.state?.上一报表标题 || '';
   const { dataset } = useApp();
   // 表单状态：自然语言输入 / 图表类型 / 生成中标记
-  const [nlInput, setNlInput] = useState('');
+  // 阶段八十四（第 13 项）：需求输入草稿跨页保存——输到一半切到别的页面，回到
+  // 分析页时原文还在；生成成功后不主动清，保留用户意图。
+  const [nlInput, setNlInput] = useState(() => {
+    try { return localStorage.getItem(草稿键) || ''; } catch { return ''; }
+  });
   const [chartType, setChartType] = useState('auto');
   const [generating, setGenerating] = useState(false);
   // 高级配置：X/Y 轴、分组字段、聚合方式（空值 = 交给后端自动决定）
@@ -95,6 +102,12 @@ export default function useAnalysis() {
   // F-S4：并发守卫
   const generatingRef = useRef(false);
   const [followUp, setFollowUp] = useState('');
+
+  // 阶段八十四（第 13 项）：草稿持久化——输入变化即写 localStorage，
+  // 切页/重新进入分析页都能恢复。（隐私模式/配额满时静默忽略）
+  useEffect(() => {
+    try { localStorage.setItem(草稿键, nlInput); } catch { /* ignore */ }
+  }, [nlInput]);
 
   // 从数据集画像里拆出字段分类
   const profile = dataset?.数据画像;

@@ -105,6 +105,7 @@ _建表DDL: List[str] = [
         `user_id`      VARCHAR(255) NOT NULL,
         `name`         VARCHAR(255) NOT NULL,
         `report_ids`   LONGTEXT NOT NULL,
+        `layout`       LONGTEXT,
         `created_at`   VARCHAR(64) NOT NULL,
         `updated_at`   VARCHAR(64) NOT NULL,
         PRIMARY KEY (`dashboard_id`)
@@ -389,6 +390,18 @@ def _确保大小写敏感列(cur, 表: str, 列: str) -> None:
     logger.info("MySQL schema 升级：%s.%s collation → utf8mb4_bin（大小写敏感）", 表, 列)
 
 
+def _确保新增文本列(cur, 表: str, 列: str) -> None:
+    """阶段八十四：幂等给既有表补一列 TEXT（列不存在才 ALTER ADD COLUMN）。
+
+    CREATE TABLE IF NOT EXISTS 不会给已存在的表加列，故老库必须走 ALTER；
+    用 information_schema 判断列是否存在，避免 MySQL 1060 duplicate column。
+    """
+    if _列信息(cur, 表, 列) is not None:
+        return
+    cur.execute(f"ALTER TABLE `{表}` ADD COLUMN `{列}` LONGTEXT")
+    logger.info("MySQL schema 升级：%s 新增列 %s LONGTEXT", 表, 列)
+
+
 def _确保索引(cur, 表: str, 索引名: str, 列片段: str, 唯一: bool) -> None:
     cur.execute(
         "SELECT COUNT(*) FROM information_schema.STATISTICS "
@@ -436,4 +449,6 @@ def 初始化数据库() -> None:
                     _确保时间列(cur, 表, 列)
             for 表, 索引名, 列片段, 唯一 in _索引:
                 _确保索引(cur, 表, 索引名, 列片段, 唯一)
+            # 阶段八十四：dashboards 自由画布布局列（老库补列；新库已由 DDL 带出）
+            _确保新增文本列(cur, "dashboards", "layout")
     logger.info("MySQL 数据库已初始化/升级（17 张业务表）")

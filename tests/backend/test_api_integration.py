@@ -693,6 +693,37 @@ def test_看板CRUD与隔离(client):
     assert client.get(f"/dashboards/{dbid}", headers=h).status_code == 404
 
 
+def test_看板自由画布布局往返(client):
+    """阶段八十四：新建带布局 → 详情回显布局 → 更新布局 → 无布局老看板回落空对象。"""
+    tok = _register(client, "layoutuser")
+    did = _did(_upload(client, tok).json())
+    h = {"Authorization": f"Bearer {tok}"}
+    r = client.post("/reports/generate", json={"数据集ID": did, "分析需求": "按地区统计"}, headers=h)
+    rid = r.json()["报表ID"]
+
+    layout = {rid: {"x": 120, "y": 80, "w": 480, "h": 320}}
+    r = client.post("/dashboards", json={"名称": "画布看板", "报表ID列表": [rid], "布局": layout}, headers=h)
+    assert r.status_code == 200, r.text
+    dbid = r.json()["看板ID"]
+
+    body = client.get(f"/dashboards/{dbid}", headers=h).json()
+    assert body["布局"] == layout, "详情应回显写入的布局"
+
+    # 更新布局（拖到新坐标）
+    layout2 = {rid: {"x": 40, "y": 200, "w": 600, "h": 360}}
+    r = client.put(f"/dashboards/{dbid}", json={"名称": "画布看板", "报表ID列表": [rid], "布局": layout2}, headers=h)
+    assert r.status_code == 200
+    body = client.get(f"/dashboards/{dbid}", headers=h).json()
+    assert body["布局"] == layout2
+
+    # 无布局新建 → 详情回落 {}（不崩、不 None）
+    r = client.post("/dashboards", json={"名称": "网格看板", "报表ID列表": [rid]}, headers=h)
+    assert r.status_code == 200
+    dbid2 = r.json()["看板ID"]
+    body = client.get(f"/dashboards/{dbid2}", headers=h).json()
+    assert body["布局"] == {}
+
+
 def test_管理后台统计与权限(client):
     """管理后台：种子管理员可看统计与用户列表（脱敏）；普通用户 403。"""
     # 普通用户 → 403

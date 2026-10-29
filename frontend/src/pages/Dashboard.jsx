@@ -9,7 +9,7 @@
 // 删除它会怎样：用户失去"把分析结果汇总成一页"的能力。
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Plus, Trash2, Pencil, ExternalLink, X, ImageOff, ChevronLeft, ChevronRight, LayoutGrid, Network } from 'lucide-react';
+import { LayoutDashboard, Plus, Trash2, Pencil, ExternalLink, X, ImageOff, ChevronLeft, ChevronRight, LayoutGrid, Network, Move } from 'lucide-react';
 import { listDashboards, getDashboard, createDashboard, updateDashboard, deleteDashboard, listReports, listDatasets } from '../api';
 import EChartsChart from '../components/EChartsChart';
 import LineageGraph from '../components/LineageGraph';
@@ -48,8 +48,8 @@ export default function Dashboard() {
   const [newName, setNewName] = useState('');
   const [selectedIds, setSelectedIds] = useState([]);
 
-  // 阶段 六十：网格 ↔ 关系 双视图 + 血缘数据
-  const [视图, set视图] = useState('grid');            // 'grid' | 'lineage'
+  // 阶段 六十：网格 ↔ 关系 双视图 + 血缘数据；阶段八十四：自由画布视图
+  const [视图, set视图] = useState('grid');            // 'grid' | 'lineage' | 'canvas'
   const [数据集列表, set数据集列表] = useState([]);     // listDatasets(200).数据集列表
   const [血缘提示, set血缘提示] = useState('');         // 数据集元信息加载失败时的降级提示
   const [选中节点ID, set选中节点ID] = useState('');
@@ -73,7 +73,9 @@ export default function Dashboard() {
     try {
       const res = await getDashboard(id);
       if (loadSeqRef.current !== seq) return;
-      setDetail(res);
+      // 阶段八十四：layout 兼容旧看板（后端已保证是对象，这里再兜一层）
+      const 布局 = (res?.布局 && typeof res.布局 === 'object') ? res.布局 : {};
+      setDetail({ ...res, 布局 });
     } catch (e) {
       if (loadSeqRef.current !== seq) return;
       setError('看板详情加载失败：' + (e.message || e));
@@ -131,7 +133,7 @@ export default function Dashboard() {
     const existed = new Set((detail?.报表列表 || []).map((r) => r.报表ID));
     const merged = [...existed, ...selectedIds.filter((id) => !existed.has(id))];
     try {
-      await updateDashboard(currentId, detail.名称, merged);
+      await updateDashboard(currentId, detail.名称, merged, detail.布局);
       setSelectedIds([]);
       setShowAdd(false);
       await loadDetail(currentId);
@@ -144,13 +146,118 @@ export default function Dashboard() {
   const handleRemove = async (reportId) => {
     if (!currentId || !detail) return;
     const ids = (detail.报表列表 || []).map((r) => r.报表ID).filter((id) => id !== reportId);
+    // 同步清掉该报表的布局（否则留下悬空坐标）
+    const nextLayout = { ...(detail.布局 || {}) };
+    delete nextLayout[reportId];
     try {
-      await updateDashboard(currentId, detail.名称, ids);
+      await updateDashboard(currentId, detail.名称, ids, nextLayout);
       await loadDetail(currentId);
     } catch (e) {
       setError('移除报表失败：' + (e.message || e));
     }
   };
+
+  // 阶段八十四：自由画布——拖拽移动 / 右下角缩放，松手落库布局
+  const [画布拖拽, set画布拖拽] = useState(null);   // { id, 起点X, 起点Y, 初始X, 初始Y, 初始W, 初始H, 模式 }
+  const [画布布局, set画布布局] = useState(null);    // 拖拽过程中的实时布局（null = 未在拖拽）
+  const 画布布局Ref = useRef(null);                 // 同步的最新布局，避免 effect 闭包里的陈旧值
+
+  useEffect(() => { 画布布局Ref.current = 画布布局; }, [画布布局]);
+
+  const 默认尺寸 = (chartTypeKey) => {
+    const wide = new Set(['table', 'heatmap', 'sankey', 'sunburst', 'boxplot', 'treemap']);
+    return wide.has(chartTypeKey) ? { w: 720, h: 400 } : { w: 440, h: 320 };
+  };
+
+  const 当前布局 = () => 画布布局 || (detail?.布局 || {});
+
+  // 种子布局：进入画布视图时把「已存布局 + 自动网格」合并成一份完整坐标，
+  // 保证每张卡都有显式 {x,y,w,h}（否则只拖过的那张有坐标，其余卡会与它重叠）
+  const 种子布局 = () => {
+    const base = { ...(detail?.布局 || {}) };
+    (detail?.报表列表 || []).forEach((item, idx) => {
+      if (base[item.报表ID]) return;
+      const col = idx % 2;
+      const row = Math.floor(idx / 2);
+      const size = 默认尺寸(item.报表?.图表配置?.类型);
+      base[item.报表ID] = { x: col * (size.w + 24), y: row * (size.h + 24), w: size.w, h: size.h };
+    });
+    return base;
+  };
+
+  useEffect(() => {
+    if (视图 !== 'canvas' || !detail) return;
+    set画布布局(种子布局());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [视图, currentId]);
+
+  const 卡片位置 = (item) => {
+    const pos = 当前布局()[item.报表ID];
+    if (pos) return pos;
+    // 无布局：回落自动网格（按列表顺序，2 列）
+    const idx = (detail?.报表列表 || []).findIndex((r) => r.报表ID === item.报表ID);
+    const col = idx % 2;
+    const row = Math.floor((idx | 0) / 2);
+    const size = 默认尺寸(item.报表?.图表配置?.类型);
+    return { x: col * (size.w + 24), y: row * (size.h + 24), w: size.w, h: size.h };
+  };
+
+  const 落库布局 = async (nextLayout) => {
+    if (!currentId || !detail) return;
+    try {
+      await updateDashboard(currentId, detail.名称, (detail.报表列表 || []).map((r) => r.报表ID), nextLayout);
+      setDetail({ ...detail, 布局: nextLayout });
+    } catch (e) {
+      setError('保存画布布局失败：' + (e.message || e));
+    }
+  };
+
+  const handleCardMouseDown = (e, item) => {
+    if (视图 !== 'canvas') return;
+    e.preventDefault();
+    const pos = 卡片位置(item);
+    set画布拖拽({ id: item.报表ID, 起点X: e.clientX, 起点Y: e.clientY, 初始X: pos.x, 初始Y: pos.y, 初始W: pos.w, 初始H: pos.h, 模式: 'move' });
+  };
+
+  const handleResizeMouseDown = (e, item) => {
+    if (视图 !== 'canvas') return;
+    e.preventDefault();
+    e.stopPropagation();
+    const pos = 卡片位置(item);
+    set画布拖拽({ id: item.报表ID, 起点X: e.clientX, 起点Y: e.clientY, 初始X: pos.x, 初始Y: pos.y, 初始W: pos.w, 初始H: pos.h, 模式: 'resize' });
+  };
+
+  // 全局 mousemove / mouseup：拖拽与缩放都在 window 上跟手，避免卡片内 mouseleave 断流
+  useEffect(() => {
+    if (!画布拖拽) return;
+    const onMove = (e) => {
+      const dx = e.clientX - 画布拖拽.起点X;
+      const dy = e.clientY - 画布拖拽.起点Y;
+      const base = { ...(画布布局Ref.current || {}) };
+      const 原 = base[画布拖拽.id] || { x: 画布拖拽.初始X, y: 画布拖拽.初始Y, w: 画布拖拽.初始W, h: 画布拖拽.初始H };
+      let next;
+      if (画布拖拽.模式 === 'resize') {
+        next = { ...base, [画布拖拽.id]: { ...原, w: Math.max(240, 画布拖拽.初始W + dx), h: Math.max(180, 画布拖拽.初始H + dy) } };
+      } else {
+        next = { ...base, [画布拖拽.id]: { ...原, x: Math.max(0, 画布拖拽.初始X + dx), y: Math.max(0, 画布拖拽.初始Y + dy) } };
+      }
+      set画布布局(next);
+    };
+    const onUp = () => {
+      const finalLayout = 画布布局Ref.current || {};
+      set画布拖拽(null);
+      set画布布局(null);
+      落库布局(finalLayout);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [画布拖拽]);
+
 
   // 调整顺序（左移/右移），持久化到后端
   const handleMove = async (index, dir) => {
@@ -345,6 +452,14 @@ export default function Dashboard() {
               >
                 <Network className="w-3 h-3" /> 关系
               </button>
+              <button
+                title="自由画布（拖拽移动 / 右下角缩放）"
+                aria-pressed={视图 === 'canvas'}
+                onClick={() => set视图('canvas')}
+                className={`flex items-center gap-1 px-2.5 py-1.5 text-xs border-l border-gray-200 transition-all ${视图 === 'canvas' ? 'bg-accent text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+              >
+                <Move className="w-3 h-3" /> 画布
+              </button>
             </div>
             <button
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all"
@@ -492,6 +607,66 @@ export default function Dashboard() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* 阶段八十四：自由画布视图——绝对定位 + 拖拽移动 + 右下角缩放，松手落库 */}
+      {reports.length > 0 && 视图 === 'canvas' && (
+        <div
+          data-testid="canvas-view"
+          className="relative bg-white rounded-2xl shadow-[var(--shadow-card)] p-4 overflow-hidden"
+          style={{ minHeight: 520 }}
+        >
+          <div className="flex items-center gap-2 mb-3 text-[11px] text-gray-400">
+            <Move className="w-3.5 h-3.5 text-accent" />
+            <span>自由画布：拖拽卡片移动 · 右下角手柄缩放 · 布局自动保存</span>
+            <span className="ml-auto">未布局的卡片按顺序自动排布</span>
+          </div>
+          <div className="relative" style={{ minHeight: 440 }}>
+            {reports.map((item) => {
+              const pos = 卡片位置(item);
+              const cfg = item.报表?.图表配置 || {};
+              const chartTypeKey = cfg.类型 || 'bar';
+              const isDraggingCard = 画布拖拽?.id === item.报表ID;
+              return (
+                <div
+                  key={item.报表ID}
+                  data-report-id={item.报表ID}
+                  className={`absolute bg-white rounded-xl border border-gray-200 shadow-[var(--shadow-card)] overflow-hidden transition-shadow ${isDraggingCard ? 'z-20 ring-2 ring-accent/50 shadow-lg' : 'hover:shadow-[var(--shadow-card-lg)]'}`}
+                  style={{ left: pos.x, top: pos.y, width: pos.w, height: pos.h, cursor: 'grab' }}
+                >
+                  <div
+                    className="flex items-center gap-2 px-3 pt-2 select-none cursor-grab active:cursor-grabbing"
+                    onMouseDown={(e) => handleCardMouseDown(e, item)}
+                  >
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent-soft text-accent font-medium shrink-0">{item.图表类型 || '图表'}</span>
+                    <p className="text-[11px] font-medium text-gray-700 truncate flex-1">{item.标题}</p>
+                    <button
+                      title="查看完整报表"
+                      className="p-1 rounded hover:bg-gray-100 text-gray-300 hover:text-accent transition-colors shrink-0"
+                      onClick={(e) => { e.stopPropagation(); navigate(`/report/${item.报表ID}`); }}
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                    </button>
+                  </div>
+                  <div data-card-body className="absolute inset-x-2 bottom-6 top-8">
+                    {chartTypeKey === 'table' ? (
+                      <p className="text-xs text-gray-400 text-center py-8">表格类报表请到详情页查看</p>
+                    ) : (
+                      <EChartsChart key={item.报表ID} chartType={chartTypeKey} chartConfig={cfg} height={Math.max(140, pos.h - 56)} />
+                    )}
+                  </div>
+                  <div
+                    title="拖拽右下角缩放"
+                    className="absolute bottom-1 right-1 w-4 h-4 cursor-nwse-resize text-gray-300 hover:text-accent"
+                    onMouseDown={(e) => handleResizeMouseDown(e, item)}
+                  >
+                    <svg viewBox="0 0 16 16" className="w-full h-full" fill="currentColor"><path d="M12 4v5.5L7.5 5H13V4z" transform="rotate(45 9 8)" /><path d="M14 10h-1v2h-2v1h3v-3z" /></svg>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

@@ -303,7 +303,9 @@ export default function Analysis() {
               </button>
             )}
             {/* 阶段 53 · B5：保存模板入口一键可达（藏太深，用户找不到） */}
-            {liveDone && (
+            {/* 阶段 84 · C：模板保存是专业版能力（能力表 模板:{basic:false}）。
+                基础版不显示快捷入口，否则基础/专业在视觉上没有区别。 */}
+            {liveDone && 有能力('模板') && (
               <button
                 onClick={openTemplates}
                 className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-accent/30 text-accent text-xs font-medium hover:bg-accent-soft transition-all"
@@ -364,7 +366,8 @@ export default function Analysis() {
 
       {/* 高级面板 */}
       {showAdvanced && (<>
-        {/* 模板 */}
+        {/* 模板（专业版：收藏分析配置一键复用 / 定时执行） */}
+        {有能力('模板') && (
         <div className="mt-4 border border-gray-200 rounded-xl p-3 bg-gray-50/60">
           <div className="flex items-center justify-between">
             <button className="flex items-center gap-1 text-xs font-semibold text-gray-600 hover:text-accent transition-colors"
@@ -404,8 +407,10 @@ export default function Analysis() {
             </div>
           )}
         </div>
+        )}
 
-        {/* 定时任务 */}
+        {/* 定时任务（专业版：模板 + cron 到点自动生成） */}
+        {有能力('定时任务') && (
         <div className="mt-3 border-t border-gray-100 pt-3">
           <div className="flex items-center justify-between mb-2">
             <p className="text-xs font-semibold text-gray-500">定时执行 <span className="text-[10px] text-gray-400 font-normal">（模板 + cron，到点自动生成到报表历史）</span></p>
@@ -445,6 +450,7 @@ export default function Analysis() {
             </div>
           )}
         </div>
+        )}
 
         {/* 模型 + Agent 模式 */}
         {/* 阶段七十四 · C：基础版把「选哪个模型」「单/多智能体」这类需要判断力的

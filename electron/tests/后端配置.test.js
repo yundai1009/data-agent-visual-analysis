@@ -44,6 +44,16 @@ test('真实认证缺密钥：不注入（后端自检会拒绝启动，属用�
   assert.ok(!('JWT_SECRET_KEY' in env));
 });
 
+test('真实认证：登录有效期默认 15 天（21600 分钟），关浏览器不丢登录态', () => {
+  const env = 构建后端环境(基础, { 认证模式: 'real', JWT密钥: 'k', 预置管理员口令: 'p' });
+  assert.strictEqual(env.JWT_EXPIRE_MINUTES, '21600');
+});
+
+test('真实认证：登录有效期可被设置覆盖', () => {
+  const env = 构建后端环境(基础, { 认证模式: 'real', JWT密钥: 'k', 预置管理员口令: 'p', 登录有效期分钟: 60 });
+  assert.strictEqual(env.JWT_EXPIRE_MINUTES, '60');
+});
+
 test('mysql + 真实认证组合', () => {
   const env = 构建后端环境(基础, {
     数据库: { 模式: 'mysql', 主机: '127.0.0.1', 用户: 'daa_app', 密码: 's', 库名: 'daa' },

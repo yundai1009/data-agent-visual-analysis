@@ -199,12 +199,17 @@ class 对比预览请求(BaseModel):
     来源轴: Optional[str] = Field(None, max_length=64)
 
 
-# 看板请求体（新建/更新）：名称 + 归属用户的报表ID列表。
+# 看板请求体（新建/更新）：名称 + 归属用户的报表ID列表 + 自由画布布局。
 class DashboardRequest(BaseModel):
-    """新建 / 更新看板：名称 + 归属用户的报表ID列表。"""
+    """新建 / 更新看板：名称 + 归属用户的报表ID列表 + 自由画布布局。
+
+    布局：报表ID → {x, y, w, h} 的像素整数坐标（阶段八十四「自由画布」视图用）。
+    为空 / None 时前端回落到自动网格，保证历史看板不崩。
+    """
 
     名称: str = Field(..., min_length=1, max_length=50)
     报表ID列表: list[str] = Field(default_factory=list, max_length=50)
+    布局: Optional[Dict[str, Any]] = None
 
 
 # 任务响应：任务中心列表/查询用的结构；结果可为空（任务未完成时）。

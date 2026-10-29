@@ -54,9 +54,11 @@ def 新建看板(
     payload: DashboardRequest,
     user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """新建看板（名称 + 报表ID列表）。"""
+    """新建看板（名称 + 报表ID列表 + 可选自由画布布局）。"""
     _校验报表归属(user["user_id"], payload.报表ID列表)
-    dashboard_id = dashboard_repo.保存看板(user["user_id"], payload.名称.strip(), payload.报表ID列表)
+    dashboard_id = dashboard_repo.保存看板(
+        user["user_id"], payload.名称.strip(), payload.报表ID列表, payload.布局
+    )
     return {"看板ID": dashboard_id, "名称": payload.名称.strip()}
 
 
@@ -95,6 +97,7 @@ def 看板详情(
         "看板ID": item["看板ID"],
         "名称": item["名称"],
         "创建时间": item["创建时间"],
+        "布局": item["布局"],
         "报表列表": reports,
     }
 
@@ -105,11 +108,13 @@ def 更新看板(
     payload: DashboardRequest,
     user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """更新看板（名称 + 报表ID列表），仅限归属用户。"""
+    """更新看板（名称 + 报表ID列表 + 可选布局），仅限归属用户。"""
     if not dashboard_repo.读取看板(user["user_id"], dashboard_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="看板不存在")
     _校验报表归属(user["user_id"], payload.报表ID列表)
-    ok = dashboard_repo.更新看板(user["user_id"], dashboard_id, payload.名称.strip(), payload.报表ID列表)
+    ok = dashboard_repo.更新看板(
+        user["user_id"], dashboard_id, payload.名称.strip(), payload.报表ID列表, payload.布局
+    )
     if not ok:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="看板不存在")
     return {"看板ID": dashboard_id, "名称": payload.名称.strip()}

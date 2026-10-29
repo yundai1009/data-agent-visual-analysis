@@ -225,6 +225,28 @@ describe('useAnalysis 智能分析 Hook', () => {
     expect(s[1]).toContain('月份');
   });
 
+  // ---- 阶段八十四（第 13 项）：需求输入跨页草稿保存 ----
+  it('草稿：初始值从 localStorage 恢复', () => {
+    localStorage.setItem('daa_nl_draft', '按地区看销售额占比');
+    const { result } = renderHook(() => useAnalysis(), { wrapper });
+    expect(result.current.nlInput).toBe('按地区看销售额占比');
+    localStorage.removeItem('daa_nl_draft');
+  });
+
+  it('草稿：输入变化即写 localStorage', () => {
+    const { result } = renderHook(() => useAnalysis(), { wrapper });
+    act(() => result.current.setNlInput('会员等级占比图'));
+    expect(localStorage.getItem('daa_nl_draft')).toBe('会员等级占比图');
+  });
+
+  it('草稿：localStorage 不可用时静默降级（不抛错）', () => {
+    const 原set = Storage.prototype.setItem;
+    Storage.prototype.setItem = () => { throw new Error('quota'); };
+    const { result } = renderHook(() => useAnalysis(), { wrapper });
+    expect(() => act(() => result.current.setNlInput('x'))).not.toThrow();
+    Storage.prototype.setItem = 原set;
+  });
+
   // ---- 阶段 53 · B7：定时任务创建反馈（成功/失败可区分、失败可读）----
   it('B7 创建定时任务成功：反馈含"已创建"且标记成功样式', async () => {
     const { result } = renderHook(() => useAnalysis(), { wrapper });

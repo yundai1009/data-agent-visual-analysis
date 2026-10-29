@@ -6,11 +6,15 @@
 #   1. 建 dashboards 表 + idx_dashboards_user_created_at(user_id, created_at) 索引。
 #   2. 保存/更新/删除/读取/列出看板五个对外函数全部按 user_id 过滤，越权即查不到；列出只回「报表数」，读详情才回 ID 列表。
 #   3. report_ids 存 JSON 数组文本，损坏数据由 _safe_loads 兜底而不是抛 500（M11）。
+#   4. 阶段八十四：layout 列（自由画布布局 JSON 对象，报表ID→{x,y,w,h}），老库 ALTER 补列、损坏兜底为空对象。
 # 【为什么这么做】
 #   - 用 JSON 数组列而不是关联表：成员有序、随看板整体读写、两种后端都能存文本；代价是不能 JOIN，详情接口改用 批量读取报表 一次取回消除 N+1，删报表也不反查清理（一份报表可属多看板），悬空引用由路由读不到就跳过。
+#   - 布局与 report_ids 分两列而不是塞进一个 JSON：布局是可选的展示信息，缺失时应回落自动网格，
+#     且更新布局不该逼迫前端重传报表顺序；两列独立更新语义更清楚。
 # 【关键约定与坑】
 #   - user_id 过滤是硬约定；更新与删除靠 cur.rowcount 判断成败，路由据此统一转 404。
 #   - 初始化看板表 未做进程级缓存（每次跑 DDL 与索引检查），与 report_repo 的 Fix E1 不同；连接走 存储/连接._get_conn，写操作加 backend.写锁。
+#   - ALTER 补列在 sqlite 用 try/except 兜住（列已存在会抛 OperationalError）；MySQL 由 mysql_repo.初始化数据库 统一升级，这里直接 return。
 # ============================================================
 
 from __future__ import annotations
@@ -33,7 +37,7 @@ def _now_iso() -> str:
 
 
 def 初始化看板表() -> None:
-    """幂等创建 dashboards 表。"""
+    """幂等创建 dashboards 表 + 补 layout 列（阶段八十四自由画布）。"""
     if _后端() == "mysql":
         return  # 阶段 54-8：表结构由 mysql_repo.初始化数据库 统一管理（sqlite DDL 在 MySQL 下语义校验即报错）
     with _get_conn() as conn:
@@ -49,38 +53,52 @@ def 初始化看板表() -> None:
             )
             """
         )
+        # 阶段八十四：老库补 layout 列（CREATE IF NOT EXISTS 不会给已存在表加列）。
+        # sqlite 列已存在时 ALTER 抛 OperationalError，吞掉即可幂等。
+        try:
+            conn.execute("ALTER TABLE dashboards ADD COLUMN layout TEXT")
+        except Exception as e:  # sqlite3.OperationalError: duplicate column name
+            if "duplicate column" not in str(e).lower() and "already exists" not in str(e).lower():
+                logger.debug("看板表 layout 列检查跳过：%s", e)
         _sql = _建索引SQL(_后端(), "idx_dashboards_user_created_at", "dashboards", "(user_id, created_at)")
         if _sql:
             conn.execute(_sql)
 
 
-def 保存看板(user_id: str, name: str, report_ids: List[str]) -> str:
-    """新建看板，返回 dashboard_id。"""
+def 保存看板(user_id: str, name: str, report_ids: List[str], layout: Optional[Dict[str, Any]] = None) -> str:
+    """新建看板（含可选自由画布布局），返回 dashboard_id。"""
     初始化看板表()
     dashboard_id = uuid.uuid4().hex
     now = _now_iso()
+    layout_json = json.dumps(layout or {}, ensure_ascii=False, default=str)
     with _write_lock, _get_conn() as conn:
         conn.execute(
             """
-            INSERT INTO dashboards (dashboard_id, user_id, name, report_ids, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO dashboards (dashboard_id, user_id, name, report_ids, layout, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (dashboard_id, user_id, name,
-             json.dumps(report_ids, ensure_ascii=False), now, now),
+             json.dumps(report_ids, ensure_ascii=False), layout_json, now, now),
         )
     logger.info("保存看板 %s（用户 %s，%d 张报表）", dashboard_id, user_id, len(report_ids))
     return dashboard_id
 
 
-def 更新看板(user_id: str, dashboard_id: str, name: str, report_ids: List[str]) -> bool:
-    """更新已有看板（名称 + 报表列表），仅限归属用户。"""
+def 更新看板(user_id: str, dashboard_id: str, name: str, report_ids: List[str],
+             layout: Optional[Dict[str, Any]] = None) -> bool:
+    """更新已有看板（名称 + 报表列表 + 布局），仅限归属用户。"""
     初始化看板表()
     now = _now_iso()
+    sets = ["name = ?", "report_ids = ?", "updated_at = ?"]
+    params: List[Any] = [name, json.dumps(report_ids, ensure_ascii=False), now]
+    if layout is not None:
+        sets.insert(2, "layout = ?")
+        params.insert(2, json.dumps(layout, ensure_ascii=False, default=str))
+    params.extend([dashboard_id, user_id])
     with _write_lock, _get_conn() as conn:
         cur = conn.execute(
-            "UPDATE dashboards SET name = ?, report_ids = ?, updated_at = ? "
-            "WHERE dashboard_id = ? AND user_id = ?",
-            (name, json.dumps(report_ids, ensure_ascii=False), now, dashboard_id, user_id),
+            f"UPDATE dashboards SET {', '.join(sets)} WHERE dashboard_id = ? AND user_id = ?",
+            params,
         )
         updated = cur.rowcount > 0
     if updated:
@@ -118,11 +136,11 @@ def _safe_loads(raw: str, fallback: Any = None) -> Any:
 
 
 def 读取看板(user_id: str, dashboard_id: str) -> Optional[Dict[str, Any]]:
-    """读取一份看板（仅限归属用户）。"""
+    """读取一份看板（仅限归属用户），含自由画布布局（缺失/损坏返空对象）。"""
     初始化看板表()
     with _get_conn() as conn:
         row = conn.execute(
-            "SELECT dashboard_id, name, report_ids, created_at "
+            "SELECT dashboard_id, name, report_ids, layout, created_at "
             "FROM dashboards WHERE dashboard_id = ? AND user_id = ?",
             (dashboard_id, user_id),
         ).fetchone()
@@ -133,6 +151,7 @@ def 读取看板(user_id: str, dashboard_id: str) -> Optional[Dict[str, Any]]:
         "名称": row["name"],
         # M11：损坏 JSON 兜底为空列表
         "报表ID列表": _safe_loads(row["report_ids"], []),
+        "布局": _safe_loads(row["layout"], {}) or {},
         "创建时间": row["created_at"],
     }
 

@@ -465,17 +465,17 @@ export async function getDashboard(dashboardId) {
   return request(`/dashboards/${dashboardId}`);
 }
 
-export async function createDashboard(name, reportIds) {
+export async function createDashboard(name, reportIds, layout) {
   return request('/dashboards/', {
     method: 'POST',
-    body: JSON.stringify({ 名称: name, 报表ID列表: reportIds }),
+    body: JSON.stringify({ 名称: name, 报表ID列表: reportIds, ...(layout ? { 布局: layout } : {}) }),
   });
 }
 
-export async function updateDashboard(dashboardId, name, reportIds) {
+export async function updateDashboard(dashboardId, name, reportIds, layout) {
   return request(`/dashboards/${dashboardId}`, {
     method: 'PUT',
-    body: JSON.stringify({ 名称: name, 报表ID列表: reportIds }),
+    body: JSON.stringify({ 名称: name, 报表ID列表: reportIds, ...(layout ? { 布局: layout } : {}) }),
   });
 }
 
