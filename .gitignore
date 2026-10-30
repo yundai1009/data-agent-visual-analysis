@@ -89,6 +89,8 @@ data/*.xlsx
 # 10. 日志 & 覆盖率
 # ──────────────────────────────────────────────
 *.log
+# 后端运行日志（uvicorn 启动告警等，start 脚本重定向产物；不属于源码）
+*.err
 .coverage
 htmlcov/
 coverage.xml
