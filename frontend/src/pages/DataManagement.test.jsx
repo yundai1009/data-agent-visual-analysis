@@ -188,7 +188,7 @@ describe('DataManagement 数据管理页', () => {
   // 这里锁住：勾 2 份 → 出现入口 → 点它带 ID 跳到 /compare?datasets=d1,d2。
   describe('勾选多份数据 → 直接对比（阶段七十四 B）', () => {
     const 跳转记录 = { 搜索串: '' };
-    function 记地址() {
+    function LocationProbe() {
       const 地址 = useLocation();
       跳转记录.搜索串 = 地址.search;
       return null;
@@ -198,7 +198,7 @@ describe('DataManagement 数据管理页', () => {
       mockApi.listDatasets.mockResolvedValue(样本列表);
       render(
         <MemoryRouter>
-          <记地址 />
+          <LocationProbe />
           <DataManagement />
         </MemoryRouter>
       );

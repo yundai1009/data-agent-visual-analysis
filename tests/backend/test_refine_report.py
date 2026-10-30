@@ -243,3 +243,23 @@ def test_重算_切非饼_清除残留名称值():
     新, _ = refine_report.重算图表数据(画像, df, {"动作": "切图表类型", "图表类型": "柱状图"}, 原)
     assert 新["类型"] == "bar"
     assert "名称" not in 新 and "值" not in 新
+
+
+def test_阶段85_允许图表类型与生成器对齐():
+    # 阶段八十五：精细化编辑可切类型必须与 report_generator.图表类型映射 对齐
+    from 后端_核心.report_generator import 图表类型映射
+    assert refine_report._允许图表类型 == {k for k in 图表类型映射 if k != "自动推荐"}
+
+
+def test_阶段85_解析_支持雷达等扩展类型():
+    import pandas as pd
+    df = pd.DataFrame({"行业": ["A", "B"], "金额": [1, 3]})
+    画像 = _测试画像(df)
+    for 中文 in ("雷达图", "热力图", "漏斗图", "桑基图", "箱线图", "瀑布图", "旭日图", "K线图", "词云图", "环形图", "堆积柱状图", "表格"):
+        编辑, 需确认, 错误 = refine_report.解析编辑指令(f"切换成{中文}", 画像)
+        assert 编辑 is not None and 编辑["动作"] == "切图表类型" and 编辑["图表类型"] == 中文, 中文
+
+
+def test_阶段85_校验_拒绝不存在类型():
+    ok, 原因 = refine_report.编辑校验({"动作": "切图表类型", "图表类型": "不存在的图"}, {"字段列表": ["行业"]})
+    assert ok is False and "不支持" in 原因

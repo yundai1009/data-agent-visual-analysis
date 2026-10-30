@@ -724,6 +724,58 @@ def test_看板自由画布布局往返(client):
     assert body["布局"] == {}
 
 
+def test_看板导出ZIP(client):
+    """阶段八十五：看板导出——把看板内报表打包成 ZIP（xlsx/csv、归属校验、空看板 400）。"""
+    import io
+    import zipfile
+
+    tok = _register(client, "boardexp")
+    did = _did(_upload(client, tok).json())
+    h = {"Authorization": f"Bearer {tok}"}
+    rids = []
+    for 需求 in ("按地区统计", "按月份统计"):
+        r = client.post("/reports/generate", json={"数据集ID": did, "分析需求": 需求}, headers=h)
+        assert r.status_code == 200
+        rids.append(r.json()["报表ID"])
+    r = client.post("/dashboards", json={"名称": "销售月报", "报表ID列表": rids}, headers=h)
+    assert r.status_code == 200, r.text
+    dbid = r.json()["看板ID"]
+
+    # xlsx：一个 ZIP，内含两份 xlsx
+    r = client.get(f"/dashboards/{dbid}/export?format=xlsx", headers=h)
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("application/zip")
+    cd = r.headers["content-disposition"]
+    assert "filename*=UTF-8''" in cd, f"应带 RFC5987 文件名: {cd}"
+    zf = zipfile.ZipFile(io.BytesIO(r.content))
+    names = zf.namelist()
+    assert len(names) == 2 and all(n.endswith(".xlsx") for n in names), names
+    assert zf.read(names[0])[:2] == b"PK", "xlsx 应是合法 zip 容器"
+
+    # csv：带 UTF-8 BOM（Excel 直接打开不乱码）
+    r = client.get(f"/dashboards/{dbid}/export?format=csv", headers=h)
+    assert r.status_code == 200
+    zf = zipfile.ZipFile(io.BytesIO(r.content))
+    names = zf.namelist()
+    assert len(names) == 2 and all(n.endswith(".csv") for n in names), names
+    assert zf.read(names[0]).startswith(b"\xef\xbb\xbf"), "csv 应为 utf-8-sig（含 BOM）"
+
+    # 非法格式 → 422（Query pattern 拦截）
+    assert client.get(f"/dashboards/{dbid}/export?format=pdf", headers=h).status_code == 422
+
+    # 空看板 → 400（不是 500，也不吐空 ZIP）
+    r = client.post("/dashboards", json={"名称": "空看板", "报表ID列表": []}, headers=h)
+    assert r.status_code == 200, r.text
+    empty_id = r.json()["看板ID"]
+    r = client.get(f"/dashboards/{empty_id}/export", headers=h)
+    assert r.status_code == 400 and "空" in r.json()["message"]
+
+    # 跨用户 → 404（不泄露存在性）
+    tok_b = _register(client, "boardexp2")
+    h_b = {"Authorization": f"Bearer {tok_b}"}
+    assert client.get(f"/dashboards/{dbid}/export", headers=h_b).status_code == 404
+
+
 def test_管理后台统计与权限(client):
     """管理后台：种子管理员可看统计与用户列表（脱敏）；普通用户 403。"""
     # 普通用户 → 403

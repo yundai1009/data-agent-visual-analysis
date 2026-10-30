@@ -23,7 +23,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 
 from api.contracts import DashboardRequest
 from api.dependencies import get_current_user
@@ -100,6 +101,70 @@ def 看板详情(
         "布局": item["布局"],
         "报表列表": reports,
     }
+
+
+@router.get("/{dashboard_id}/export")
+def 导出看板(
+    dashboard_id: str,
+    format: str = Query("xlsx", pattern="^(xlsx|csv)$"),
+    user: dict = Depends(get_current_user),
+) -> StreamingResponse:
+    """阶段八十五：看板导出——把当前看板内全部报表打包成一个 ZIP（仅限归属用户）。
+
+    与 `GET /reports/export-all`（导出全部报表）的区别：只打包**当前看板选中的报表**。
+    复用 `reports._导出格式化行` / `_导出并发配额`，导出格式与批量导出完全一致。
+    """
+    item = dashboard_repo.读取看板(user["user_id"], dashboard_id)
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="看板不存在")
+    report_ids = item["报表ID列表"]
+    if not report_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="看板为空，无法导出")
+
+    from api.routes.reports import _导出格式化行, _导出并发配额
+
+    with _导出并发配额():
+        import io
+        import os
+        import zipfile
+        from urllib.parse import quote
+
+        import pandas as pd
+
+        from repositories import audit_repo
+
+        audit_repo.记录(user["user_id"], "导出看板", target_type="dashboard", target_id=dashboard_id, detail=f"format={format}")
+
+        buf = io.BytesIO()
+        已用名: Dict[str, int] = {}
+        标题 = (item["名称"] or "看板").replace('"', '').replace('\\', '_').replace('/', '_')
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for rid in report_ids:
+                r = report_repo.读取报表(user["user_id"], rid)
+                if not r:
+                    continue
+                rows = (r["报表"] or {}).get("报表数据", [])
+                报表标题 = (r["标题"] or "报表").replace('"', '').replace('\\', '_').replace('/', '_')
+                基础名 = f"{报表标题}.{format}"
+                if 基础名 in 已用名:
+                    已用名[基础名] += 1
+                    根, ext = os.path.splitext(基础名)
+                    基础名 = f"{根}({已用名[基础名]}){ext}"
+                else:
+                    已用名[基础名] = 1
+                单份 = io.BytesIO()
+                fmt_rows = [_导出格式化行(row) for row in rows]
+                if format == "xlsx":
+                    pd.DataFrame(fmt_rows).to_excel(单份, index=False, engine="openpyxl")
+                else:
+                    pd.DataFrame(fmt_rows).to_csv(单份, index=False, encoding="utf-8-sig")
+                zf.writestr(基础名, 单份.getvalue())
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename=dashboard.zip; filename*=UTF-8''{quote(标题 + '.zip')}"},
+        )
 
 
 @router.put("/{dashboard_id}")

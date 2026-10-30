@@ -10,7 +10,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Plus, Trash2, Pencil, ExternalLink, X, ImageOff, ChevronLeft, ChevronRight, LayoutGrid, Network, Move } from 'lucide-react';
-import { listDashboards, getDashboard, createDashboard, updateDashboard, deleteDashboard, listReports, listDatasets } from '../api';
+import { listDashboards, getDashboard, createDashboard, updateDashboard, deleteDashboard, listReports, listDatasets, exportDashboard } from '../api';
 import EChartsChart from '../components/EChartsChart';
 import LineageGraph from '../components/LineageGraph';
 import LineageDrawer from '../components/LineageDrawer';
@@ -53,6 +53,15 @@ export default function Dashboard() {
   const [数据集列表, set数据集列表] = useState([]);     // listDatasets(200).数据集列表
   const [血缘提示, set血缘提示] = useState('');         // 数据集元信息加载失败时的降级提示
   const [选中节点ID, set选中节点ID] = useState('');
+
+  // 阶段八十五：看板全局筛选器（只对前端已加载的报表数据做客户端过滤/高亮，不影响后端）
+  const [筛选维度, set筛选维度] = useState('');          // 选中的维度字段
+  const [筛选值, set筛选值] = useState('');              // 选中的维度值
+  // 注意：筛选选项**不建 state**。它是 reports 的纯派生值（useMemo 直接消费）；
+  // 早期写成「useMemo + useEffect 同步进 state」时，detail 为 null 的那一帧
+  // reports 是 `|| []` 新建的字面量数组，useMemo 每次渲染都重建 →
+  // set筛选选项 每帧触发重渲染 → 无限渲染循环（vitest worker 直接烧到 4GB/874s CPU）。
+  const [导出中, set导出中] = useState(false);
 
   const loadBoards = async () => {
     try {
@@ -351,6 +360,28 @@ export default function Dashboard() {
     }
   };
 
+  // 阶段八十五：看板导出——打包当前看板全部报表为 ZIP（调 exportDashboard，浏览器触发下载）
+  const handleExportBoard = async () => {
+    if (!currentId) return;
+    set导出中(true);
+    setError('');
+    try {
+      const { blob, filename } = await exportDashboard(currentId, 'xlsx');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError('看板导出失败：' + (e.message || e));
+    } finally {
+      set导出中(false);
+    }
+  };
+
   // 阶段 六十：数据集元信息（文件名/行数/列数）只在首次切到关系视图时拉，
   // 不让默认的网格视图为血缘多背一个请求
   useEffect(() => {
@@ -389,6 +420,39 @@ export default function Dashboard() {
   const reports = detail?.报表列表 || [];
   const addedIds = new Set(reports.map((r) => r.报表ID));
   const addable = allReports.filter((r) => !addedIds.has(r.报表ID));
+
+  // 阶段八十五：看板全局筛选器——维度取各报表 X轴 / 颜色 / 分组字段，取值取该维度的去重值。
+  // 只做客户端过滤/高亮，不触发后端请求；选中后由 命中筛选() 决定每张卡片显示与否。
+  // 注意：这里必须直接读 detail?.报表列表 作为依赖，不能依赖上面那行新建的 reports。
+  // reports 在 detail===null 时每次渲染都是新的 [] 字面量，依赖它会让本 memo 每次渲染都重建，
+  // 一旦结果再被 setState 镜像我（曾经的写法），就会变成无限重渲染——vitest worker 直接烧到 4GB/874s。
+  const 筛选选项 = useMemo(() => {
+    const 维度集 = new Map();   // 维度名 → Set(取值)
+    (detail?.报表列表 || []).forEach((item) => {
+      const cfg = item.报表?.图表配置 || {};
+      const dims = [cfg.X轴, cfg.颜色, cfg.分组字段].filter(Boolean);
+      dims.forEach((d) => {
+        const vals = 维度集.get(d) || new Set();
+        (item.报表?.报表数据 || []).forEach((row) => {
+          if (row && row[d] !== undefined && row[d] !== null && row[d] !== '') vals.add(String(row[d]));
+        });
+        维度集.set(d, vals);
+      });
+    });
+    const 维度 = [...维度集.keys()].sort();
+    const 值 = (筛选维度 && 维度集.get(筛选维度)) ? [...维度集.get(筛选维度)].sort() : [];
+    return { 维度, 值 };
+  }, [detail?.报表列表, 筛选维度]);
+
+  const 切换维度 = (d) => { set筛选维度(d); set筛选值(''); };
+
+  // 未设筛选 → 全部命中；设了 → 该报表「报表数据」里有任意行满足 维度==值 才命中
+  const 命中筛选 = (item) => {
+    if (!筛选维度 || !筛选值) return true;
+    return (item.报表?.报表数据 || []).some(
+      (row) => String(row?.[筛选维度] ?? '') === 筛选值,
+    );
+  };
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
@@ -433,6 +497,41 @@ export default function Dashboard() {
                 <div className="flex items-center gap-2 flex-wrap mb-4 px-4 py-2.5 rounded-xl bg-white shadow-[var(--shadow-card)]">
           <span className="text-sm font-medium text-gray-800">{detail.名称}</span>
           <span className="text-[11px] text-gray-400">共 {reports.length} 张图</span>
+          {/* 阶段八十五：全局筛选器（客户端过滤/高亮，不请求后端） */}
+          {筛选选项.维度.length > 0 && (
+            <span className="flex items-center gap-1 text-xs">
+              <span className="text-gray-400">筛选</span>
+              <select
+                data-testid="board-filter-dim"
+                value={筛选维度}
+                onChange={(e) => 切换维度(e.target.value)}
+                className="border border-gray-200 rounded-md px-1.5 py-1 text-xs text-gray-600 bg-white focus:outline-none focus:border-accent"
+              >
+                <option value="">全部维度</option>
+                {筛选选项.维度.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+              {筛选维度 && (
+                <select
+                  data-testid="board-filter-value"
+                  value={筛选值}
+                  onChange={(e) => set筛选值(e.target.value)}
+                  className="border border-gray-200 rounded-md px-1.5 py-1 text-xs text-gray-600 bg-white focus:outline-none focus:border-accent"
+                >
+                  <option value="">全部取值</option>
+                  {筛选选项.值.map((v) => <option key={v} value={v}>{v}</option>)}
+                </select>
+              )}
+              {(筛选维度 || 筛选值) && (
+                <button
+                  onClick={() => { set筛选维度(''); set筛选值(''); }}
+                  className="p-1 rounded hover:bg-gray-100 text-gray-300 hover:text-gray-500"
+                  title="清空筛选"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </span>
+          )}
           <div className="ml-auto flex items-center gap-1.5">
             {/* 阶段 六十：网格 / 关系 视图切换 */}
             <div className="flex items-center rounded-lg border border-gray-200 overflow-hidden">
@@ -474,6 +573,14 @@ export default function Dashboard() {
               <Plus className="w-3 h-3" /> 添加报表
             </button>
             <button
+              data-testid="board-export"
+              disabled={导出中 || reports.length === 0}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              onClick={handleExportBoard}
+            >
+              <ImageOff className="w-3 h-3" /> {导出中 ? '导出中…' : '导出看板'}
+            </button>
+            <button
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-red-100 text-xs text-red-500 hover:bg-red-50 transition-all"
               onClick={handleDelete}
             >
@@ -503,11 +610,14 @@ export default function Dashboard() {
       {/* 图表网格（智能排版 + 拖拽排序） */}
       {reports.length > 0 && 视图 === 'grid' && (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          {/* 阶段八十五：全局筛选未命中 → 该卡片灰显（保留位置，便于对比；拖拽排序仅在无筛选时生效） */}
           {reports.map((item, i) => {
             const cfg = item.报表?.图表配置 || {};
             const chartTypeKey = cfg.类型 || 'bar';
             const conclusion = item.报表?.结论 || '';
             const colSpan = spanClassFor(chartTypeKey);
+            const 命中 = 命中筛选(item);
+            const 有筛选 = Boolean(筛选维度 && 筛选值);
             // 拖拽视觉反馈：被拖卡片半透明，目标卡片加边框
             const isDragging = dragIndex === i;
             const isOver = overIndex === i && dragIndex !== null && dragIndex !== i;
@@ -516,8 +626,8 @@ export default function Dashboard() {
                 key={item.报表ID}
                 className={`${colSpan} bg-white rounded-2xl shadow-[var(--shadow-card)] overflow-hidden transition-all duration-150 select-none ${
                   isDragging ? 'opacity-40 scale-[0.98]' : ''
-                } ${isOver ? 'ring-2 ring-accent/60 ring-offset-2' : ''}`}
-                draggable
+                } ${isOver ? 'ring-2 ring-accent/60 ring-offset-2' : ''} ${有筛选 && !命中 ? 'opacity-30 grayscale' : ''}`}
+                draggable={!有筛选}
                 onDragStart={(e) => handleDragStart(e, i)}
                 onDragOver={(e) => handleDragOver(e, i)}
                 onDrop={(e) => handleDrop(e, i)}
