@@ -126,6 +126,13 @@ a = Analysis(
         "jaraco.context",
         "jaraco.text",
         "jaraco.functools",
+        # 阶段八十七：限流迁 Redis。services/rate_limiter.py 里是**函数内延迟导入**
+        # （没装 redis 也要能回落进程内 dict），静态追踪容易漏；redis-py 的
+        # commands/connection 子模块也是运行期才要求，一并显式收全。
+        "redis",
+        "redis.client",
+        "redis.connection",
+        "redis.commands",
     ] + 项目包 + _pkgres_hidden + _setuptools_hidden + _numpy_hidden,
     excludes=["tkinter", "PyQt5", "PySide2", "matplotlib", "scipy"],
     noarchive=False,

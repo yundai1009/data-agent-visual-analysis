@@ -72,11 +72,11 @@
     <h2>数据库模式</h2>
     <label class="选项">
       <input type="radio" name="数据库模式" value="sqlite">
-      <b>SQLite</b><span class="说明">　本机单文件数据库，零配置、免安装，开箱即用</span>
+      <b>SQLite</b><span class="说明">　本机单文件数据库，零配置、免安装（离线 / 没有 MySQL 时选它）</span>
     </label>
     <label class="选项">
       <input type="radio" name="数据库模式" value="mysql">
-      <b>MySQL</b><span class="说明">　与网页版共用同一个库，账号 / 数据集 / 报表实时同步</span>
+      <b>MySQL</b><span class="说明">　默认。与网页版共用同一个库，账号 / 数据集 / 报表实时同步</span>
     </label>
     <fieldset id="MySQL字段">
       <legend>MySQL 连接</legend>
@@ -155,7 +155,7 @@
 
   function 填表单(表单) {
     表单 = 表单 || {};
-    document.querySelector('input[name="数据库模式"][value="' + (表单.数据库模式 || 'sqlite') + '"]').checked = true;
+    document.querySelector('input[name="数据库模式"][value="' + (表单.数据库模式 || 'mysql') + '"]').checked = true;
     document.querySelector('input[name="认证模式"][value="' + (表单.认证模式 || 'demo') + '"]').checked = true;
     Object.keys(字段).forEach(function (k) { $(字段[k]).value = 表单[k] == null ? '' : String(表单[k]); });
     同步可见性();

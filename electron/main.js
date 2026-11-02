@@ -68,7 +68,8 @@ function spawnBackend(port) {
   const dataDir = path.join(数据目录, 'data');
   fs.mkdirSync(dataDir, { recursive: true });
   // 用户设置可把后端切到 MySQL（与网页版同库，账号数据同步）+ 真实认证；
-  // 默认零配置：sqlite 本地库 + 演示模式（env 由 核心/后端配置.js 生成，有单测覆盖）
+  // 阶段八十七起默认库 = 本机 MySQL（127.0.0.1:3306 / daa_app / daa）+ 演示模式，
+  // 显式选 sqlite 才回退单文件库（env 由 核心/后端配置.js 生成，有单测覆盖）
   // 注意：设置/数据/日志统一放 数据根目录()（= %APPDATA%\数据分析Agent），不用 app.getPath('userData')
   // —— 后者按应用名自动生成 %APPDATA%\自助式数据分析Agent平台，与 db/日志目录不一致会导致配置读空。
   const 用户设置 = 读设置(数据目录);

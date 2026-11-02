@@ -1,11 +1,13 @@
 # 一句话定位：认证路由层（HTTP 边界）——注册/登录/当前用户/登出，外加账号级 LLM Key、改密改名、
 # 密码重置，以及个保法要求的本人数据导出与注销。
 #
-# 做了什么：`_窗口限流` 是通用固定窗口限流器；`_登录限流拦截` 做"IP+账号 5 次"与"纯 IP 20 次"双键限流，
-# `_验证码IP限流拦截` 限验证码发送；`register`/`login`/`reset_password` 串起邮箱验证码与密码两条链路；`_演示模式拦截账号操作` 在 `AUTH_ENABLED=false` 时挡掉改密/改名/导出/注销。
+# 做了什么：`_登录限流拦截` 做"IP+账号 5 次"与"纯 IP 20 次"双键限流，`_验证码IP限流拦截` 限验证码发送；
+# `register`/`login`/`reset_password` 串起邮箱验证码与密码两条链路；`_演示模式拦截账号操作` 在 `AUTH_ENABLED=false` 时挡掉改密/改名/导出/注销。
 #
 # 为什么这么做：
-#   - 限流用进程内 dict 而不是 Redis：单进程部署不值得为它引入新中间件；代价用 `_LOGIN_IP_MAX_FAILS` 这种"换账号也限速"的粗键补偿（多 worker 各持一份是刻意接受的缺口）。
+#   - 限流用 Redis（阶段八十七，services/rate_limiter.py）：多 worker 共享同一份窗口，
+#     换账号 / 起第二个 worker 都绕不过；Redis 不可用时自动回落进程内 dict，不阻断登录。
+#     代价用 `_LOGIN_IP_MAX_FAILS` 这种"换账号也限速"的粗键补偿双键限流。
 #   - `RegisterRequest` 用 `ConfigDict(extra="forbid")`：注册是外部唯一能自建账号的入口，多一个 `role=admin` 就是自注册提权，宁可让多余字段直接 422。
 #   - 登录失败统一 401「用户名或密码错误」，封禁却返回 403：前者泄露账号存在与否就是枚举漏洞，后者是本人拿自己凭据登录、"账号已存在但被封"属于该告知的知情权。
 #
@@ -21,8 +23,6 @@
 from __future__ import annotations
 
 import logging
-import threading
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 import io
@@ -36,54 +36,34 @@ from api.dependencies import get_current_user
 from config.settings import EnvConfig
 from repositories import email_code_repo, user_repo
 from services import auth_service, email_service
+from services import rate_limiter as _限流后端
 
 logger = logging.getLogger(__name__)  # M1 修复：注册埋点异常日志（此前缺失导致 NameError 二次异常）
 
 # ---- 登录限流（防暴力破解）：固定窗口 10 分钟，同 IP+账号最多 5 次失败 ----
-_LOGIN_ATTEMPTS: Dict[str, tuple] = {}  # key -> (window_start, fail_count)
-_LOGIN_LOCK = threading.Lock()
+# 阶段八十七：计数从进程内 dict 迁到 Redis（services/rate_limiter.py）。
+# 进程内 dict 在多 worker 下各持一份，换个账号或起第二个 worker 就能绕过；
+# Redis 让所有 worker 共享同一份窗口。Redis 不可用时自动回落内存实现（不阻断登录）。
 _LOGIN_MAX_FAILS = 5
 _LOGIN_IP_MAX_FAILS = 20  # M4：纯 IP 维度上限——缓解多账号/多 worker 绕过单键限流
 _LOGIN_WINDOW_SEC = 600
-
-
-
-_MAX_LIMIT_ENTRIES = 5000  # 批次3：限频字典容量上限，防内存无限增长
 
 # M5：验证码发送 IP 限流（防邮件轰炸）——同 IP 60 秒最多 200 次。
 # 阈值权衡：正常用户 1 分钟最多 1-2 封；200/分钟阻断批量轰炸脚本，
 # 同时避免测试套件（所有 TestClient 共用 host=testclient）在 60s 窗口内
 # 跨用例累计 send-code 超过阈值而误伤（约 70+ 次/套件）。
-_CODE_SEND_ATTEMPTS: Dict[str, tuple] = {}
-_CODE_LOCK = threading.Lock()
 _CODE_IP_MAX = 200
 _CODE_WINDOW_SEC = 60
 
 
-def _窗口限流(
-    store: Dict[str, tuple],
-    lock: threading.Lock,
-    key: str,
-    max_fails: int,
-    window_sec: int,
-    capacity: int = 5000,
-) -> bool:
-    """通用固定窗口限流：返回 True=应拦截。容量上限防内存无限增长。"""
-    now = time.time()
-    with lock:
-        # 【Bug26 修复】容量清理移入锁内——旧实现在 with lock 之前 clear，
-        # 多线程同时到达时可能各自清空 store，丢掉其他线程刚写入的合法限流
-        # 条目（限流被绕过）。
-        if len(store) >= capacity:
-            store.clear()
-        window_start, count = store.get(key, (now, 0))
-        if now - window_start > window_sec:
-            store[key] = (now, 1)
-            return False
-        if count >= max_fails:
-            return True
-        store[key] = (window_start, count + 1)
-        return False
+def _登录限流器():
+    """登录维度用限流器（懒取：避免模块 import 时就探 Redis）。"""
+    return _限流后端.取限流器()
+
+
+def _验证码限流器():
+    """验证码维度用限流器（与登录共用同一单例，键前缀区分）。"""
+    return _限流后端.取限流器()
 
 
 def _登录限流拦截(identifier: str, client_host: str) -> bool:
@@ -91,20 +71,21 @@ def _登录限流拦截(identifier: str, client_host: str) -> bool:
 
     旧实现仅复合键：攻击者换用户名或部署多 worker（各自独立内存字典）即可
     绕过；纯 IP 键让同一来源的暴力尝试即使换账号也会被整体限速。
+    阶段八十七起计数放 Redis，多 worker 共享窗口。
     """
-    if _窗口限流(_LOGIN_ATTEMPTS, _LOGIN_LOCK, f"{identifier}|{client_host}", _LOGIN_MAX_FAILS, _LOGIN_WINDOW_SEC):
+    限流器 = _登录限流器()
+    if 限流器.命中(f"登录:{identifier}|{client_host}", _LOGIN_MAX_FAILS, _LOGIN_WINDOW_SEC):
         return True
-    return _窗口限流(_LOGIN_ATTEMPTS, _LOGIN_LOCK, f"ip:{client_host}", _LOGIN_IP_MAX_FAILS, _LOGIN_WINDOW_SEC)
+    return 限流器.命中(f"登录:ip:{client_host}", _LOGIN_IP_MAX_FAILS, _LOGIN_WINDOW_SEC)
 
 
 def _验证码IP限流拦截(client_host: str) -> bool:
-    """M5：同 IP 60 秒最多发 5 封验证码（防邮件轰炸）。"""
-    return _窗口限流(_CODE_SEND_ATTEMPTS, _CODE_LOCK, f"code:{client_host}", _CODE_IP_MAX, _CODE_WINDOW_SEC)
+    """M5：同 IP 60 秒最多发 200 封验证码（防邮件轰炸）。"""
+    return _验证码限流器().命中(f"验证码:ip:{client_host}", _CODE_IP_MAX, _CODE_WINDOW_SEC)
 
 
 def _清除登录限流(identifier: str, client_host: str) -> None:
-    with _LOGIN_LOCK:
-        _LOGIN_ATTEMPTS.pop(f"{identifier}|{client_host}", None)
+    _登录限流器().清除(f"登录:{identifier}|{client_host}")
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 

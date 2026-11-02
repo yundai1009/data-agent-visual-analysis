@@ -11,6 +11,10 @@ os.environ["SEED_ADMIN_PASSWORD"] = "test-admin-password"
 # load_dotenv(override=False) 会让整套用例连上真实 daa 库、往生产数据里写测试行。
 # load_dotenv 不覆盖已有 os.environ，所以本文件（先于 config.settings 导入）先设值即可。
 os.environ["DB_BACKEND"] = "sqlite"
+# 阶段八十七：测试禁用真实 Redis 限流。本机若在跑 Redis，默认 REDIS_RATE_LIMIT=true 会
+# 让整套用例打到真实实例并跨用例残留计数（同 IP 限流会互相污染断言）；
+# 显式 false 让 取限流器() 走进程内 dict，测试间用 重置限流器() 隔离即可。
+os.environ["REDIS_RATE_LIMIT"] = "false"
 # 测试环境禁用真实 LLM：占位 key 使 is_llm_configured() 返回 False，
 # 全链路走确定性规则降级（不依赖真实网络/Key，测试快且可复现）。
 # 需要验证 LLM 行为的用例自行 monkeypatch chat_completion 或显式设置 EnvConfig.LLM_API_KEY。

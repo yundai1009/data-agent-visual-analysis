@@ -95,6 +95,19 @@ class EnvConfig:
     MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
     MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "daa")
 
+    # 阶段 87：限流后端（登录 / 验证码）从进程内 dict 迁到 Redis 固定窗口。
+    # - 为什么：进程内 dict 在多 worker 下各持一份，换个账号或起第二个 worker 就能绕过
+    #   登录限流（历史上刻意接受的缺口）。Redis 让所有 worker 共享同一份计数。
+    # - REDIS_RATE_LIMIT：总开关，**默认开启**（用户要求「上 Redis 限流」）。测试统一置
+    #   false（conftest），避免打到真实 Redis 并把状态跨用例残留；留空/非法值按关闭处理。
+    # - REDIS_URL：redis://[:password@]host:port/db。默认本机 0 号库。
+    # - REDIS_TIMEOUT：连接/读写超时（秒）。Redis 抖动时宁可慢一点也不要长出请求。
+    # - 关键约定：Redis 不可用（未安装 / 服务没起 / 网络不通）时**自动回落**进程内 dict，
+    #   限流功能不中断。降级只警告不阻断——限流是安全增强，不是可用性前置条件。
+    REDIS_RATE_LIMIT = os.getenv("REDIS_RATE_LIMIT", "true").strip().lower() in ("true", "1", "yes")
+    REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0").strip()
+    REDIS_TIMEOUT = float(os.getenv("REDIS_TIMEOUT", "1.0"))
+
     # 认证开关：开发阶段设为 false 可免 token 访问
     AUTH_ENABLED = os.getenv("AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
 
