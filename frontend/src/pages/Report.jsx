@@ -101,7 +101,15 @@ export default function Report() {
         } catch (e) {
           if (cancelled) return;
           console.error('报表列表加载失败:', e);
-          setLoadError('报表加载失败，请检查后端服务是否可用');
+          /* 阶段八十三修复（真人走查 Bug⑤）：搜索词超出后端 q 上限（100 字）时后端回 422，
+           * 原实现把它和「报表列表加载失败」共用一句「报表加载失败，请检查后端服务是否可用」，
+           * 用户会误以为后端挂了。这里按「是否在搜索」和错误类型分开措辞，
+           * 并配合输入框 maxLength 从源头拦住超长搜索词。 */
+          const 在搜索 = searchQ.trim().length > 0;
+          const 具体原因 = e?.status === 422
+            ? '搜索词太长或含不支持的字符，请精简后重试'
+            : (e?.message || '请稍后重试');
+          setLoadError(在搜索 ? `搜索失败：${具体原因}` : '报表加载失败，请检查后端服务是否可用');
         } finally { if (!cancelled) setLoading(false); }
       })();
     }, 300);
@@ -408,7 +416,10 @@ export default function Report() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {/* 历史报表导航 */}
-          {reportMeta.length > 1 && (
+          {/* 阶段八十三修复：原条件只有 reportMeta.length > 1，搜索把结果筛到 1 张时
+              整个历史导航（含搜索框）会消失，用户再没法清掉搜索词、只能刷新页面。
+              只要还在搜索/只看收藏，就保留这组控件，方便用户清空筛选。 */}
+          {(reportMeta.length > 1 || searchQ.trim() || favOnly) && (
             <div className="flex items-center gap-1 mr-2">
               <button onClick={prevReport} disabled={currentIndex === 0}
                 className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed">
@@ -430,6 +441,11 @@ export default function Report() {
                   <input
                     className="pl-6 pr-2 py-0.5 w-32 text-[11px] border border-gray-200 rounded-md bg-gray-50 focus:outline-none focus:border-accent"
                     placeholder="搜索标题…"
+                    /* 阶段八十三修复（真人走查 Bug⑤）：后端 /reports?q= 限 100 字，
+                     * 超过就 422。输入框原来没有上限，粘一段长文本进去整页会变成
+                     * 「报表加载失败」——在源头限长，用户根本发不出超限请求。 */
+                    maxLength={100}
+                    title="按标题搜索，最多 100 字"
                     value={searchQ}
                     onChange={(e) => setSearchQ(e.target.value)}
                   />

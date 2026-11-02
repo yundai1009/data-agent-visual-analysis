@@ -225,3 +225,58 @@ describe('报表明细页显式展示报表标题（发布前走查）', () => {
     expect(screen.queryByText('销售分析')).not.toBeInTheDocument();
   });
 });
+
+// 真人走查 Bug⑤：搜索标题框粘超长/emoji → 后端 q 超 100 字回 422。
+// 原实现把搜索失败当成「报表加载失败，请检查后端服务是否可用」，用户误以为后端挂了。
+// 修复：搜索输入框 maxLength=100 + 搜索失败单独措辞（搜索失败：…），不再冒充加载失败。
+describe('报表搜索失败提示（阶段八十三 · Bug⑤）', () => {
+  // 搜索框只在「历史报表 > 1」时渲染（Report.jsx:419 reportMeta.length > 1）
+  const 两张报表 = () => {
+    api.listReports.mockResolvedValue({
+      报表列表: [
+        { 报表ID: 'r1', 标题: '销售分析', 图表类型: '柱状图' },
+        { 报表ID: 'r2', 标题: '月度趋势', 图表类型: '折线图' },
+      ],
+    });
+  };
+
+  it('搜索输入框带 maxLength=100（从源头拦住超长查询）', async () => {
+    两张报表();
+    renderReport();
+    await screen.findByText('报表查看');
+    const 搜索框 = screen.getByPlaceholderText('搜索标题…');
+    expect(搜索框).toHaveAttribute('maxlength', '100');
+  });
+
+  it('搜索词超限触发 422 → 提示「搜索失败：…」，而不是「报表加载失败」', async () => {
+    两张报表();
+    renderReport();
+    await screen.findByText('报表查看');
+    // 进入搜索态后让请求失败（模拟后端 q 超 100 字回 422）
+    api.listReports.mockRejectedValue({
+      status: 422,
+      message: '参数错误：query.q String should have at most 100 characters',
+    });
+    fireEvent.change(screen.getByPlaceholderText('搜索标题…'), { target: { value: '超'.repeat(100) } });
+
+    expect(await screen.findByText(/搜索失败：/)).toBeInTheDocument();
+    expect(screen.getByText(/搜索词太长或含不支持的字符/)).toBeInTheDocument();
+    // 关键：不能再把搜索失败说成「后端服务不可用」
+    expect(screen.queryByText('报表加载失败，请检查后端服务是否可用')).not.toBeInTheDocument();
+  });
+
+  it('搜索把结果筛到 1 张时搜索框不消失（用户还能清空搜索词）', async () => {
+    两张报表();
+    renderReport();
+    await screen.findByText('报表查看');
+    // 输入搜索词，模拟后端只返回 1 张匹配
+    fireEvent.change(screen.getByPlaceholderText('搜索标题…'), { target: { value: '销售分析' } });
+    api.listReports.mockResolvedValue({ 报表列表: [{ 报表ID: 'r1', 标题: '销售分析', 图表类型: '柱状图' }] });
+    // 重新触发搜索（依赖 searchQ 变化）
+    fireEvent.change(screen.getByPlaceholderText('搜索标题…'), { target: { value: '销售分析 ' } });
+    await waitFor(() => expect(screen.getByPlaceholderText('搜索标题…')).toBeInTheDocument());
+    // 清空搜索词后仍可继续操作
+    fireEvent.change(screen.getByPlaceholderText('搜索标题…'), { target: { value: '' } });
+    expect(screen.getByPlaceholderText('搜索标题…')).toBeInTheDocument();
+  });
+});

@@ -212,7 +212,18 @@ export default function useAnalysis() {
     generatingRef.current = true;
     if (!dataset) {
       generatingRef.current = false;
+      /* 阶段八十三修复（真人走查 Bug⑥）：原实现 setError() 后立刻 navigate('/data')，
+       * 错误横幅随 /analysis 卸载一起消失，用户点「开始分析」看到的是「页面自己跳回数据管理、
+       * 一句话都没说」。现在把提示写进 sessionStorage 再由 /data 页取出来展示，
+       * 让跳转本身成为解释（去上传数据）而不是谜之行为。
+       * 用 sessionStorage 而非路由 state：刷新后提示仍在，且不影响既有 navigate 契约。 */
       setError('请先在数据管理页面上传数据');
+      try {
+        sessionStorage.setItem(
+          'daa:pending_notice',
+          '还没有可分析的数据集：先上传 CSV / Excel，再回来点「开始分析」。',
+        );
+      } catch { /* 隐私模式等场景 storage 不可用 → 静默降级，退化为原来的一次性提示 */ }
       navigate('/data');
       return false;
     }

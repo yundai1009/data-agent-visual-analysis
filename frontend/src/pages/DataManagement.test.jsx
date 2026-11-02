@@ -228,3 +228,34 @@ describe('DataManagement 数据管理页', () => {
     });
   });
 });
+
+// 真人走查 Bug⑥：/analysis 在「无数据集」时点「开始分析」，原来 setError 后立刻
+// navigate('/data')，错误横幅随 /analysis 卸载消失——用户被静默弹回数据管理页。
+// 修复：提示写进 sessionStorage（daa:pending_notice），/data 挂载时取一次并展示
+// 顶部醒目横幅，支持「知道了」关闭；清掉后不再重复弹出。
+describe('DataManagement 来自 /analysis 的无数据集提示（阶段八十三 · Bug⑥）', () => {
+  const 提示文案 = '还没有可分析的数据集：先上传 CSV / Excel，再回来点「开始分析」。';
+
+  it('sessionStorage 存在待展示提示 → 顶部显示提醒横幅', async () => {
+    sessionStorage.setItem('daa:pending_notice', 提示文案);
+    renderPage();
+    expect(await screen.findByText(/还没有可分析的数据集/)).toBeInTheDocument();
+    // 展示后应消费掉，避免刷新/返回重复弹出
+    expect(sessionStorage.getItem('daa:pending_notice')).toBeNull();
+  });
+
+  it('点「知道了」后横幅消失', async () => {
+    sessionStorage.setItem('daa:pending_notice', 提示文案);
+    renderPage();
+    const 横幅 = await screen.findByText(/还没有可分析的数据集/);
+    expect(横幅).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '知道了' }));
+    await waitFor(() => expect(screen.queryByText(/还没有可分析的数据集/)).not.toBeInTheDocument());
+  });
+
+  it('没有待展示提示时不渲染横幅', () => {
+    sessionStorage.removeItem('daa:pending_notice');
+    renderPage();
+    expect(screen.queryByText(/还没有可分析的数据集/)).not.toBeInTheDocument();
+  });
+});

@@ -37,6 +37,15 @@ function inferType(field, profile) {
 
 export default function DataManagement() {
   const navigate = useNavigate();
+  // 阶段八十三修复（真人走查 Bug⑥）：/analysis 在「无数据集」时把提示写进 sessionStorage
+  // 再跳转 /data。这里取一次并清掉，避免刷新/前进后退时重复弹提示，同时给用户一个明确解释。
+  useEffect(() => {
+    let 提示 = '';
+    try { 提示 = sessionStorage.getItem('daa:pending_notice') || ''; } catch { /* storage 不可用 */ }
+    if (!提示) return;
+    try { sessionStorage.removeItem('daa:pending_notice'); } catch { /* 忽略 */ }
+    set页面提示(提示);
+  }, []);
   const { dataset: globalDataset, setDataset: setAppDataset } = useApp();
   const [dataset, setDataset] = useState(globalDataset);
   const [profile, setProfile] = useState(globalDataset?.数据画像 || null);
@@ -49,6 +58,7 @@ export default function DataManagement() {
   const uploadAbortRef = useRef(null);
   const [backendOk, setBackendOk] = useState(true);
   const [error, setError] = useState('');
+  const [页面提示, set页面提示] = useState(''); // 阶段八十三：来自 /analysis 的「无数据集」跳转提示
   // 优化③：数据集多选合并
   const [mergeSel, setMergeSel] = useState(new Set());
   const [mergeOpen, setMergeOpen] = useState(false);
@@ -371,6 +381,15 @@ export default function DataManagement() {
 
   return (
     <div className="p-8 max-w-5xl mx-auto">
+      {/* 阶段八十三修复（真人走查 Bug⑥）：来自 /analysis 的路由提示（无数据集被跳转过来），
+          顶部醒目横幅解释「为什么被带到这」，用户不会再觉得点击后页面莫名跳转。 */}
+      {页面提示 && (
+        <div className="mb-5 px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-800 flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+          <span className="flex-1">{页面提示}</span>
+          <button className="ml-auto text-amber-500 hover:text-amber-700 text-xs shrink-0" onClick={() => set页面提示('')}>知道了</button>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center justify-between mb-7">
         <div>
