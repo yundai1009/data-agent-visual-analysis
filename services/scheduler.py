@@ -297,8 +297,11 @@ def _执行并释放(任务: Dict[str, Any]) -> None:
         _in_flight.discard(任务["任务ID"])
 
 
+_停止 = threading.Event()
+
+
 def _循环() -> None:
-    while True:
+    while not _停止.is_set():
         try:
             _tick()
         except Exception:
@@ -312,6 +315,12 @@ def 启动调度器() -> None:
     with _scheduler_lock:
         if _scheduler_thread is not None and _scheduler_thread.is_alive():
             return
+        _停止.clear()
         _scheduler_thread = threading.Thread(target=_循环, daemon=True, name="cron-scheduler")
         _scheduler_thread.start()
         logger.info("定时调度器已启动（每 %ss tick 一次）", _TICK_INTERVAL)
+
+
+def 停止调度器() -> None:
+    """阶段八十九：显式停止调度线程（lifespan 关闭时调用；不等待退出，daemon 兜底）。"""
+    _停止.set()

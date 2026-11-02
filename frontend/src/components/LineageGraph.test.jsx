@@ -5,7 +5,7 @@ import { 构建血缘图 } from '../utils/看板血缘';
 
 // mock ECharts：避免在测试中加载 1MB echarts chunk
 vi.mock('echarts', () => {
-  const inst = { setOption: vi.fn(), resize: vi.fn(), dispose: vi.fn(), on: vi.fn() };
+  const inst = { setOption: vi.fn(), resize: vi.fn(), dispose: vi.fn(), on: vi.fn(), getDataURL: vi.fn(() => 'data:image/png;base64,mock') };
   return { init: vi.fn(() => inst), __inst: inst };
 });
 
@@ -101,5 +101,14 @@ describe('LineageGraph', () => {
     render(<LineageGraph 图数据={构建血缘图()} />);
     await waitFor(() => expect(echarts.init).toHaveBeenCalled());
     expect(screen.getByTestId('血缘图空态').textContent).toBe('当前看板暂无可展示的血缘关系');
+  });
+
+  it('阶段八十九：ref 导出 PNG → getDataURL(pixelRatio 2, 白底) 且返回 dataURL', async () => {
+    const ref = { current: null };
+    render(<LineageGraph ref={ref} 图数据={图数据} />);
+    await waitFor(() => expect(echarts.init).toHaveBeenCalled());
+    const url = ref.current.导出PNG();
+    expect(echarts.__inst.getDataURL).toHaveBeenCalledWith({ type: 'png', pixelRatio: 2, backgroundColor: '#ffffff' });
+    expect(url).toBe('data:image/png;base64,mock');
   });
 });

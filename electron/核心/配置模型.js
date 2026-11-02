@@ -14,6 +14,8 @@ const crypto = require('node:crypto');
 
 const 数据库模式选项 = ['sqlite', 'mysql'];
 const 认证模式选项 = ['demo', 'real'];
+/** 阶段八十九：限流后端选项。redis = 多 worker 共享窗口（默认）；memory = 进程内 dict（离线单机）。 */
+const 限流模式选项 = ['redis', 'memory'];
 /** JWT 密钥最小长度：低于 32 字符的密钥空间不足，容易被暴力枚举（HS256 无最小长度限制，由我们兜）。 */
 const 密钥最小长度 = 32;
 
@@ -35,6 +37,11 @@ function 默认表单() {
     邮件用户: '',
     邮件密码: '',
     邮件发件人: '',
+    // 阶段八十九：限流后端（登录防爆破）。默认 Redis（与后端 EnvConfig 默认一致），
+    // Redis 未启动时后端 fail-open 回落到进程内 dict，不影响可用性。
+    限流模式: 'redis',
+    RedisURL: 'redis://127.0.0.1:6379/0',
+    Redis超时秒: 1,
   };
 }
 
@@ -60,6 +67,11 @@ function 设置转表单(设置 = {}) {
   if (邮件.用户 != null) 表单.邮件用户 = String(邮件.用户);
   if (邮件.密码 != null) 表单.邮件密码 = String(邮件.密码);
   if (邮件.发件人 != null) 表单.邮件发件人 = String(邮件.发件人);
+  // 阶段八十九：限流后端。settings.json 里写成 限流{} 一段（与 邮件服务 同款整段语义）。
+  const 限流 = 设置.限流 || {};
+  if (限流模式选项.includes(限流.模式)) 表单.限流模式 = 限流.模式;
+  if (限流.RedisURL != null) 表单.RedisURL = String(限流.RedisURL);
+  if (限流.超时秒 != null) 表单.Redis超时秒 = Number(限流.超时秒) || 1;
   return 表单;
 }
 
@@ -107,6 +119,18 @@ function 表单转设置(表单 = {}) {
     补丁.JWT密钥 = null;
     补丁.预置管理员口令 = null;
     补丁.邮件服务 = null;
+  }
+  // 阶段八十九：限流后端。模式默认 redis；memory 只写模式（URL 留空=后端走内存实现），
+  // 与 数据库 段 sqlite 分支同款「切换后清掉无关字段」的约定。
+  const 限流模式 = 表单.限流模式 || 'redis';
+  if (限流模式 === 'redis') {
+    补丁.限流 = {
+      模式: 'redis',
+      RedisURL: String(表单.RedisURL || '').trim(),
+      超时秒: Number(表单.Redis超时秒) || 1,
+    };
+  } else {
+    补丁.限流 = { 模式: 'memory' };
   }
   return 补丁;
 }
@@ -160,6 +184,22 @@ function 校验表单(表单 = {}) {
       }
     }
   }
+  // 阶段八十九：限流后端——Redis 模式必须给出合法 URL，防止用户填错后「以为开了 Redis 其实没开」。
+  const 限流模式 = 表单.限流模式 || 'redis';
+  if (!限流模式选项.includes(限流模式)) {
+    错误.push('限流后端取值非法（应为 memory 或 redis）');
+  } else if (限流模式 === 'redis') {
+    const url = String(表单.RedisURL || '').trim();
+    if (!url) {
+      错误.push('Redis URL 不能为空');
+    } else if (!/^rediss?:\/\//.test(url)) {
+      错误.push('Redis URL 必须以 redis:// 或 rediss:// 开头（如 redis://127.0.0.1:6379/0）');
+    }
+    const 超时 = Number(表单.Redis超时秒);
+    if (!Number.isFinite(超时) || 超时 < 0.1 || 超时 > 30) {
+      错误.push('Redis 超时秒数必须是 0.1–30 之间的数字');
+    }
+  }
   return { ok: 错误.length === 0, 错误 };
 }
 
@@ -197,7 +237,11 @@ function 生效配置(设置 = {}) {
   const 认证 = 表单.认证模式 === 'real'
     ? { 模式: 'real', JWT密钥: 表单.JWT密钥, 预置管理员口令: 表单.预置管理员口令, 邮件 }
     : { 模式: 'demo' };
-  return { 数据库, 认证 };
+  // 阶段八十九：限流后端也参与「改了要重启」比较——后端只在启动时读一次 Redis 配置。
+  const 限流 = 表单.限流模式 === 'redis'
+    ? { 模式: 'redis', RedisURL: 表单.RedisURL, 超时秒: 表单.Redis超时秒 }
+    : { 模式: 'memory' };
+  return { 数据库, 认证, 限流 };
 }
 
 /**
@@ -224,5 +268,6 @@ module.exports = {
   随机强密钥,
   数据库模式选项,
   认证模式选项,
+  限流模式选项,
   密钥最小长度,
 };

@@ -280,3 +280,92 @@ describe('报表搜索失败提示（阶段八十三 · Bug⑤）', () => {
     expect(screen.getByPlaceholderText('搜索标题…')).toBeInTheDocument();
   });
 });
+
+// 真人走查 Bug⑧：报表历史页只有「清空历史」这种破坏性全量删除，无法按条删除。
+// 修复：新增「删除」多选面板 + 逐条 DELETE + 失败保留语义（与清空历史一致）。
+describe('报表历史按条批量删除（阶段八十九 · Bug⑧）', () => {
+  const 两张报表 = () => {
+    api.listReports.mockResolvedValue({
+      报表列表: [
+        { 报表ID: 'r1', 标题: '销售分析', 图表类型: '柱状图' },
+        { 报表ID: 'r2', 标题: '月度趋势', 图表类型: '折线图' },
+      ],
+    });
+  };
+
+  beforeEach(() => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    api.deleteReport.mockResolvedValue({});
+  });
+
+  it('打开「删除」面板 → 勾选 2 份 → 确认后逐条调 deleteReport 并移除行', async () => {
+    两张报表();
+    renderReport();
+    await screen.findByText('报表查看');
+    fireEvent.click(screen.getByRole('button', { name: /删除/ }));
+    // 面板出现，勾选两份
+    const 框 = screen.getAllByRole('checkbox');
+    expect(框.length).toBe(2);
+    fireEvent.click(框[0]);
+    fireEvent.click(框[1]);
+    fireEvent.click(screen.getByRole('button', { name: /删除所选（2 份）/ }));
+
+    await waitFor(() => {
+      expect(api.deleteReport).toHaveBeenCalledWith('r1');
+      expect(api.deleteReport).toHaveBeenCalledWith('r2');
+    });
+    await waitFor(() => {
+      expect(screen.queryByText('销售分析')).not.toBeInTheDocument();
+      expect(screen.queryByText('月度趋势')).not.toBeInTheDocument();
+    });
+  });
+
+  it('未勾选时按钮禁用；勾选 1 份显示「删除所选（1 份）」', async () => {
+    两张报表();
+    renderReport();
+    await screen.findByText('报表查看');
+    fireEvent.click(screen.getByRole('button', { name: /删除/ }));
+    const 删 = screen.getByRole('button', { name: /删除所选/ });
+    expect(删).toBeDisabled();
+    fireEvent.click(screen.getAllByRole('checkbox')[0]);
+    expect(screen.getByRole('button', { name: /删除所选（1 份）/ })).toBeEnabled();
+  });
+
+  it('部分删除失败 → 失败的报表保留在列表，并给出提示', async () => {
+    两张报表();
+    api.deleteReport.mockImplementation((id) =>
+      id === 'r2' ? Promise.reject(new Error('网络错误')) : Promise.resolve({}),
+    );
+    renderReport();
+    await screen.findByText('报表查看');
+    fireEvent.click(screen.getByRole('button', { name: /删除/ }));
+    const 框 = screen.getAllByRole('checkbox');
+    fireEvent.click(框[0]);
+    fireEvent.click(框[1]);
+    fireEvent.click(screen.getByRole('button', { name: /删除所选（2 份）/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/1 份报表删除失败/)).toBeInTheDocument();
+    });
+    // 删除面板里只剩失败的那张（r2 月度趋势）；成功的 r1 已移除
+    const 面板 = screen.getByTestId('报表删除面板');
+    expect(面板.textContent).toContain('月度趋势');
+    expect(面板.textContent).not.toContain('销售分析');
+  });
+
+  it('清空历史部分失败 → 同样只保留失败的那张（阶段八十九顺手修的反转 bug）', async () => {
+    两张报表();
+    api.deleteReport.mockImplementation((id) =>
+      id === 'r2' ? Promise.reject(new Error('网络错误')) : Promise.resolve({}),
+    );
+    renderReport();
+    await screen.findByText('报表查看');
+    fireEvent.click(screen.getByRole('button', { name: /清空/ }));
+    // 部分失败：逐条都调过、错误提示出现（列表只剩失败那张，已在批量删除测试里覆盖）
+    await waitFor(() => {
+      expect(screen.getByText(/1 份报表删除失败/)).toBeInTheDocument();
+    });
+    expect(api.deleteReport).toHaveBeenCalledWith('r1');
+    expect(api.deleteReport).toHaveBeenCalledWith('r2');
+  });
+});

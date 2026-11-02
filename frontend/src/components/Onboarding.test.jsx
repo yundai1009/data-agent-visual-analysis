@@ -37,9 +37,16 @@ describe('新手引导（阶段七十四 B 批：第 4 步讲多份数据对比�
   it('跳过引导写 localStorage，下次不再弹', () => {
     const onDone = vi.fn();
     render(<Onboarding onDone={onDone} />);
-    fireEvent.click(screen.getByTitle('跳过引导'));
+    // 阶段八十九：关闭键从裸图标改成「跳过」文字按钮（真人走查反馈"不知道怎么关"）
+    fireEvent.click(screen.getByRole('button', { name: /跳过/ }));
     expect(localStorage.getItem('onboard_done')).toBe('1');
     expect(onDone).toHaveBeenCalled();
+  });
+
+  it('标题写的是四步，且关闭键带「跳过」文字（阶段八十九）', () => {
+    render(<Onboarding onDone={() => {}} />);
+    expect(screen.getByText(/四步开始分析/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /跳过/ })).toBeTruthy();
   });
 
   it('首屏是第 1 步上传数据', () => {

@@ -79,6 +79,19 @@ function 构建后端环境(基础环境, 设置 = {}, 选项 = {}) {
     }
   }
 
+  // 阶段八十九：限流后端（登录防爆破）。默认 Redis（与后端 EnvConfig.REDIS_RATE_LIMIT 默认一致），
+  // 未显式配置也注入 redis 默认值，让「桌面版默认走 Redis 限流」在 env 层自解释；
+  // 选 memory 才显式关掉。后端 Redis 连不上会 fail-open 回落到进程内 dict，不影响可用性。
+  const 限流模式 = (设置.限流 && 设置.限流.模式) || 'redis';
+  if (限流模式 === 'redis') {
+    env.REDIS_RATE_LIMIT = 'true';
+    env.REDIS_URL = String((设置.限流 && 设置.限流.RedisURL) || 'redis://127.0.0.1:6379/0');
+    const 超时 = Number(设置.限流 && 设置.限流.超时秒);
+    env.REDIS_TIMEOUT = Number.isFinite(超时) && 超时 > 0 ? String(超时) : '1.0';
+  } else {
+    env.REDIS_RATE_LIMIT = 'false';
+  }
+
   return env;
 }
 

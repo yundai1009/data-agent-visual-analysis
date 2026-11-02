@@ -88,6 +88,15 @@ export default function Login() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    // 阶段八十九：密码长度前端中文校验（此前超长密码会透出后端英文原文）
+    if (mode !== 'login' && password.length > 0 && password.length < 6) {
+      setError('密码至少 6 位');
+      return;
+    }
+    if (password.length > 128) {
+      setError('密码最多 128 位');
+      return;
+    }
     setLoading(true);
     try {
       let res;
@@ -236,7 +245,7 @@ export default function Login() {
 
               <div>
                 <label className={labelCls}>密码</label>
-                <input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} className={inputCls} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="至少 6 位" required />
+                <input type="password" maxLength={128} title="密码 6–128 位" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} className={inputCls} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="至少 6 位" required />
               </div>
 
               {mode === 'login' && (

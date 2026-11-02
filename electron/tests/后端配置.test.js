@@ -143,3 +143,24 @@ test('demo 模式即使配了邮件也不注入（免登录，注册流程不存
   assert.strictEqual(env.AUTH_ENABLED, 'false');
   assert.ok(!('SMTP_HOST' in env), 'demo 模式不该注入 SMTP_HOST');
 });
+
+// ---- 阶段八十九：限流后端（Redis）环境变量注入 ----
+test('默认（没配限流）也注入 Redis 默认值：与后端 EnvConfig 默认一致', () => {
+  const env = 构建后端环境(基础, {});
+  assert.strictEqual(env.REDIS_RATE_LIMIT, 'true');
+  assert.strictEqual(env.REDIS_URL, 'redis://127.0.0.1:6379/0');
+  assert.strictEqual(env.REDIS_TIMEOUT, '1.0');
+});
+
+test('限流 redis：URL 与 超时秒 透传', () => {
+  const env = 构建后端环境(基础, { 限流: { 模式: 'redis', RedisURL: 'redis://10.0.0.8:6379/2', 超时秒: 3 } });
+  assert.strictEqual(env.REDIS_RATE_LIMIT, 'true');
+  assert.strictEqual(env.REDIS_URL, 'redis://10.0.0.8:6379/2');
+  assert.strictEqual(env.REDIS_TIMEOUT, '3');
+});
+
+test('限流 memory：显式关掉 Redis（REDIS_RATE_LIMIT=false）', () => {
+  const env = 构建后端环境(基础, { 限流: { 模式: 'memory' } });
+  assert.strictEqual(env.REDIS_RATE_LIMIT, 'false');
+  assert.ok(!('REDIS_URL' in env), '内存限流不该注入 Redis URL');
+});

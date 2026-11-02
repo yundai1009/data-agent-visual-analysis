@@ -52,13 +52,45 @@ test('设置转表单：非法取值不外泄，落到安全默认', () => {
 test('表单转设置：MySQL 分支逐字段映射', () => {
   // 阶段七十九：「邮件服务: null」是新增的整段删除标记（演示模式不配 SMTP），
   // 属于补丁形状的契约扩展，不是放宽断言——下面新增的 SMTP 用例会各自断言真正的值。
+  // 阶段八十九：「限流」段加入补丁形状，默认 redis 会写 RedisURL 与 超时秒。
   assert.deepStrictEqual(表单转设置(mysql表单()), {
     数据库: { 模式: 'mysql', 主机: 'db.local', 端口: 3307, 用户: 'u', 密码: 'p@ss', 库名: 'daa2' },
     认证模式: 'demo',
     JWT密钥: null,
     预置管理员口令: null,
     邮件服务: null,
+    限流: { 模式: 'redis', RedisURL: 'redis://127.0.0.1:6379/0', 超时秒: 1 },
   });
+});
+
+test('阶段八十九：限流转 memory 只写模式；redis 写 URL + 超时秒', () => {
+  const 内存 = 表单转设置({ ...默认表单(), 限流模式: 'memory' });
+  assert.deepStrictEqual(内存.限流, { 模式: 'memory' });
+  const redis = 表单转设置({ ...默认表单(), 限流模式: 'redis', RedisURL: 'redis://10.0.0.8:6379/2', Redis超时秒: 2 });
+  assert.deepStrictEqual(redis.限流, { 模式: 'redis', RedisURL: 'redis://10.0.0.8:6379/2', 超时秒: 2 });
+});
+
+test('阶段八十九：设置转表单 能回填 限流', () => {
+  const 回填 = 设置转表单({ 限流: { 模式: 'memory' } });
+  assert.strictEqual(回填.限流模式, 'memory');
+  const 回填redis = 设置转表单({ 限流: { 模式: 'redis', RedisURL: 'redis://10.0.0.8:6379/2', 超时秒: '2' } });
+  assert.strictEqual(回填redis.限流模式, 'redis');
+  assert.strictEqual(回填redis.RedisURL, 'redis://10.0.0.8:6379/2');
+  assert.strictEqual(回填redis.Redis超时秒, 2, '超时秒应转成数字');
+});
+
+test('阶段八十九：限流校验——空 URL / 非 redis 前缀 / 超时越界都拦', () => {
+  assert.strictEqual(校验表单(默认表单()).ok, true, '默认 redis 形态合法');
+  assert.strictEqual(校验表单({ ...默认表单(), 限流模式: 'memory' }).ok, true, 'memory 模式合法');
+  const 空url = 校验表单({ ...默认表单(), RedisURL: '  ' });
+  assert.ok(空url.错误.some(e => /Redis URL/.test(e)), '空 URL 应报');
+  const 坏前缀 = 校验表单({ ...默认表单(), RedisURL: 'http://x' });
+  assert.ok(坏前缀.错误.some(e => /redis:\/\//.test(e)), '非 redis:// 前缀应报');
+  for (const 秒 of [0, 0.01, 31, 'abc']) {
+    const r = 校验表单({ ...默认表单(), Redis超时秒: 秒 });
+    assert.ok(r.错误.some(e => /超时秒/.test(e)), `超时秒 ${秒} 应被拒绝`);
+  }
+  assert.strictEqual(校验表单({ ...默认表单(), Redis超时秒: 0.5 }).ok, true);
 });
 
 test('表单转设置：切回 SQLite 只保留 模式，MySQL 凭据不再落盘', () => {
@@ -158,15 +190,25 @@ test('是否需要重启：sqlite 下改 MySQL 字段、demo 下改密钥都不�
 
 test('生效配置：只暴露真正会进 env 的字段', () => {
   // 阶段八十七：空设置 {} = 默认 mysql（主机 127.0.0.1 / 端口 3306 / 用户 daa_app / 库 daa）
+  // 阶段八十九：空设置 {} = 默认限流 redis（与后端 EnvConfig 默认一致）
   assert.deepStrictEqual(生效配置({}), {
     数据库: { 模式: 'mysql', 主机: '127.0.0.1', 端口: 3306, 用户: 'daa_app', 密码: '', 库名: 'daa' },
     认证: { 模式: 'demo' },
+    限流: { 模式: 'redis', RedisURL: 'redis://127.0.0.1:6379/0', 超时秒: 1 },
   });
   const c = 生效配置({ 数据库: { 模式: 'mysql', 主机: 'h', 端口: 3306, 用户: 'u', 密码: 'p', 库名: 'daa' }, 认证模式: 'real', JWT密钥: 'k', 预置管理员口令: 'p' });
   assert.strictEqual(c.数据库.模式, 'mysql');
   assert.strictEqual(c.认证.模式, 'real');
   assert.strictEqual(c.认证.JWT密钥, 'k');
   assert.strictEqual(c.认证.邮件, null, 'real 但没填 SMTP 主机，邮件不应参与重启判定');
+});
+
+test('阶段八十九：限流变更要触发重启，memory 与 redis 互切要重启', () => {
+  const 基线 = { 数据库: { 模式: 'mysql', 主机: 'h', 端口: 3306, 用户: 'u', 密码: 'p', 库名: 'daa' }, 认证模式: 'demo', 限流: { 模式: 'redis', RedisURL: 'redis://127.0.0.1:6379/0', 超时秒: 1 } };
+  assert.strictEqual(是否需要重启(基线, { ...基线, 限流: { 模式: 'redis', RedisURL: 'redis://10.0.0.8:6379/0', 超时秒: 1 } }), true, 'Redis URL 变了要重启');
+  assert.strictEqual(是否需要重启(基线, { ...基线, 限流: { 模式: 'memory' } }), true, '切回内存限流要重启');
+  assert.strictEqual(是否需要重启(基线, { ...基线, 限流: { 模式: 'redis', RedisURL: 'redis://127.0.0.1:6379/0', 超时秒: 3 } }), true, '超时秒变了要重启');
+  assert.strictEqual(是否需要重启(基线, 基线), false);
 });
 
 test('生效配置：real + SMTP 主机非空才把邮件纳入（触发重启判定的范围）', () => {

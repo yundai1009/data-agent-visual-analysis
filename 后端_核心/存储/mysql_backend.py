@@ -62,6 +62,14 @@ def _取引擎():
     return _引擎
 
 
+def 关闭连接池() -> None:
+    """阶段八十九：lifespan 关闭时释放引擎连接池（dispose 后下次 取引擎 重建）。"""
+    global _引擎
+    if _引擎 is not None:
+        _引擎.dispose()
+        _引擎 = None
+
+
 @contextmanager
 def get_conn() -> Iterator:
     """借一条连接（用完归还池）；正常 commit、异常 rollback。

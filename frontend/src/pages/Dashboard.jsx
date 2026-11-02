@@ -9,12 +9,14 @@
 // 删除它会怎样：用户失去"把分析结果汇总成一页"的能力。
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Plus, Trash2, Pencil, ExternalLink, X, ImageOff, ChevronLeft, ChevronRight, LayoutGrid, Network, Move } from 'lucide-react';
+import { LayoutDashboard, Plus, Trash2, Pencil, ExternalLink, X, ImageOff, ChevronLeft, ChevronRight, LayoutGrid, Network, Move, Download, FileText, Image as ImageIcon, RefreshCw, Bell } from 'lucide-react';
 import { listDashboards, getDashboard, createDashboard, updateDashboard, deleteDashboard, listReports, listDatasets, exportDashboard } from '../api';
 import EChartsChart from '../components/EChartsChart';
 import LineageGraph from '../components/LineageGraph';
 import LineageDrawer from '../components/LineageDrawer';
 import { 构建血缘图 } from '../utils/看板血缘';
+import { 计算拼接尺寸, 构建打印HTML } from '../utils/看板导出';
+import { 取点击维度, 应用下钻 } from '../utils/看板联动';
 
 // ---- 通用弹窗（名称 + 多选报表）----
 
@@ -53,6 +55,9 @@ export default function Dashboard() {
   const [数据集列表, set数据集列表] = useState([]);     // listDatasets(200).数据集列表
   const [血缘提示, set血缘提示] = useState('');         // 数据集元信息加载失败时的降级提示
   const [选中节点ID, set选中节点ID] = useState('');
+  // 阶段八十九：血缘图导出 PNG（LineageGraph 通过 ref 暴露 导出PNG()）
+  const 血缘图Ref = useRef(null);
+  const [导出血缘中, set导出血缘中] = useState(false);
 
   // 阶段八十五：看板全局筛选器（只对前端已加载的报表数据做客户端过滤/高亮，不影响后端）
   const [筛选维度, set筛选维度] = useState('');          // 选中的维度字段
@@ -62,6 +67,11 @@ export default function Dashboard() {
   // reports 是 `|| []` 新建的字面量数组，useMemo 每次渲染都重建 →
   // set筛选选项 每帧触发重渲染 → 无限渲染循环（vitest worker 直接烧到 4GB/874s CPU）。
   const [导出中, set导出中] = useState(false);
+  // 阶段八十九 · B6：每张图独立的下钻条件栈（报表ID → [{维度,值}, …]）
+  const [下钻集, set下钻集] = useState({});
+  // 阶段八十九 · B7：看板刷新与订阅——手动刷新 + 每 30s 自动拉最新报表数据
+  const [刷新中, set刷新中] = useState(false);
+  const [自动刷新, set自动刷新] = useState(false);
 
   const loadBoards = async () => {
     try {
@@ -382,6 +392,129 @@ export default function Dashboard() {
     }
   };
 
+  // 阶段八十九 · B5：看板导出 PDF/图片。grid 视图每张图经 ref 暴露 导出PNG()（EChartsChart
+  // 的 useImperativeHandle），收集全部 dataURL 后：图片 = canvas 拼接成一张 PNG 下载；
+  // PDF = 打开打印窗口（浏览器/Electron 都可「另存为 PDF」）。
+  const 图Refs = useRef(new Map());
+  const 取图Ref = (id) => (node) => {
+    if (node) 图Refs.current.set(id, node);
+    else 图Refs.current.delete(id);
+  };
+  const 收集图dataURL = () =>
+    reports
+      .filter(r => (r.报表?.图表配置?.类型 || 'bar') !== 'table')
+      .map(r => ({
+        报表ID: r.报表ID,
+        标题: r.标题 || '未命名图表',
+        类型: r.图表类型 || r.报表?.图表配置?.类型 || '图表',
+        结论: r.报表?.结论 || '',
+        dataURL: 图Refs.current.get(r.报表ID)?.导出PNG?.() || null,
+      }))
+      .filter(c => c.dataURL);
+
+  const handleExportImage = () => {
+    const 卡片 = 收集图dataURL();
+    if (!卡片.length) { setError('当前看板没有可导出的图表（表格类报表请到详情页导出）'); return; }
+    try {
+      const { 宽, 高, 格 } = 计算拼接尺寸(卡片.map(() => ({ w: 640, h: 400 })));
+      const canvas = document.createElement('canvas');
+      canvas.width = 宽; canvas.height = 高;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, 宽, 高);
+      // 先画第一张，等其解码后再画后续（同源 dataURL，异步 load）
+      let 已完成 = 0;
+      卡片.forEach((c, i) => {
+        const img = new Image();
+        img.onload = () => {
+          ctx.drawImage(img, 格[i].x, 格[i].y, 640, 400);
+          已完成 += 1;
+          if (已完成 === 卡片.length) 下载图片(canvas.toDataURL('image/png'), `${detail?.名称 || '看板'}-看板.png`);
+        };
+        img.src = c.dataURL;
+      });
+    } catch (e) {
+      setError('看板导出图片失败：' + (e.message || e));
+    }
+  };
+
+  const handleExportPdf = () => {
+    const 卡片 = 收集图dataURL();
+    if (!卡片.length) { setError('当前看板没有可导出的图表'); return; }
+    try {
+      const html = 构建打印HTML({ 看板名: detail?.名称, 卡片, 生成时间: new Date().toLocaleString('zh-CN') });
+      const win = window.open('', '_blank');
+      if (!win) { setError('浏览器拦截了打印窗口，请允许弹出后重试'); return; }
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      // 等图片加载完再触发打印，否则首屏可能缺图
+      setTimeout(() => win.print(), 600);
+    } catch (e) {
+      setError('看板导出 PDF 失败：' + (e.message || e));
+    }
+  };
+
+  // 下载工具：dataURL 转 blob 触发 <a download>
+  const 下载图片 = (dataURL, 名称) => {
+    const a = document.createElement('a');
+    a.href = dataURL;
+    a.download = 名称;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
+  // 阶段八十九 · B6：点图 → 联动 + 下钻。点中的 {维度, 值} 一分为二：
+  //   · 联动：设全局筛选（其它图表按 命中筛选 灰显/高亮）；
+  //   · 下钻：给本图追加一层 {维度, 值}，应用下钻() 把 X 轴切到下一维度（到底则只过滤）。
+  const handleChartClick = (item, params) => {
+    const 命中 = 取点击维度(item.报表?.图表配置 || {}, params);
+    if (!命中) return;
+    set筛选维度(命中.维度);
+    set筛选值(命中.值);
+    const id = item.报表ID;
+    const 已有 = 下钻集[id] || [];
+    // 同一维度重复点击 = 换值而非叠两层（保持栈清晰）
+    const 去掉同维 = 已有.filter(c => c.维度 !== 命中.维度);
+    set下钻集(prev => ({ ...prev, [id]: [...去掉同维, 命中] }));
+  };
+  const handleDrillBack = (id) => {
+    set下钻集(prev => {
+      const 栈 = prev[id] || [];
+      const 新栈 = 栈.slice(0, -1);
+      const 复制 = { ...prev };
+      if (新栈.length) 复制[id] = 新栈;
+      else delete 复制[id];
+      return 复制;
+    });
+  };
+  const handleDrillClear = (id) => {
+    set下钻集(prev => { const 复制 = { ...prev }; delete 复制[id]; return 复制; });
+  };
+
+  // 阶段八十九 · B7：手动刷新——重拉当前看板详情（数据可能已被计划任务更新）与看板列表。
+  const handleRefresh = async () => {
+    if (!currentId || 刷新中) return;
+    set刷新中(true);
+    try {
+      await loadBoards();
+      await loadDetail(currentId);
+    } finally {
+      set刷新中(false);
+    }
+  };
+
+  // 阶段八十九 · B7：订阅（自动刷新）。每 30s 静默重拉当前看板，不打断用户操作；
+  // 切看板/卸载时清定时器；手动刷新时也顺带重置间隔（避免切回来瞬间重复请求）。
+  useEffect(() => {
+    if (!自动刷新 || !currentId) return;
+    const timer = setInterval(() => { loadDetail(currentId); }, 30000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [自动刷新, currentId]);
+
   // 阶段 六十：数据集元信息（文件名/行数/列数）只在首次切到关系视图时拉，
   // 不让默认的网格视图为血缘多背一个请求
   useEffect(() => {
@@ -431,9 +564,12 @@ export default function Dashboard() {
     (detail?.报表列表 || []).forEach((item) => {
       const cfg = item.报表?.图表配置 || {};
       const dims = [cfg.X轴, cfg.颜色, cfg.分组字段].filter(Boolean);
+      // 阶段八十九 · B6：取值同时扫 报表数据 与 图表配置.数据——
+      // 图表真正渲染的是 图表配置.数据，只看 报表数据 会让「图上能点到的值」在联动筛选里缺席。
+      const 行集 = [...(item.报表?.报表数据 || []), ...(Array.isArray(cfg.数据) ? cfg.数据 : [])];
       dims.forEach((d) => {
         const vals = 维度集.get(d) || new Set();
-        (item.报表?.报表数据 || []).forEach((row) => {
+        行集.forEach((row) => {
           if (row && row[d] !== undefined && row[d] !== null && row[d] !== '') vals.add(String(row[d]));
         });
         维度集.set(d, vals);
@@ -446,10 +582,11 @@ export default function Dashboard() {
 
   const 切换维度 = (d) => { set筛选维度(d); set筛选值(''); };
 
-  // 未设筛选 → 全部命中；设了 → 该报表「报表数据」里有任意行满足 维度==值 才命中
+  // 未设筛选 → 全部命中；设了 → 该报表「报表数据 / 图表配置.数据」里有任意行满足 维度==值 才命中
   const 命中筛选 = (item) => {
     if (!筛选维度 || !筛选值) return true;
-    return (item.报表?.报表数据 || []).some(
+    const 行集 = [...(item.报表?.报表数据 || []), ...(Array.isArray(item.报表?.图表配置?.数据) ? item.报表.图表配置.数据 : [])];
+    return 行集.some(
       (row) => String(row?.[筛选维度] ?? '') === 筛选值,
     );
   };
@@ -581,6 +718,44 @@ export default function Dashboard() {
               <ImageOff className="w-3 h-3" /> {导出中 ? '导出中…' : '导出看板'}
             </button>
             <button
+              data-testid="board-refresh"
+              disabled={刷新中}
+              title="重新拉取看板数据"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              onClick={handleRefresh}
+            >
+              <RefreshCw className={`w-3 h-3 ${刷新中 ? 'animate-spin' : ''}`} /> {刷新中 ? '刷新中…' : '刷新'}
+            </button>
+            <button
+              data-testid="board-subscribe"
+              aria-pressed={自动刷新}
+              title={自动刷新 ? '已开启每 30 秒自动刷新，点击关闭' : '开启后每 30 秒自动刷新看板数据'}
+              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs transition-all ${
+                自动刷新 ? 'border-accent bg-accent text-white' : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+              }`}
+              onClick={() => set自动刷新(v => !v)}
+            >
+              <Bell className="w-3 h-3" /> {自动刷新 ? '订阅中' : '订阅'}
+            </button>
+            <button
+              data-testid="board-export-image"
+              disabled={reports.length === 0}
+              title="把当前看板所有图表拼成一张图片"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              onClick={handleExportImage}
+            >
+              <ImageIcon className="w-3 h-3" /> 导出图片
+            </button>
+            <button
+              data-testid="board-export-pdf"
+              disabled={reports.length === 0}
+              title="打开打印视图，可另存为 PDF"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              onClick={handleExportPdf}
+            >
+              <FileText className="w-3 h-3" /> 导出 PDF
+            </button>
+            <button
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-red-100 text-xs text-red-500 hover:bg-red-50 transition-all"
               onClick={handleDelete}
             >
@@ -615,6 +790,9 @@ export default function Dashboard() {
             const cfg = item.报表?.图表配置 || {};
             const chartTypeKey = cfg.类型 || 'bar';
             const conclusion = item.报表?.结论 || '';
+            // 阶段八十九 · B6：下钻状态（每张图独立）；cfg使用 是「应用下钻后」的配置
+            const 下钻条件 = 下钻集[item.报表ID] || [];
+            const cfg使用 = 下钻条件.length ? 应用下钻(cfg, 下钻条件) : cfg;
             const colSpan = spanClassFor(chartTypeKey);
             const 命中 = 命中筛选(item);
             const 有筛选 = Boolean(筛选维度 && 筛选值);
@@ -672,7 +850,31 @@ export default function Dashboard() {
                 {chartTypeKey === 'table' ? (
                   <p className="text-xs text-gray-400 text-center py-10">表格类报表请到详情页查看</p>
                 ) : (
-                  <EChartsChart key={item.报表ID} chartType={chartTypeKey} chartConfig={cfg} height={280} />
+                  <EChartsChart ref={取图Ref(item.报表ID)} key={item.报表ID} chartType={chartTypeKey} chartConfig={cfg使用} height={280} on点选={(p) => handleChartClick(item, p)} />
+                )}
+                {下钻条件.length > 0 && (
+                  <div className="px-4 pb-2 flex items-center gap-1 flex-wrap text-[11px]">
+                    <span className="text-gray-400">下钻：</span>
+                    {下钻条件.map((c) => (
+                      <span key={c.维度} className="px-1.5 py-0.5 rounded bg-accent-soft text-accent">
+                        {c.维度}={c.值}
+                      </span>
+                    ))}
+                    <button
+                      title="返回上一级"
+                      className="ml-1 px-1.5 py-0.5 rounded border border-gray-200 text-gray-500 hover:border-accent hover:text-accent transition-colors"
+                      onClick={() => handleDrillBack(item.报表ID)}
+                    >
+                      返回
+                    </button>
+                    <button
+                      title="清空下钻"
+                      className="px-1.5 py-0.5 rounded border border-gray-200 text-gray-500 hover:border-red-300 hover:text-red-500 transition-colors"
+                      onClick={() => handleDrillClear(item.报表ID)}
+                    >
+                      清空
+                    </button>
+                  </div>
                 )}
                 {conclusion && (
                   <p className="px-4 pb-3.5 text-[11px] text-gray-500 leading-relaxed line-clamp-2">{conclusion}</p>
@@ -693,8 +895,29 @@ export default function Dashboard() {
             <span>· {血缘.统计.数据集数} 个数据集 → {血缘.统计.报表数} 张报表 → {血缘.统计.高价值字段.length} 个复用字段</span>
             <span className="ml-auto">单击节点看详情 · 可拖拽 / 滚轮缩放</span>
           </div>
+          {/* 阶段八十九：血缘图导出 PNG —— 把当前关系图存成图片，可贴进文档/汇报 */}
+          <div className="flex justify-end mb-1">
+            <button
+              onClick={() => {
+                const url = 血缘图Ref.current?.导出PNG?.();
+                if (!url) { setError('血缘图尚未渲染完成，请稍后再试'); return; }
+                set导出血缘中(true);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${detail?.名称 || '看板'}-血缘关系图.png`;
+                a.click();
+                set导出血缘中(false);
+              }}
+              disabled={导出血缘中}
+              className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md border border-gray-200 text-gray-500 hover:text-accent hover:border-accent/40 transition-colors disabled:opacity-50"
+              title="把血缘关系图导出为 PNG 图片"
+            >
+              <Download className="w-3 h-3" /> {导出血缘中 ? '导出中…' : '导出 PNG'}
+            </button>
+          </div>
           {/* 父容器必须给确定高度：h-auto 会让 echarts 拿到 0 高度画不出东西 */}
           <LineageGraph
+            ref={血缘图Ref}
             图数据={血缘}
             高亮节点ID={选中节点ID}
             onSelectNode={set选中节点ID}

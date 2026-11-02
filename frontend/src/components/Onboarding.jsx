@@ -67,8 +67,14 @@ export default function Onboarding({ onDone }) {
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4" onClick={finish}>
       <div className="w-full max-w-sm bg-white rounded-2xl shadow-card-lg p-6" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between mb-4">
-          <p className="text-xs font-semibold text-accent">新手上路 · 三步开始分析</p>
-          <button onClick={finish} className="p-1 rounded hover:bg-gray-100 text-gray-400" title="跳过引导">
+          {/* 阶段八十九：原为「三步开始分析」，但 STEPS 是 4 步（阶段七十四补了第 4 步没改标题） */}
+          <p className="text-xs font-semibold text-accent">新手上路 · 四步开始分析</p>
+          {/* 阶段八十九：原来只有一个光秃秃的 × 图标，真人走查时反馈"不知道怎么关"。
+              改为图标 + 「跳过」文字，点击区域也加大。 */}
+          <button onClick={finish}
+                  className="flex items-center gap-1 -mt-1 -mr-1 px-2 py-1 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all"
+                  title="跳过引导，不再显示">
+            <span className="text-xs">跳过</span>
             <X className="w-4 h-4" />
           </button>
         </div>

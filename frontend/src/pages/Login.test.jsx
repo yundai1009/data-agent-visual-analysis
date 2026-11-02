@@ -122,3 +122,39 @@ describe('Login 页 StrictMode 回归（阶段 52）', () => {
     }, { timeout: 3000 });
   });
 });
+
+describe('登录页密码输入（阶段八十九 · 英文原文透出修复）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('密码框 maxLength=128，从源头拦下超长输入', () => {
+    render(<Login />);
+    expect(screen.getByPlaceholderText('至少 6 位').getAttribute('maxlength')).toBe('128');
+  });
+
+  it('注册时 5 位密码 → 中文提示「密码至少 6 位」，不发请求', async () => {
+    render(<Login />);
+    fireEvent.click(screen.getByText('去注册'));
+    fireEvent.change(screen.getByPlaceholderText('输入用户名'), { target: { value: 'u' } });
+    fireEvent.change(screen.getByPlaceholderText('用于接收注册验证码'), { target: { value: 'a@b.com' } });
+    fireEvent.change(screen.getByPlaceholderText('6 位验证码'), { target: { value: '123456' } });
+    fireEvent.change(screen.getByPlaceholderText('至少 6 位'), { target: { value: '12345' } });
+    fireEvent.click(screen.getByRole('button', { name: '注册' }));
+    await waitFor(() => {
+      expect(screen.getByText('密码至少 6 位')).toBeInTheDocument();
+    });
+    expect(apiMock.register).not.toHaveBeenCalled();
+  });
+
+  it('登录时 200 位密码 → 中文提示「密码最多 128 位」，不发请求', async () => {
+    render(<Login />);
+    fireEvent.change(screen.getByPlaceholderText('输入用户名或邮箱'), { target: { value: 'u' } });
+    fireEvent.change(screen.getByPlaceholderText('至少 6 位'), { target: { value: 'x'.repeat(200) } });
+    fireEvent.click(screen.getByRole('button', { name: '登录' }));
+    await waitFor(() => {
+      expect(screen.getByText('密码最多 128 位')).toBeInTheDocument();
+    });
+    expect(apiMock.login).not.toHaveBeenCalled();
+  });
+});

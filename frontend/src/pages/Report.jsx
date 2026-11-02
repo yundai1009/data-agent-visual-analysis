@@ -13,7 +13,7 @@
  * ============================================================================= */
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Download, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, RotateCcw, GitBranch, Filter, Star, Search, Pencil } from 'lucide-react';
+import { Download, Sparkles, ChevronLeft, ChevronRight, AlertTriangle, Share2, RotateCcw, GitBranch, Filter, Star, Search, Pencil, Trash2 } from 'lucide-react';
 import { listReports, getReport, deleteReport, exportReport, exportFullReport, exportAllReports, replayReport, toggleFavorite, createDashboard } from '../api';
 import EChartsChart from '../components/EChartsChart';
 import ExportDialog from '../components/ExportDialog';
@@ -33,6 +33,10 @@ export default function Report() {
   const [showHist, setShowHist] = useState(false);
   const [cmpSel, setCmpSel] = useState(new Set());
   const [comparing, setComparing] = useState(false);
+  // 阶段八十九：历史报表按条批量删除（此前只有「清空历史」这种破坏性全量删除）
+  const [showDel, setShowDel] = useState(false);
+  const [delSel, setDelSel] = useState(new Set());
+  const [deleting, setDeleting] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
   // 当前展示的完整报表对象（含 图表配置 / 结论 / 推荐说明 / Agent Trace / 导出数据）
   const [localReport, setLocalReport] = useState(null);
@@ -192,13 +196,37 @@ export default function Report() {
     }
     if (failed.length > 0) {
       setLoadError(`有 ${failed.length} 份报表删除失败，已保留`);
-      setReportMeta(prev => prev.filter(item => !failed.includes(item.报表ID)));
+      // 只保留删除失败的那几张（成功的已从后端消失，不该留在 UI 上）
+      setReportMeta(prev => prev.filter(item => failed.includes(item.报表ID)));
       setCurrentIndex(0); // F-M6：列表变化后 currentIndex 收敛，防越界
     } else {
       setReportMeta([]);
       setLocalReport(null);
       setCurrentIndex(0); // F-M6
     }
+  };
+
+  // 阶段八十九：按条批量删除选中的报表（复用 handleClearHistory 的逐条 + 保留失败语义）
+  const handleDeleteSelected = async () => {
+    const ids = Array.from(delSel);
+    if (ids.length === 0) return;
+    if (!window.confirm(`确定删除所选 ${ids.length} 份报表？此操作不可恢复。`)) return;
+    setDeleting(true);
+    const failed = [];
+    for (const id of ids) {
+      try { await deleteReport(id); } catch (e) { failed.push(id); console.error('报表删除失败:', id, e); }
+    }
+    if (failed.length > 0) {
+      setLoadError(`有 ${failed.length} 份报表删除失败，已保留`);
+      // 保留「未选中」+「删除失败」的，只移除真正删成功的那批（避免 UI 删了后端还在）
+      setReportMeta(prev => prev.filter(item => !ids.includes(item.报表ID) || failed.includes(item.报表ID)));
+    } else {
+      setReportMeta(prev => prev.filter(item => !ids.includes(item.报表ID)));
+      if (ids.includes(viewingReportId)) { setLocalReport(null); }
+    }
+    setDelSel(new Set());
+    setCurrentIndex(0); // F-M6：列表变化后收敛，防越界
+    setDeleting(false);
   };
 
   // 导出：Excel / CSV / PDF 走后端端点（带 token），Trace 前端本地生成 Markdown
@@ -472,6 +500,14 @@ export default function Report() {
               >
                 <GitBranch className="w-3 h-3" /> 对比
               </button>
+              {/* 阶段八十九：按条批量删除（此前只有「清空历史」全量删除，太破坏性） */}
+              <button
+                onClick={() => setShowDel(!showDel)}
+                className="ml-2 flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded text-gray-500 hover:text-red-500 transition-colors"
+                title="勾选若干份报表批量删除"
+              >
+                <Trash2 className="w-3 h-3" /> 删除
+              </button>
             </div>
           )}
           {showHist && (
@@ -501,6 +537,36 @@ export default function Report() {
                 className="mt-2 w-full py-1.5 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-deep transition-all disabled:opacity-50"
               >
                 {comparing ? '创建中…' : `对比所选（${cmpSel.size} 份）`}
+              </button>
+            </div>
+          )}
+          {showDel && (
+            <div className="mt-2 w-full max-w-md bg-white border border-red-200 rounded-xl shadow-lg p-3" data-testid="报表删除面板">
+              <p className="text-[11px] font-semibold text-gray-700 mb-1.5">勾选要删除的报表（可多选）</p>
+              <div className="space-y-1 max-h-52 overflow-y-auto">
+                {reportMeta.map((r) => (
+                  <label key={r.报表ID} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-red-50/50 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="accent-red-500 shrink-0"
+                      checked={delSel.has(r.报表ID)}
+                      onChange={(e) => {
+                        const next = new Set(delSel);
+                        if (e.target.checked) next.add(r.报表ID); else next.delete(r.报表ID);
+                        setDelSel(next);
+                      }}
+                    />
+                    <span className="text-xs text-gray-700 truncate">{r.标题 || r.报表ID?.slice(0, 8)}</span>
+                    {r.图表类型 && <span className="ml-auto text-[10px] text-gray-400">{r.图表类型}</span>}
+                  </label>
+                ))}
+              </div>
+              <button
+                onClick={handleDeleteSelected}
+                disabled={delSel.size === 0 || deleting}
+                className="mt-2 w-full py-1.5 rounded-lg bg-red-500 text-white text-xs font-medium hover:bg-red-600 transition-all disabled:opacity-50"
+              >
+                {deleting ? '删除中…' : `删除所选（${delSel.size} 份）`}
               </button>
             </div>
           )}

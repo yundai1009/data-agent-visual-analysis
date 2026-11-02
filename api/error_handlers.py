@@ -18,6 +18,51 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 logger = logging.getLogger(__name__)
 
+# 阶段八十九：Pydantic 校验错误的中文映射。此前超长/过短等校验失败会直接把英文
+# 原文（如 "String should have at most 128 characters"）透给用户；这里只翻译常见
+# 校验类型，未知类型回落原文，绝不吞掉信息。
+_字段中文 = {
+    "password": "密码",
+    "username": "用户名",
+    "email": "邮箱",
+    "code": "验证码",
+    "q": "搜索词",
+    "agent_mode": "智能体模式",
+    "limit": "分页大小",
+    "offset": "分页偏移",
+}
+
+
+def _中文校验错误(err: dict) -> str:
+    typ = err.get("type", "")
+    ctx = err.get("ctx") or {}
+    field = ".".join(str(x) for x in err.get("loc", []) if x not in ("body", "query"))
+    名 = _字段中文.get(field, field or "参数")
+    if typ == "string_too_long":
+        return f"{名}最多 {ctx.get('max_length', '?')} 个字符"
+    if typ == "string_too_short":
+        return f"{名}至少 {ctx.get('min_length', '?')} 个字符"
+    if typ == "string_pattern_mismatch":
+        return f"{名}格式不正确"
+    if typ == "missing":
+        return f"缺少{名}"
+    if typ in ("too_long", "list_too_long"):
+        return f"{名}最多 {ctx.get('max_length', '?')} 项"
+    if typ in ("too_short", "list_too_short"):
+        return f"{名}至少 {ctx.get('min_length', '?')} 项"
+    if typ == "greater_than":
+        return f"{名}必须大于 {ctx.get('gt', '?')}"
+    if typ == "greater_than_equal":
+        return f"{名}不能小于 {ctx.get('ge', '?')}"
+    if typ == "less_than":
+        return f"{名}必须小于 {ctx.get('lt', '?')}"
+    if typ == "less_than_equal":
+        return f"{名}不能大于 {ctx.get('le', '?')}"
+    if typ in ("literal_error", "enum"):
+        return f"{名}取值不受支持"
+    # 未知类型：回落 Pydantic 原文，保证不丢信息
+    return err.get("msg", "参数校验失败")
+
 
 def _request_id(request: Request) -> str:
     """从 request.state 取 request_id（由中间件写入），取不到则返回空。"""
@@ -58,8 +103,8 @@ def register_error_handlers(app: FastAPI) -> None:
         errors = exc.errors()
         if errors:
             loc = ".".join(str(x) for x in errors[0].get("loc", []) if x != "body")
-            msg = errors[0].get("msg", "参数校验失败")
-            message = f"参数错误：{loc} {msg}"
+            校验说明 = _中文校验错误(errors[0])
+            message = f"参数错误：{校验说明}"
         else:
             message = "参数校验失败"
         logger.info("VALIDATION_ERROR %s %s (request_id=%s): %s", request.method,

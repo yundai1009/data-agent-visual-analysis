@@ -116,6 +116,24 @@
   </section>
 
   <section class="卡片">
+    <h2>限流后端（登录防爆破）</h2>
+    <p class="说明">连续输错密码的账号会被临时锁住。Redis 让「本机 + 多 worker」共享同一份计数，Redis 未启动时后端自动回落到进程内计数（仍可登录，只是单进程窗口）。</p>
+    <label class="选项">
+      <input type="radio" name="限流模式" value="redis" checked>
+      <b>Redis</b><span class="说明">　默认。多进程共享窗口（需要本机或局域网内有一台 Redis）</span>
+    </label>
+    <label class="选项">
+      <input type="radio" name="限流模式" value="memory">
+      <b>内存计数</b><span class="说明">　进程内固定窗口，零依赖（仅当前进程生效，换 worker 即重置）</span>
+    </label>
+    <fieldset id="Redis字段">
+      <legend>Redis 连接</legend>
+      <div class="行"><label>URL</label><input type="text" id="RedisURL" placeholder="redis://127.0.0.1:6379/0"></div>
+      <div class="行"><label>超时（秒）</label><input type="number" id="Redis超时秒" min="0.1" max="30" step="0.1" placeholder="1"></div>
+    </fieldset>
+  </section>
+
+  <section class="卡片">
     <h2>配置文件</h2>
     <p class="说明"><code id="文件路径">读取中…</code></p>
     <button type="button" id="打开目录">打开所在目录</button>
@@ -141,14 +159,17 @@
     JWT密钥: 'JWT密钥', 预置管理员口令: '预置口令',
     邮件主机: '邮件主机', 邮件端口: '邮件端口', 邮件用户: '邮件用户',
     邮件密码: '邮件密码', 邮件发件人: '邮件发件人',
+    RedisURL: 'RedisURL', Redis超时秒: 'Redis超时秒',
   };
 
   function 读表单() {
-    var 表单 = { 数据库模式: '', 认证模式: '' };
+    var 表单 = { 数据库模式: '', 认证模式: '', 限流模式: '' };
     var 选中库 = document.querySelector('input[name="数据库模式"]:checked');
     var 选中认 = document.querySelector('input[name="认证模式"]:checked');
+    var 选中限 = document.querySelector('input[name="限流模式"]:checked');
     表单.数据库模式 = 选中库 ? 选中库.value : '';
     表单.认证模式 = 选中认 ? 选中认.value : '';
+    表单.限流模式 = 选中限 ? 选中限.value : '';
     Object.keys(字段).forEach(function (k) { 表单[k] = $(字段[k]).value; });
     return 表单;
   }
@@ -157,6 +178,7 @@
     表单 = 表单 || {};
     document.querySelector('input[name="数据库模式"][value="' + (表单.数据库模式 || 'mysql') + '"]').checked = true;
     document.querySelector('input[name="认证模式"][value="' + (表单.认证模式 || 'demo') + '"]').checked = true;
+    document.querySelector('input[name="限流模式"][value="' + (表单.限流模式 || 'redis') + '"]').checked = true;
     Object.keys(字段).forEach(function (k) { $(字段[k]).value = 表单[k] == null ? '' : String(表单[k]); });
     同步可见性();
   }
@@ -165,6 +187,7 @@
     var 表单 = 读表单();
     $('MySQL字段').hidden = 表单.数据库模式 !== 'mysql';
     $('认证字段').hidden = 表单.认证模式 !== 'real';
+    $('Redis字段').hidden = 表单.限流模式 !== 'redis';
   }
 
   function 显示错误(列表) {

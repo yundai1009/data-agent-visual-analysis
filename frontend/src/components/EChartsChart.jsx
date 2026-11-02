@@ -20,16 +20,28 @@
 // - 渲染异常不让整页崩：catch 之后把错误画成图内标题（#ef4444），空白图也比整页报错更好定位问题。
 // - 阶段 六十 起主题常量搬到 utils/图表主题.js（血缘图与它共用单一来源），改色板只改那一个文件。
 
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { Download, Copy } from 'lucide-react';
 // 阶段 六十：色板/主题/转义抽到 utils/图表主题.js，与 LineageGraph 共用单一来源
 import { COLORS, CHART_TEXT_STYLE, CHART_TOOLTIP, 转义HTML as escapeHtml } from '../utils/图表主题';
 
-export default function EChartsChart({ chartType, chartConfig, height = 320 }) {
+const EChartsChart = forwardRef(function EChartsChart({ chartType, chartConfig, height = 320, on点选 }, ref) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const echartsRef = useRef(null);
   const [ready, setReady] = useState(false);
+  // 阶段八十九 · B6：把最新回调放进 ref，避免 click 绑定依赖它而在每次父渲染时重绑
+  const 点选Ref = useRef(on点选);
+  点选Ref.current = on点选;
+
+  // 阶段八十九：看板导出 PDF/图片 —— 父组件经 ref 收集每张图的 dataURL（无实例则 null）
+  useImperativeHandle(ref, () => ({
+    导出PNG() {
+      const chart = chartRef.current;
+      if (!chart) return null;
+      return chart.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#ffffff' });
+    },
+  }));
 
   // echarts 懒加载：仅在报表页首次渲染图表时动态加载（约 1MB 独立 chunk），
   // 避免打入主 bundle 拖慢首屏；加载完成前显示占位
@@ -74,6 +86,12 @@ export default function EChartsChart({ chartType, chartConfig, height = 320 }) {
         title: { text: `图表渲染异常: ${e.message}`, left: 'center', textStyle: { fontSize: 13, color: '#ef4444' } },
       });
     }
+
+    // 阶段八十九 · B6：点图 → 联动筛选/下钻。off 旧的再 on 新的，避免实例复用叠加监听。
+    chart.off('click');
+    chart.on('click', (params) => {
+      if (点选Ref.current) 点选Ref.current(params);
+    });
 
     return () => {
       // 组件卸载或参数变化时释放实例，避免内存泄漏
@@ -172,7 +190,8 @@ export default function EChartsChart({ chartType, chartConfig, height = 320 }) {
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
     </div>
   );
-}
+});
+export default EChartsChart;
 
 // 阶段七十四 · A2：默认子标题——「这张图在比什么」。
 // 标题是用户原话（可能是"那华南区呢"这种半个问句），子标题补上结构信息：

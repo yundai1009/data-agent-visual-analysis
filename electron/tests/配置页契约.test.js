@@ -160,3 +160,44 @@ test('SMTP 主机/端口/用户/密码/发件人 既是 HTML id 又是 字段 �
     assert.ok(htmlId.includes(v), `字段映射值 ${v} 在 HTML 里没有对应 id`);
   }
 });
+
+// ---- 阶段八十九：限流后端（Redis）字段组 ----
+test('限流 单选组 name 与取值都在 HTML 里，且默认勾选 redis', () => {
+  for (const v of ['redis', 'memory']) {
+    assert.ok(html.includes(`name="限流模式" value="${v}"`), `缺少 限流模式=${v}`);
+  }
+  // 默认形态 = Redis（与后端 EnvConfig 默认一致）
+  const redis标签 = html.match(/<input[^>]*name="限流模式"[^>]*value="redis"[^>]*>/);
+  assert.ok(redis标签 && /checked/.test(redis标签[0]), 'redis 单选应默认勾选');
+});
+
+test('Redis 字段（URL/超时秒）id 在 HTML 里且类型正确', () => {
+  for (const [id, 应该是] of [['RedisURL', 'text'], ['Redis超时秒', 'number']]) {
+    assert.ok(htmlId.includes(id), `HTML 缺少 id="${id}"`);
+    const 标签 = html.match(new RegExp(`<input[^>]*id="${id}"[^>]*>`));
+    assert.ok(标签 && 标签[0].includes(`type="${应该是}"`), `id="${id}" 类型应为 ${应该是}`);
+  }
+});
+
+test('Redis 字段在「限流」fieldset 内，并被页面 字段 映射表收集', () => {
+  const 开 = html.indexOf('id="Redis字段"');
+  assert.ok(开 >= 0, '缺少 Redis字段 fieldset');
+  const 字段起 = html.lastIndexOf('<fieldset', 开);
+  let 深度 = 0, 游标 = 字段起, 结束 = html.length;
+  while (游标 < html.length) {
+    const 下一个开 = html.indexOf('<fieldset', 游标 + 1);
+    const 下一个闭 = html.indexOf('</fieldset>', 游标 + 1);
+    if (下一个闭 < 0) break;
+    if (下一个开 >= 0 && 下一个开 < 下一个闭) { 深度 += 1; 游标 = 下一个开; continue; }
+    深度 -= 1; 游标 = 下一个闭;
+    if (深度 <= 0) { 结束 = 下一个闭 + '</fieldset>'.length; break; }
+  }
+  const 区块 = html.slice(字段起, 结束);
+  for (const id of ['RedisURL', 'Redis超时秒']) {
+    assert.ok(区块.includes(`id="${id}"`), `Redis 字段 ${id} 应在 Redis字段 内`);
+  }
+  const 字段块 = 内联脚本.match(/var 字段 = \{([\s\S]*?)\};/);
+  for (const id of ['RedisURL', 'Redis超时秒']) {
+    assert.ok(字段块[1].includes(id), `字段映射表缺 ${id}`);
+  }
+});

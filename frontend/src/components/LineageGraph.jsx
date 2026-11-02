@@ -11,16 +11,25 @@
 // 只有卸载才 dispose。不这么做的话，每次点节点换高亮都要销毁重建实例——
 // 重建期间画布会闪空白，用户的 roam 缩放与拖拽位置也会被重置。
 // option 一律来自 utils/看板血缘.js 的 构建血缘Option，本组件不自己拼色板/提示样式。
-import { useEffect, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { 构建血缘Option } from '../utils/看板血缘';
 
-export default function LineageGraph({ 图数据, 高亮节点ID = '', onSelectNode, height = 520 }) {
+const LineageGraph = forwardRef(function LineageGraph({ 图数据, 高亮节点ID = '', onSelectNode, height = 520 }, ref) {
   const 容器 = useRef(null);
   const 图实例 = useRef(null);
   const echarts模块 = useRef(null);
   const 回调 = useRef(onSelectNode);      // 事件回调用 ref 取最新值，避免注册时闭包过期
   const [就绪, set就绪] = useState(false);
   const 无数据 = !((图数据?.节点 || []).length);
+
+  // 阶段八十九：血缘图导出 PNG —— 父组件通过 ref 调用 导出PNG()，返回 dataURL（无图实例则 null）
+  useImperativeHandle(ref, () => ({
+    导出PNG() {
+      const chart = 图实例.current;
+      if (!chart) return null;
+      return chart.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#ffffff' });
+    },
+  }));
 
   useEffect(() => { 回调.current = onSelectNode; }, [onSelectNode]);
 
@@ -102,4 +111,6 @@ export default function LineageGraph({ 图数据, 高亮节点ID = '', onSelectN
       <div ref={容器} className="w-full h-full" data-testid="血缘图画布" />
     </div>
   );
-}
+});
+
+export default LineageGraph;

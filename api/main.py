@@ -312,7 +312,18 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error("调度器启动失败（定时任务不可用，不影响手动生成）：%s", exc)
     yield
-    # TODO: 关闭时清理连接
+    # 阶段八十九：关闭时清理连接——停止调度线程（daemon 也会随进程退出，这里显式停更干净），
+    # 并释放数据库连接池（SQLAlchemy 引擎 dispose，避免进程退出时挂起未归还连接）。
+    try:
+        from services.scheduler import 停止调度器
+        停止调度器()
+    except Exception as exc:
+        logger.warning("调度器停止异常（不影响退出）：%s", exc)
+    try:
+        from 后端_核心.存储.mysql_backend import 关闭连接池
+        关闭连接池()
+    except Exception as exc:
+        logger.warning("连接池清理异常（不影响退出）：%s", exc)
 
 
 # 创建应用实例：title/version 会展示在 /docs 与 /openapi.json；lifespan 绑定启动流程

@@ -294,9 +294,22 @@ ipcMain.handle('desktop:get-file-path', (event, file) => {
   try { return webUtils.getPathForFile(file); } catch { return ''; }
 });
 ipcMain.handle('desktop:get-version', () => app.getVersion());
-// 更新检查仓库（一期占位）：用户已决定用「专用更新仓库」（非主仓库）承载 Releases，
-// 但该仓库尚未创建——此处暂指向主仓库占位，创建后改为专用仓库地址（见 docs 后续计划）。
-const 更新仓库 = 'yundai1009/data-agent-visual-analysis';
+// 更新检查仓库：优先读 package.json 的 build.publish/repository 配置，缺省回落主仓库。
+// 阶段八十九：原先是写死的「占位」常量且注释说仓库尚未创建——实际主仓库已存在 Release 通道，
+// 注释与实现不一致会误导后来者，这里改为可配置 + 兜底，并同步 package.json 的 repository 字段。
+function 解析更新仓库() {
+  try {
+    const 包 = require('./package.json');
+    const 形如 = (s) => {
+      const m = String(s || '').match(/github\.com[/:]([^/]+)\/([^/#]+)/i);
+      return m ? `${m[1]}/${m[2].replace(/\.git$/, '')}` : '';
+    };
+    return 形如(包?.repository?.url) || 形如(包?.build?.publish?.url) || 'yundai1009/data-agent-visual-analysis';
+  } catch {
+    return 'yundai1009/data-agent-visual-analysis';
+  }
+}
+const 更新仓库 = 解析更新仓库();
 ipcMain.handle('desktop:check-update', async () => {
   // 一期：GitHub Releases API（比对最新 tag 与本版，仅提示不自动下载；二期接自动安装）
   try {
