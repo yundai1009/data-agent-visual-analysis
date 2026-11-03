@@ -243,6 +243,16 @@ export default function Sidebar({ collapsed, onToggle }) {
         >
           <Sparkles className="w-3.5 h-3.5 shrink-0 text-accent-soft" />
           <span className="whitespace-nowrap">切换到专业版</span>
+          {/* 阶段九十 · R13：基础版里用 PRO 角标把「还有专业层」做成可感知差异。
+              角标跟着「切换入口」而非隐藏条目——基础版本来就收起了专业条目，
+              角标标在入口上，用户一眼就知道这里能解锁更多能力。 */}
+          <span
+            className="ml-auto shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded tracking-wide"
+            style={{ color: '#ffd166', background: 'rgba(255,209,102,.14)', border: '1px solid rgba(255,209,102,.4)' }}
+            aria-hidden="true"
+          >
+            PRO
+          </span>
         </button>
       )}
 
