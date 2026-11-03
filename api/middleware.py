@@ -70,6 +70,29 @@ class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
             raise
 
 
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """阶段九十 R12：给每个响应补安全响应头（防 clickjacking / MIME 嗅探 / 敏感 API 泄 referrer）。
+
+    技术评审团：审计只提了 CSP 与 clickjacking「待补」。这里不重造完整 CSP——
+    完整策略容易把 ECharts 内联脚本、内联样式或 data: 图片拦掉，反而把正常页面
+    搞坏；只补**零功能风险**的三条：frame-ancestors（防被第三方 iframe 套壳点击）、
+    nosniff（防 MIME 嗅探）、Referrer-Policy（防跳外链时把内部路径带出去）。
+    注：仅设 frame-ancestors 的 CSP 头是合法且只约束嵌套，不影响页内任何资源。
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        # 与已有 CSP 头共存：若别处已设 CSP，只补 frame-ancestors，避免整段覆盖。
+        existing_csp = response.headers.get("Content-Security-Policy", "")
+        if "frame-ancestors" not in existing_csp:
+            response.headers["Content-Security-Policy"] = f"{existing_csp}; frame-ancestors 'self'".strip("; ")
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "same-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        return response
+
+
 class RequestIDMiddleware(BaseHTTPMiddleware):
     """为每个请求注入 request_id。"""
 

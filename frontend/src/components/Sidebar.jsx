@@ -15,10 +15,11 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
-import { Database, Zap, BarChart3, LayoutDashboard, GitCompare, Shield, ChevronLeft, ChevronRight, LogOut, X, UserRoundPen, MessageSquareHeart, Moon, Sun, Search, Sparkles } from 'lucide-react';
+import { Database, Zap, BarChart3, LayoutDashboard, GitCompare, Shield, ChevronLeft, ChevronRight, LogOut, X, UserRoundPen, MessageSquareHeart, Moon, Sun, Search, Sparkles, CircleHelp } from 'lucide-react';
 import { useApp } from '../AppContext';
 import { submitFeedback, globalSearch } from '../api';
 import { 取模式, 设模式, 过滤侧栏项, 模式 } from '../utils/capabilities';
+import { 平台版本 } from '../utils/版本';
 
 const navItems = [
   { to: '/data', icon: Database, label: '数据管理' },
@@ -56,6 +57,8 @@ export default function Sidebar({ collapsed, onToggle }) {
   const [fbText, setFbText] = useState('');
   const [fbMsg, setFbMsg] = useState('');
   const [fbBusy, setFbBusy] = useState(false);
+  // 阶段九十 · R14：帮助与版本弹窗（站内帮助入口）
+  const [helpOpen, setHelpOpen] = useState(false);
 
   // 优化⑧：全局搜索（数据集/报表/模板）
   const [searchQ, setSearchQ] = useState('');
@@ -275,6 +278,16 @@ export default function Sidebar({ collapsed, onToggle }) {
           {!collapsed && <span className="ml-2 text-xs">意见反馈</span>}
         </button>
 
+        {/* 阶段九十 · R14：站内帮助 + 版本入口（产品评审团"无站内帮助/版本入口"） */}
+        <button
+          onClick={() => setHelpOpen(true)}
+          className="flex items-center justify-center w-full py-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] transition-all"
+          title="帮助与版本"
+        >
+          <CircleHelp className="w-4 h-4 shrink-0" />
+          {!collapsed && <span className="ml-2 text-xs">帮助与版本</span>}
+        </button>
+
         <button
           onClick={() => setDark(!dark)}
           className="flex items-center justify-center w-full py-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] transition-all"
@@ -343,6 +356,32 @@ export default function Sidebar({ collapsed, onToggle }) {
             >
               {fbBusy ? '提交中…' : '提交反馈'}
             </button>
+          </div>
+        </div>
+      , document.body)}
+
+      {/* 阶段九十 · R14：帮助与版本弹窗。给 0 基础用户一个「第一步干什么」的站内说明，
+          并暴露版本号（此前版本信息散在安装包/发布说明里，站内无从查看）。 */}
+      {helpOpen && createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setHelpOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-[var(--shadow-card-lg)] w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
+                <CircleHelp className="w-4 h-4 text-accent" /> 帮助与版本
+              </h3>
+              <button onClick={() => setHelpOpen(false)} className="p-1 rounded hover:bg-gray-100 text-gray-400">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <ol className="space-y-2 text-xs text-gray-600 leading-relaxed mb-4">
+              <li><b className="text-gray-800">① 上传数据</b>：在「数据管理」上传 Excel/CSV，或直接用内置示例体验。</li>
+              <li><b className="text-gray-800">② 一句话分析</b>：在「智能分析」用自然语言说出你想看什么（如"按月统计销售额"）。</li>
+              <li><b className="text-gray-800">③ 看报表</b>：结果自动生成图表与结论，可导出图片/PDF、加入看板。</li>
+            </ol>
+            <div className="flex items-center justify-between text-[11px] text-gray-400 border-t border-gray-100 pt-3">
+              <span>数据助手 · 自助分析平台</span>
+              <span className="font-medium text-gray-500">v{平台版本}</span>
+            </div>
           </div>
         </div>
       , document.body)}

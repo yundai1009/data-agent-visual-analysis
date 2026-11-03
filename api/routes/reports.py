@@ -121,6 +121,17 @@ except Exception:  # noqa: BLE001
 # Fix E3（阶段54-9 · 压测 P2-6）：并发上限不再硬编码 4——默认 max(4, CPU核数)
 # （压测建议 8-12），env DAA_GENERATE_CONCURRENCY 可覆盖；503 语义不变（并发
 # 上限仍存在，只是更高，容量规划按新值）。
+# ═══ 阶段九十 R11 · 线程/连接/生成并发协同不变量（技术评审团"上线后迭代"）═══
+# 三个资源池必须满足 生成并发 ≤ 数据库连接池可服务数 ≤ FastAPI 线程池 的偏序，
+# 否则高并发下会先耗尽线程池（请求排队）或连接池（OperationalError），而这两者
+# 的故障表现都只是"变慢/偶发失败"，监控不易直接归因。本机默认值校验：
+#   - 生成并发 = max(4, cpu_count)（本机 cpu_count=8 → 8；env 可覆盖，见 _生成并发上限）
+#   - 导出并发 = 4（_EXPORT_SEMAPHORE，与生成分池隔离，压测结论 4 为保守上限）
+#   - 连接池   = pool_size 10 + max_overflow 20 = 峰值 30（mysql_backend._取引擎）
+#   - 线程池   = FastAPI/Starlette 默认 40（uvicorn 每进程一个 AnyIO worker 线程池）
+# 校验结论：8 生成 × ~1 连接 + 导出 4 + 其它请求 ≈ <30，远低于 40，偏序成立。
+# 若机器是 16 核+且开满 DAA_GENERATE_CONCURRENCY，需同步上调连接池 pool_size /
+# max_overflow（改 mysql_backend._取引擎），否则生成会先撞连接池而不是线程池。
 def _生成并发上限() -> int:
     """generate 并发上限：env DAA_GENERATE_CONCURRENCY 覆盖；默认 max(4, cpu_count)。
 

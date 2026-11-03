@@ -20,10 +20,20 @@ export const 每图高 = 400;
 export const 图间距 = 12;
 export const 每行宽 = 2;
 
+// 阶段九十 · R10（技术评审团"上线后迭代：导出大图内存"）：
+// canvas 的像素总量与单边长度都有浏览器硬上限，超限时 canvas.toDataURL() 要么抛
+// SecurityError/Error，要么**静默返回全黑图**（iOS/Safari 与部分 Chrome 版本的实际行为），
+// 用户拿到一张黑图却不知道原因。这里显式定上限并在超限时整体等比降采样：
+//   - 单边 8192：远低于各浏览器 16384 的极限，留出安全余量；
+//   - 总像素 20M（约 80MB 未压缩 RGBA）：再大在低配机器上就会触发 OOM 或长时间卡顿。
+export const 画布单边上限 = 8192;
+export const 画布总像素上限 = 20000000;
+
 /** 计算拼接画布尺寸与每格坐标。
  * @param {Array<{w?:number,h?:number}>} 尺寸列表 每张图的宽高（缺省用 每图宽/每图高）
  * @param {number} [每行=每行宽] 每行放几张
- * @returns {{宽:number,高:number,格:[{x:number,y:number}]}} */
+ * @returns {{宽:number,高:number,格:[{x:number,y:number}],缩放:number}}
+ *   缩放 < 1 表示超上限已被等比缩过（调用方据此按 缩放 绘制每格，别再用 640×400 硬画） */
 export function 计算拼接尺寸(尺寸列表, 每行 = 每行宽) {
   const 尺寸 = (尺寸列表 || []).map(d => ({
     w: Number(d?.w) || 每图宽,
@@ -37,14 +47,27 @@ export function 计算拼接尺寸(尺寸列表, 每行 = 每行宽) {
     const 本行 = 尺寸.slice(r * 每行, r * 每行 + 每行);
     行高列表.push(本行.reduce((m, d) => Math.max(m, d.h), 每图高));
   }
-  const 宽 = 列数 * 每图宽 + (列数 - 1) * 图间距;
-  const 高 = 行高列表.reduce((s, h) => s + h, 0) + (行数 - 1) * 图间距;
+  const 原宽 = 列数 * 每图宽 + (列数 - 1) * 图间距;
+  const 原高 = 行高列表.reduce((s, h) => s + h, 0) + (行数 - 1) * 图间距;
+  // 超限 → 等比缩小（保持版式不变形）：先按单边，再按总像素
+  let 缩放 = 1;
+  if (原宽 > 画布单边上限) 缩放 = Math.min(缩放, 画布单边上限 / 原宽);
+  if (原高 > 画布单边上限) 缩放 = Math.min(缩放, 画布单边上限 / 原高);
+  if (原宽 * 原高 * 缩放 * 缩放 > 画布总像素上限) {
+    缩放 = Math.min(缩放, Math.sqrt(画布总像素上限 / (原宽 * 原高)));
+  }
+  缩放 = Math.max(0.05, Math.floor(缩放 * 1000) / 1000); // 保留 3 位，避免浮点抖动
+  const 宽 = Math.max(1, Math.round(原宽 * 缩放));
+  const 高 = Math.max(1, Math.round(原高 * 缩放));
   const 格 = 尺寸.map((d, i) => {
     const 行 = Math.floor(i / 每行);
     const 行前高 = 行高列表.slice(0, 行).reduce((s, h) => s + h, 0);
-    return { x: (i % 每行) * (每图宽 + 图间距), y: 行前高 + 行 * 图间距 };
+    return {
+      x: Math.round(((i % 每行) * (每图宽 + 图间距)) * 缩放),
+      y: Math.round((行前高 + 行 * 图间距) * 缩放),
+    };
   });
-  return { 宽, 高, 格 };
+  return { 宽, 高, 格, 缩放 };
 }
 
 /** 转义 HTML（<img> 用不上，但标题/结论是用户文本，必须转义防注入）。 */

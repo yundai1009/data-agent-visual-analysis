@@ -15,7 +15,22 @@ import { useNavigate } from 'react-router-dom';
 import { UserRoundPen, KeyRound, UserX, Gauge, LayoutGrid } from 'lucide-react';
 import { useApp } from '../AppContext';
 import { changeUsername, changePassword, deleteAccount, getMyUsage } from '../api';
-import { 取模式, 设模式, 模式 } from '../utils/capabilities';
+import { 取模式, 设模式, 模式, 能力表 } from '../utils/capabilities';
+
+// 阶段九十 · R13：专业版独有能力的中文名（供「专业版额外包含」清单展示）。
+// 能力表是唯一真相源，这里只翻译，不重复真值——基础/专业差异永远跟表走。
+const 专业能力名 = {
+  模型选择: '自选模型',
+  智能体模式: '多智能体协同',
+  模板: '模板复用',
+  定时任务: '定时执行',
+  高级清洗: '高级清洗',
+  血缘图: '看板血缘图',
+};
+// 由能力表派生的「专业版独有」清单：basic=false 且 pro=true 的能力。
+const 专业独有能力 = Object.entries(能力表)
+  .filter(([, v]) => v && v.basic === false && v.pro === true)
+  .map(([k]) => 专业能力名[k] || k);
 
 // 三个共享样式串：普通输入框 / 主按钮（蓝）/ 危险按钮（红）
 const inputCls =
@@ -231,6 +246,21 @@ export default function Account() {
               </button>
             );
           })}
+        </div>
+        {/* 阶段九十 · R13：把「专业版额外包含」显式列出——基础/专业侧栏项刻意相同
+            （入口不藏，差异在页内控件），用户光看侧栏感觉不出区别。这里把能力表里
+            真正只有专业版才有的能力逐条摆出来，差异变得可感知，且永远跟表走。 */}
+        <div className="mt-3 rounded-lg bg-gray-50 border border-gray-100 px-3 py-2.5">
+          <p className="text-[11px] text-gray-500 mb-1.5">
+            专业版额外包含{当前模式 === 模式.专业版 ? '（当前已开启）' : '（当前为基础版，切换后即解锁）'}
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {专业独有能力.map((名) => (
+              <span key={名} className="text-[11px] px-2 py-0.5 rounded-md bg-accent-soft text-accent font-medium">
+                {名}
+              </span>
+            ))}
+          </div>
         </div>
       </Section>
 

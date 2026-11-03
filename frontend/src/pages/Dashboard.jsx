@@ -91,14 +91,16 @@ export default function Dashboard() {
     const seq = ++loadSeqRef.current;
     try {
       const res = await getDashboard(id);
-      if (loadSeqRef.current !== seq) return;
+      if (loadSeqRef.current !== seq) return true;
       // 阶段八十四：layout 兼容旧看板（后端已保证是对象，这里再兜一层）
       const 布局 = (res?.布局 && typeof res.布局 === 'object') ? res.布局 : {};
       setDetail({ ...res, 布局 });
+      return true;
     } catch (e) {
-      if (loadSeqRef.current !== seq) return;
+      if (loadSeqRef.current !== seq) return false;
       setError('看板详情加载失败：' + (e.message || e));
       setDetail(null);
+      return false;
     }
   };
 
@@ -416,7 +418,11 @@ export default function Dashboard() {
     const 卡片 = 收集图dataURL();
     if (!卡片.length) { setError('当前看板没有可导出的图表（表格类报表请到详情页导出）'); return; }
     try {
-      const { 宽, 高, 格 } = 计算拼接尺寸(卡片.map(() => ({ w: 640, h: 400 })));
+      // 阶段九十 · R10：拼接前先算好缩放——超限画布 toDataURL 会抛错或静默返回黑图，
+      // 这里统一降采样并让每格按 缩放 绘制（不能再用 640×400 硬画，否则格子对不上）。
+      const { 宽, 高, 格, 缩放 } = 计算拼接尺寸(卡片.map(() => ({ w: 640, h: 400 })));
+      const 格宽 = Math.round(640 * 缩放);
+      const 格高 = Math.round(400 * 缩放);
       const canvas = document.createElement('canvas');
       canvas.width = 宽; canvas.height = 高;
       const ctx = canvas.getContext('2d');
@@ -424,12 +430,33 @@ export default function Dashboard() {
       ctx.fillRect(0, 0, 宽, 高);
       // 先画第一张，等其解码后再画后续（同源 dataURL，异步 load）
       let 已完成 = 0;
+      let 失败数 = 0;
       卡片.forEach((c, i) => {
         const img = new Image();
         img.onload = () => {
-          ctx.drawImage(img, 格[i].x, 格[i].y, 640, 400);
+          ctx.drawImage(img, 格[i].x, 格[i].y, 格宽, 格高);
           已完成 += 1;
-          if (已完成 === 卡片.length) 下载图片(canvas.toDataURL('image/png'), `${detail?.名称 || '看板'}-看板.png`);
+          if (已完成 === 卡片.length) {
+            if (失败数 > 0) {
+              setError(`看板导出图片完成，但有 ${失败数} 张图渲染失败（导出的是其余图表）`);
+            }
+            if (失败数 === 卡片.length) return; // 全部失败：不产出全黑图，直接提示
+            下载图片(canvas.toDataURL('image/png'), `${detail?.名称 || '看板'}-看板.png`);
+          }
+        };
+        // 阶段九十 · R10：单张图解码失败（dataURL 损坏/超大被浏览器拒载）不能把整个
+        // 导出挂成死等——旧实现无 onerror，一张坏图就永远到不了 已完成===卡片.length。
+        img.onerror = () => {
+          失败数 += 1;
+          已完成 += 1;
+          if (已完成 === 卡片.length) {
+            if (失败数 === 卡片.length) {
+              setError('看板导出图片失败：所有图表都无法渲染，请确认图表数据完整');
+              return;
+            }
+            setError(`看板导出图片完成，但有 ${失败数} 张图渲染失败（导出的是其余图表）`);
+            下载图片(canvas.toDataURL('image/png'), `${detail?.名称 || '看板'}-看板.png`);
+          }
         };
         img.src = c.dataURL;
       });
@@ -508,10 +535,50 @@ export default function Dashboard() {
 
   // 阶段八十九 · B7：订阅（自动刷新）。每 30s 静默重拉当前看板，不打断用户操作；
   // 切看板/卸载时清定时器；手动刷新时也顺带重置间隔（避免切回来瞬间重复请求）。
+  // 阶段九十 · R9（技术评审团"上线后迭代：30s 轮询 N+1"）：
+  //   ① 页面/标签页不可见时**不发请求**——旧实现即使切到别的标签页、浏览器最小化，
+  //      仍每 30s 打一次看板详情（后端要 join 图表 + 报表，属 N+1 成本），纯粹浪费；
+  //      重新可见时立即补拉一次，用户看到的不会比定时刷新的结果更旧。
+  //   ② 连续失败退避：失败后下一次间隔翻倍（30s→60s→…上限 5 分钟），成功后复位。
+  //      旧实现失败后仍每 30s 硬打，服务端异常时反而加重压力。
   useEffect(() => {
     if (!自动刷新 || !currentId) return;
-    const timer = setInterval(() => { loadDetail(currentId); }, 30000);
-    return () => clearInterval(timer);
+    let 已取消耗 = false;
+    let 连续失败 = 0;
+    let 定时器 = null;
+    const 基础间隔 = 30000;
+    const 上限间隔 = 300000;
+
+    const 轮询一次 = async () => {
+      // 不可见就跳过（不消耗请求），下次调度照常继续
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      // loadDetail 已改为返回布尔（true=成功/false=失败），供退避判断；内部已提示错误
+      const 成功 = await loadDetail(currentId);
+      if (成功) 连续失败 = 0;
+      else 连续失败 = Math.min(连续失败 + 1, 4);
+    };
+
+    const 调度 = () => {
+      const 间隔 = Math.min(基础间隔 * (2 ** 连续失败), 上限间隔);
+      定时器 = setTimeout(async () => {
+        if (已取消耗) return;
+        await 轮询一次();
+        if (!已取消耗) 调度();
+      }, 间隔);
+    };
+
+    // 重新可见时立刻补拉一次（用户回来了，别让他盯着 30s 前的数据）
+    const 可见性变化 = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') 轮询一次();
+    };
+
+    调度();
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', 可见性变化);
+    return () => {
+      已取消耗 = true;
+      if (定时器) clearTimeout(定时器);
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', 可见性变化);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [自动刷新, currentId]);
 

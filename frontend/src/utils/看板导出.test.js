@@ -4,10 +4,11 @@ import { 计算拼接尺寸, 构建打印HTML, 每图宽, 每图高, 图间距 }
 
 describe('看板导出 · 计算拼接尺寸', () => {
   it('单图：一张 640x400，无间隔', () => {
-    const { 宽, 高, 格 } = 计算拼接尺寸([{ w: 640, h: 400 }]);
+    const { 宽, 高, 格, 缩放 } = 计算拼接尺寸([{ w: 640, h: 400 }]);
     expect(宽).toBe(每图宽);
     expect(高).toBe(每图高);
     expect(格).toEqual([{ x: 0, y: 0 }]);
+    expect(缩放).toBe(1); // 不超限：不缩放
   });
 
   it('三图：两列网格，第三张换行且垂直下移', () => {
@@ -29,6 +30,18 @@ describe('看板导出 · 计算拼接尺寸', () => {
     const { 高, 格 } = 计算拼接尺寸([{ w: 640, h: 500 }, {}], 1);
     expect(高).toBe(500 + 每图高 + 图间距);
     expect(格[1].y).toBe(500 + 图间距);
+  });
+
+  it('阶段九十 R10：超大画布自动等比降采样（不抛错、不静默黑图）', () => {
+    // 100 张图两列 → 原高 100/2*400 + 间隔 ≈ 20000px，远超 8192 单边上限
+    const { 宽, 高, 缩放, 格 } = 计算拼接尺寸(Array.from({ length: 100 }, () => ({ w: 640, h: 400 })));
+    expect(缩放).toBeLessThan(1);
+    expect(高).toBeLessThanOrEqual(8192);
+    expect(宽).toBeLessThanOrEqual(8192);
+    // 缩放后坐标仍落在画布内（最后一张的 y 不越界）
+    expect(格[99].y).toBeLessThan(高);
+    // 像素总量不超上限（约 80MB RGBA 的硬顶）
+    expect(宽 * 高).toBeLessThanOrEqual(20000000 * 1.001);
   });
 });
 

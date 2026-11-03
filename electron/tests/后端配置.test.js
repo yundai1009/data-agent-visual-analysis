@@ -5,20 +5,19 @@ const { 构建后端环境 } = require('../核心/后端配置');
 
 const 基础 = { PATH: 'x', FOO: 'bar' };
 
-// 阶段八十七：默认库由 sqlite 改为 MySQL（用户要求「桌面版默认必须是 MySQL」）。
-// 这是**断言对象被有意替换**（不是放宽断言）：默认形态从此是 mysql + MYSQL_* 默认值注入。
-test('默认：mysql + 演示模式（桌面版默认走本机 MySQL）', () => {
+// 阶段九十：默认库从 MySQL 改回内置 SQLite（R7 —— 目标用户不懂数据库，默认 MySQL =
+// 「装得上、用不成」；SQLite 零配置，文件落 %APPDATA%，MySQL 降级为进阶选项）。
+// 这是**断言对象被有意替换**：默认形态从此是 sqlite，且不注入任何 MYSQL_*。
+test('默认：sqlite + 演示模式（桌面版默认走内置单文件库，零配置开箱即用）', () => {
   const env = 构建后端环境(基础, {});
-  assert.strictEqual(env.DB_BACKEND, 'mysql');
+  assert.strictEqual(env.DB_BACKEND, 'sqlite');
   assert.strictEqual(env.AUTH_ENABLED, 'false');
   assert.strictEqual(env.HOST, '127.0.0.1');
   assert.strictEqual(env.FOO, 'bar'); // 基础环境保留
-  // 没配过 settings.json 也要给出一套能连的本机默认值（与 配置模型.js 默认表单一致）
-  assert.strictEqual(env.MYSQL_HOST, '127.0.0.1');
-  assert.strictEqual(env.MYSQL_PORT, '3306');
-  assert.strictEqual(env.MYSQL_USER, 'daa_app');
-  assert.strictEqual(env.MYSQL_DATABASE, 'daa');
-  assert.strictEqual(env.MYSQL_PASSWORD, '');
+  // 默认 sqlite 下不该注入任何 MYSQL_*（它们在 mysql 分支才注入）
+  for (const 键 of ['MYSQL_HOST', 'MYSQL_PORT', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE']) {
+    assert.ok(!(键 in env), `${键} 不该被默认注入`);
+  }
 });
 
 test('显式 sqlite：才回退单文件库，且不注入任何 MYSQL_*', () => {

@@ -546,6 +546,11 @@ export async function fetchMetrics() {
   return request('/admin/metrics');
 }
 
+// 阶段九十 · R15：产品价值漏斗（注册→传数据→出报表→回访）
+export async function fetchFunnel() {
+  return request('/admin/funnel');
+}
+
 export async function exportEvents() {
   return request('/admin/export-events');
 }

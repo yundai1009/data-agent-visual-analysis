@@ -116,6 +116,19 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        # 阶段九十 R7b：数据库初始化失败时，任何落到这里的异常都极可能是"数据库不可用"。
+        # 旧行为：返回 500「服务内部错误，请稍后重试」——用户不知道是库没起，
+        #   只看到"能打开页面但所有操作都失败"。此时改成 503 + 启动阶段留下的处置建议，
+        #   把"不静默"落到用户实际操作的每一步上。
+        from api import main as 主模块
+        启动故障 = getattr(主模块, "_启动故障", None)
+        if 启动故障:
+            logger.error("DB-initialization failed; returning 503 on %s %s (request_id=%s): %s",
+                         request.method, request.url.path, _request_id(request), exc, exc_info=True)
+            return JSONResponse(
+                status_code=503,
+                content=_error_body(request, "DB_NOT_READY", 启动故障),
+            )
         # 兜底 500：不把异常细节暴露给用户，只记录到日志（含 request_id 便于按请求排查）
         logger.error("Unhandled exception on %s %s (request_id=%s): %s",
                      request.method, request.url.path, _request_id(request), exc, exc_info=True)

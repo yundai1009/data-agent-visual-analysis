@@ -33,6 +33,17 @@ def export_events(user: dict = Depends(require_admin)) -> Dict[str, Any]:
     }
 
 
+@router.get("/funnel")
+def get_funnel(user: dict = Depends(require_admin)) -> Dict[str, Any]:
+    """产品价值漏斗（阶段九十 R15）：注册 → 传数据 → 出报表 → 回访 + 转化率。
+
+    口径由 admin_repo.价值漏斗 定义（累计去重、回访用报表跨天代理），
+    供管理后台「价值度量」卡片展示，作为上线后产品迭代的基准数据。
+    """
+    from repositories import admin_repo as _repo
+    return _repo.价值漏斗()
+
+
 @router.get("/metrics")
 def get_metrics(user: dict = Depends(require_admin)) -> Dict[str, Any]:
     """平台用量指标：资源总数 + 近 7 天与今日生成报表数。"""

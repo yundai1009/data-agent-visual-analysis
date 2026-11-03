@@ -109,14 +109,15 @@ def test_mysql_全链路_业务数据真实落库(monkeypatch):
     monkeypatch.setattr(settings.EnvConfig, "DB_BACKEND", "mysql", raising=False)
 
     # 基线准备：清掉任何残留（含 healthz mysql 模式等其他用例启动 lifespan 幂等创建的种子
-    # admin），断言走查后 16 张业务表 0 行基线成立，测试结束后再恢复
+    # admin），然后**记录当前各行数为基线**。阶段九十 R3：原断言"16 张表必须 0 行"要求
+    # 走查后清空整个共享 daa 库，但该库有真实审计/业务数据，删数据跑测试不可接受；且
+    # 本测试所有中间断言都按 qa_mysql_*/随机 user_id/report_id 过滤、清理只删自身行，
+    # 因此把"起点必须为空"放宽为"记录起点、结束回到起点"，同样能证明测试行真实落库并清干净。
     from 后端_核心.存储 import mysql_backend
     with mysql_backend.get_conn() as conn:
         with conn.cursor() as cur:
             _清理测试残留(cur)
     基线 = {表: _mysql_计数(表) for 表 in 业务表}
-    for 表, n in 基线.items():
-        assert n == 0, f"基线污染：{表} 已有 {n} 行（走查后应为 0，先人工清理）"
 
     # 捕获 dry-run 验证码（与 test_api_integration 同款）
     _SENT_CODES: dict = {}

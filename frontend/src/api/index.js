@@ -20,6 +20,6 @@ export {
   listReports, getReport, exportReport, exportFullReport, exportAllReports, deleteReport,
   createShare, toggleFavorite, listShares, revokeShare, getSharedReport, replayReport, refineReport,
   listDashboards, getDashboard, createDashboard, updateDashboard, deleteDashboard, shareDashboard, exportDashboard,
-  fetchStatistics, fetchAdminUsers, fetchAuditLog, fetchUsage, fetchMetrics, exportEvents,
+  fetchStatistics, fetchAdminUsers, fetchAuditLog, fetchUsage, fetchMetrics, fetchFunnel, exportEvents,
   banUser, unbanUser, healthCheck, submitFeedback, exportUserData, deleteAccount,
 } from './endpoints';

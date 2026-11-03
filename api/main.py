@@ -38,13 +38,14 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 import logging
 from pathlib import Path
+from typing import Optional
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 
 from api.contracts import HealthResponse
 from api.error_handlers import register_error_handlers
-from api.middleware import RequestBodyLimitMiddleware, RequestIDMiddleware
+from api.middleware import RequestBodyLimitMiddleware, RequestIDMiddleware, SecurityHeadersMiddleware
 from api.routes import datasets, reports, clean, examples, auth, admin, dashboards, shares, feedback, templates, schedules, search
 from config.settings import EnvConfig
 
@@ -127,6 +128,98 @@ def _解析workers() -> int:
             except ValueError:
                 return 1
     return 1
+
+
+# 【关键状态】单实例锁句柄：进程存活期间一直持有，进程退出时由操作系统自动释放。
+# 不写 PID 文件做「PID 还活着吗」判定——Windows 上 os.kill(pid, 0) 实际会
+# TerminateProcess(handle, 0) 把那个进程**真的杀掉**，而在断电/强杀后 PID 文件
+# 必然残留。OS 文件锁没有这两个问题：随进程消失自动解锁。
+_单实例锁句柄 = None
+
+
+def _记忆库目录() -> Path:
+    """记忆库目录（与 services/memory 同一口径）：DAA_CHROMA_PATH 优先，否则 data/chroma_db。
+
+    为什么和记忆库同源：本闸门要保护的就是「两个进程写同一个 chromadb 目录」，
+    锁必须放在被保护的那个目录里；桌面版把 cwd 设成 %APPDATA%\\数据分析Agent，
+    与仓库内 data/ 天然隔离，各用各的锁，不会互相误伤。
+    """
+    return Path(os.getenv("DAA_CHROMA_PATH") or "data/chroma_db")
+
+
+def _尝试排它锁(句柄) -> bool:
+    """非阻塞地对文件首字节加排它锁：拿到返回 True，已被别的活进程持有返回 False。
+
+    平台实现：Windows 用 msvcrt.locking，POSIX 用 fcntl.flock。两者都是**进程级**
+    语义——第二个持有者（哪怕同进程的另一个文件句柄）会失败，这正是我们要的。
+    """
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            句柄.seek(0)
+            msvcrt.locking(句柄.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(句柄.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
+def _获取单实例锁() -> None:
+    """第 7 道防线（阶段九十）：同一记忆库目录只允许一个后端进程。
+
+    【为什么必须加】chromadb.PersistentClient 是嵌入式 sqlite + 内存索引，两个进程
+    写同一个 data/chroma_db 会互相破坏索引，而失败只表现为「记忆慢慢变得不准」——
+    监控全绿、接口全 200，最隐蔽的一类数据损坏。原第 5 道防线只解析 CLI 的
+    --workers，拦不住「另开一个端口起的第二个进程」（本机实测确有 8013 + 8021
+    两个进程同时指向仓库 data/chroma_db 的情况）。
+
+    【同进程重复调用直接跳过】锁是进程级的：测试里反复建 TestClient 会多次进
+    lifespan，不跳过就会把自己锁在门外。
+    """
+    global _单实例锁句柄
+    if _单实例锁句柄 is not None:
+        return  # 本进程已持有
+    目录 = _记忆库目录()
+    try:
+        目录.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        # 目录建不出来（只读部署/权限）不阻断启动：记忆是可选依赖，
+        # 与第 6 道防线「库打不开只告警」保持同一降级口径。
+        logger.warning("单实例锁目录不可创建，跳过该防线: %s", exc)
+        return
+    路径 = 目录 / ".instance.lock"
+    try:
+        句柄 = open(路径, "a+", encoding="utf-8")
+    except OSError as exc:
+        logger.warning("单实例锁文件不可打开，跳过该防线: %s", exc)
+        return
+    if not _尝试排它锁(句柄):
+        句柄.close()
+        raise RuntimeError(
+            f"安全拒绝启动：记忆库目录已被另一个后端进程占用（{目录}）。\n"
+            "原因：向量记忆是嵌入式单进程库（chromadb），两个进程写同一目录会互相"
+            "破坏索引，且故障只表现为「记忆慢慢不准」，日志和监控上都看不见。\n"
+            "常见来源：同一个数据目录上又起了一个不同端口的实例"
+            "（例如 8013 与 8021 同时跑），或 gunicorn/k8s 多副本。\n"
+            "怎么办：① 先停掉旧实例（任务管理器结束对应 python 进程，或 "
+            "Get-NetTCPConnection -State Listen 找到占用端口后 Stop-Process）；"
+            "② 若确实要并行跑多个实例，给每个实例设置独立的 DAA_CHROMA_PATH"
+            "（各自的记忆库），或清空 embedding Key 让记忆链路整体不读写；"
+            "③ 换服务端向量库（Qdrant / pgvector）后可支持多进程。"
+        )
+    try:
+        句柄.seek(0)
+        句柄.truncate()
+        句柄.write(f"{os.getpid()}\n")
+        句柄.flush()
+    except OSError:
+        pass  # 写 PID 只是给人看的排查线索，写不进去不影响锁本身
+    _单实例锁句柄 = 句柄
+    logger.info("单实例锁已获取（%s，PID %s）", 路径, os.getpid())
 
 
 def _启动安全自检() -> None:
@@ -275,11 +368,22 @@ def _启动安全自检() -> None:
         # 记忆库打不开属于可降级故障：让服务起来，只是记忆不可用
         logger.warning("向量记忆库一致性检查未通过（不影响分析主流程）: %s", exc)
 
+    # 第 7 道防线（阶段九十）：同一记忆库目录只允许一个后端进程（见 _获取单实例锁）。
+    # 放在最后：前面的 1~6 道都是"配置不合法"类硬拦，本道是"运行冲突"类硬拦，
+    # 顺序不影响各自语义；放最后也避免在 AUTH/JWT 没配时先被锁误导成并发问题。
+    _获取单实例锁()
+
 
 # 【函数】FastAPI 生命周期钩子：应用启动前/关闭后各执行一次。
 # 入参：app —— FastAPI 应用实例（框架自动注入）
 # 返回：异步上下文管理器——yield 前 = 启动初始化，yield 后 = 关闭清理
 # 业务定位：所有"进程级初始化"的统一入口，比散落在模块级代码更可控、可测试。
+# 模块级启动故障（阶段九十 R7b）：初始化数据库失败不再只记一条日志就继续跑——
+# 旧行为是「界面照常显示、每个请求却在挂」，用户完全无感。现在把可读故障与
+# 处置建议记下来，/healthz 返回给运维/前端，用户操作时也会收到明确 503 提示。
+_启动故障: Optional[str] = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # P0 加固：启动即做安全自检，不通过则进程拒绝启动
@@ -288,11 +392,22 @@ async def lifespan(app: FastAPI):
     # mysql→mysql_repo）。原因：api.main 模块级 `数据集仓储()` 只在首次 import 时建表，
     # 测试多模块换临时库、或生产手动换库路径后，新库会缺 datasets 等表——每次启动都
     # CREATE IF NOT EXISTS，确保表一定存在（幂等，重复调用安全）。
+    global _启动故障
     try:
         from 后端_核心.存储.连接 import 初始化数据库
         初始化数据库()
     except Exception as exc:
-        logger.error("初始化数据库失败：%s", exc)
+        from 后端_核心.存储 import backend as 存储后端
+        后端名 = 存储后端.当前后端()
+        # 阶段九十 R7b：失败不再静默——把可读故障与处置建议暴露给 /healthz 与前端。
+        # 旧实现只 logger.error，用户面对的是一个「能打开但所有操作都报错」的界面。
+        _启动故障 = (
+            f"数据库初始化失败（后端={后端名}）：{exc}\n"
+            "处置建议：内置 SQLite 模式应能自动建库，请确认数据目录可写；"
+            "MySQL 模式请确认本机 MySQL 已启动、且设置页的账号/库名/密码与库实际一致。"
+            "拿不准时可先在设置页切换到「内置 SQLite（单机推荐）」验证分析主流程。"
+        )
+        logger.error("初始化数据库失败（服务已启动但数据请求会失败）: %s", _启动故障)
     # 阶段十三：启动时幂等创建种子管理员（密码来自 EnvConfig，生产务必覆盖默认值）
     try:
         from repositories import user_repo
@@ -353,9 +468,14 @@ app.add_middleware(
 )
 
 # 中间件注册顺序说明（FastAPI/Starlette 中间件是"后注册先执行"的栈）：
-# 实际请求链路 = RequestBodyLimit → RequestID → CORS → 路由处理器。
+# 实际请求链路 = RequestBodyLimit → RequestID → CORS → SecurityHeaders → 路由处理器。
 # request_id 中间件：放在最外层，保证所有请求都有 request_id
 app.add_middleware(RequestIDMiddleware)
+# 阶段九十 R12：安全响应头（frame-ancestors/nosniff/referrer/permissions）。
+# 放在 RequestID 之内、CORS 之前注册：越靠内越晚执行，但安全头必须覆盖到
+# 所有响应（含错误响应），而 BaseHTTPMiddleware 链上每一层都会拿到下游响应，
+# 只要不是最外层被提前 return 就都能补上——所以紧跟 RequestID 注册足以覆盖全部。
+app.add_middleware(SecurityHeadersMiddleware)
 # P0 加固：请求体上限中间件（放最外层，先于业务处理拦截超大 body）
 # 超大请求体在进入任何业务逻辑前就被 413 拦截，避免恶意大包占满内存/带宽
 app.add_middleware(RequestBodyLimitMiddleware)
@@ -422,6 +542,7 @@ def healthz():
         "status": "ok" if db_ok else "degraded",
         "db_backend": 后端名,
         "db_ok": db_ok,
+        "启动故障": _启动故障,
         "memory": memory_info,
     }
 

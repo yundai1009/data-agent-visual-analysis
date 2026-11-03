@@ -9,10 +9,11 @@ const {
 const mysql表单 = () => ({ ...默认表单(), 数据库模式: 'mysql', 主机: 'db.local', 端口: 3307, 用户: 'u', 密码: 'p@ss', 库名: 'daa2' });
 const real表单 = () => ({ ...默认表单(), 认证模式: 'real', JWT密钥: 'k'.repeat(64), 预置管理员口令: 'S3cret!2026' });
 
-// 阶段八十七：默认库改为 MySQL（断言对象被有意替换：桌面版默认必须是 MySQL）。
-test('默认表单 = MySQL + 演示模式（桌面版默认形态）', () => {
+// 阶段九十：默认库改回内置 SQLite（R7 —— 目标用户不懂数据库，MySQL 默认导致
+// 「装得上、用不成」；SQLite 零配置开箱即用）。断言对象被有意替换。
+test('默认表单 = SQLite + 演示模式（桌面版默认形态，零配置）', () => {
   const f = 默认表单();
-  assert.strictEqual(f.数据库模式, 'mysql');
+  assert.strictEqual(f.数据库模式, 'sqlite');
   assert.strictEqual(f.认证模式, 'demo');
   assert.strictEqual(f.端口, 3306);
   assert.strictEqual(f.主机, '127.0.0.1');
@@ -42,8 +43,8 @@ test('设置转表单：空设置回落到默认；MySQL 与真实认证能正�
 
 test('设置转表单：非法取值不外泄，落到安全默认', () => {
   const f = 设置转表单({ 数据库: { 模式: 'postgres', 主机: 'x' }, 认证模式: 'ldap' });
-  // 阶段八十七：非法模式值回落到默认 mysql（不再是 sqlite）
-  assert.strictEqual(f.数据库模式, 'mysql');
+  // 阶段九十：非法模式值回落到默认 sqlite（不再是 mysql）
+  assert.strictEqual(f.数据库模式, 'sqlite');
   assert.strictEqual(f.认证模式, 'demo');
   // 数据库对象里的其它字段仍应被回填，切回 mysql 时不用重打
   assert.strictEqual(f.主机, 'x');
@@ -137,7 +138,8 @@ test('校验：MySQL 必填项逐条给出人话错误', () => {
   for (const 端口 of ['', '0', '65536', '3306.5', 'abc']) {
     assert.match(校验表单({ ...mysql表单(), 端口 }).错误[0], /端口/, `端口 ${端口} 应被拒绝`);
   }
-  // sqlite 模式不校验 MySQL 字段（它们压根不进后端 env）——默认表单现在是 mysql，需显式切过去
+  // sqlite 模式不校验 MySQL 字段（它们压根不进后端 env）——阶段九十起默认表单就是 sqlite，
+  // 这里显式再切一次，锁住「sqlite 下 MySQL 字段全空也必须通过校验」。
   assert.strictEqual(校验表单({ ...默认表单(), 数据库模式: 'sqlite', 主机: '', 用户: '', 库名: '', 端口: '' }).ok, true);
 });
 
@@ -158,11 +160,11 @@ test('校验：非法模式值被拒绝', () => {
 });
 
 test('是否需要重启：全新安装点保存不该白白重启一次', () => {
-  // 磁盘上没有 settings.json（={}），用户第一次点保存写的是显式 mysql+demo —— 生效配置一致
+  // 磁盘上没有 settings.json（={}），用户第一次点保存写的是显式 sqlite+demo —— 生效配置一致
   assert.strictEqual(是否需要重启({}, 表单转设置(默认表单())), false);
-  assert.strictEqual(是否需要重启({}, { 数据库: { 模式: 'mysql' }, 认证模式: 'demo' }), false);
-  assert.strictEqual(是否需要重启({}, { 数据库: { 模式: 'sqlite' }, 认证模式: 'demo' }), true,
-    '显式 sqlite 已不是默认形态，必须触发重启');
+  assert.strictEqual(是否需要重启({}, { 数据库: { 模式: 'sqlite' }, 认证模式: 'demo' }), false);
+  assert.strictEqual(是否需要重启({}, { 数据库: { 模式: 'mysql' }, 认证模式: 'demo' }), true,
+    '显式 mysql 已不是默认形态（阶段九十起默认 sqlite），必须触发重启');
 });
 
 test('是否需要重启：数据库 / 认证的实质变化都要重启', () => {
@@ -189,10 +191,10 @@ test('是否需要重启：sqlite 下改 MySQL 字段、demo 下改密钥都不�
 });
 
 test('生效配置：只暴露真正会进 env 的字段', () => {
-  // 阶段八十七：空设置 {} = 默认 mysql（主机 127.0.0.1 / 端口 3306 / 用户 daa_app / 库 daa）
+  // 阶段九十：空设置 {} = 默认 sqlite（零配置单机库，不进任何 MYSQL_*）
   // 阶段八十九：空设置 {} = 默认限流 redis（与后端 EnvConfig 默认一致）
   assert.deepStrictEqual(生效配置({}), {
-    数据库: { 模式: 'mysql', 主机: '127.0.0.1', 端口: 3306, 用户: 'daa_app', 密码: '', 库名: 'daa' },
+    数据库: { 模式: 'sqlite' },
     认证: { 模式: 'demo' },
     限流: { 模式: 'redis', RedisURL: 'redis://127.0.0.1:6379/0', 超时秒: 1 },
   });

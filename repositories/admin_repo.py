@@ -110,3 +110,59 @@ def 报表趋势(days: int = 7) -> List[Dict[str, Any]]:
         key = d.isoformat()
         result.append({"日期": key, "数量": by_day.get(key, 0)})
     return result
+
+
+def 价值漏斗() -> Dict[str, Any]:
+    """阶段九十 · R15（产品评审团"无价值度量口径"）：注册 → 传数据 → 出报表 → 回访。
+
+    【口径定义】逐步给「有多少用户走到了这一步」，每步都是**累计且去重**：
+      - 注册：users 表里有账号的用户数（这是漏斗顶，分母）；
+      - 传数据：至少有一条 datasets 记录的用户数；
+      - 出报表：至少有一条 reports 记录的用户数（真正拿到结果的）；
+      - 回访：注册满 7 天、且首条报表与最近一条报表不在同一天的用户数
+        —— 用「报表时间跨天」当留存代理指标。为什么不用登录日志：本项目没有
+        登录事件表，硬造一条只会得到假数据；报表跨天是可查、可解释、不撒谎的口径。
+    另外给出每一步相对上一步的转化率，方便一眼看出卡在哪一环。
+
+    【已知局限（不掩盖）】分母只含已注册用户，匿名试用不在内（本项目默认要求登录）；
+    回访用报表跨天代理，只能说明「回来继续用」，不能说明「只是回来看看」。
+    """
+    _确保表存在()
+    with _get_conn() as conn:
+        注册 = int(conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"])
+        传数据 = int(conn.execute(
+            "SELECT COUNT(DISTINCT user_id) AS n FROM datasets"
+        ).fetchone()["n"])
+        出报表 = int(conn.execute(
+            "SELECT COUNT(DISTINCT user_id) AS n FROM reports"
+        ).fetchone()["n"])
+        # 回访：同一天只有一条报表的不算回访；跨天出现才算「回来接着用」
+        回访 = int(conn.execute(
+            """
+            SELECT COUNT(*) AS n FROM (
+                SELECT user_id
+                FROM reports
+                GROUP BY user_id
+                HAVING MIN(substr(created_at, 1, 10)) <> MAX(substr(created_at, 1, 10))
+            ) t
+            """
+        ).fetchone()["n"])
+
+    def _率(分子: int, 分母: int) -> float:
+        return round(分子 / 分母, 4) if 分母 else 0.0
+
+    return {
+        "漏斗": [
+            {"步骤": "注册", "人数": 注册, "占注册": _率(注册, 注册)},
+            {"步骤": "传数据", "人数": 传数据, "占注册": _率(传数据, 注册)},
+            {"步骤": "出报表", "人数": 出报表, "占注册": _率(出报表, 注册)},
+            {"步骤": "回访（报表跨天）", "人数": 回访, "占注册": _率(回访, 注册)},
+        ],
+        "转化率": {
+            "注册→传数据": _率(传数据, 注册),
+            "传数据→出报表": _率(出报表, 传数据),
+            "出报表→回访": _率(回访, 出报表),
+          },
+        "口径说明": "各步为累计去重用户数；回访以「同一用户报表出现在不同日期」代理，"
+                   "分母仅含已注册用户，匿名试用不计入。",
+    }

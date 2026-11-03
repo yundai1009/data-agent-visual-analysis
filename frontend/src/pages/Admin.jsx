@@ -13,7 +13,7 @@
 // 删除它会怎样：管理员失去运营监控入口（接口仍在，仅前端无入口）。
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { Shield, Users, Database, FileBarChart2, LayoutDashboard, RefreshCw, ShieldAlert, ScrollText, Gauge, Coins, FileDown, Ban, CheckCircle } from 'lucide-react';
-import { fetchStatistics, fetchAdminUsers, fetchAuditLog, fetchUsage, fetchMetrics, exportEvents, banUser, unbanUser } from '../api';
+import { fetchStatistics, fetchAdminUsers, fetchAuditLog, fetchUsage, fetchMetrics, fetchFunnel, exportEvents, banUser, unbanUser } from '../api';
 import { useApp } from '../AppContext';
 import EChartsChart from '../components/EChartsChart';
 
@@ -49,6 +49,8 @@ export default function Admin() {
   const [usage, setUsage] = useState(null);
   const [metrics, setMetrics] = useState(null);
   const [events, setEvents] = useState(null);
+  // 阶段九十 · R15：产品价值漏斗（注册→传数据→出报表→回访）
+  const [funnel, setFunnel] = useState(null);
   // 【Bug11 修复】序号守卫：快速切换 tab 时旧响应不覆盖新 tab 数据；
   // 且各 tab 数据按需加载（原实现每次切 tab 都重复拉统计+用户）。
   const loadSeqRef = useRef(0);
@@ -74,7 +76,10 @@ export default function Admin() {
         tasks.push(fetchAuditLog().then(res => setAudit(Array.isArray(res?.审计列表) ? res.审计列表 : [])));
       }
       if (tab === 'usage') tasks.push(fetchUsage().then(res => setUsage(res && typeof res === 'object' ? res : null)));
-      if (tab === 'metrics') tasks.push(fetchMetrics().then(res => setMetrics(res && typeof res === 'object' ? res : null)));
+      if (tab === 'metrics') {
+        tasks.push(fetchMetrics().then(res => setMetrics(res && typeof res === 'object' ? res : null)));
+        tasks.push(fetchFunnel().then(res => setFunnel(res && typeof res === 'object' ? res : null)));
+      }
       if (tab === 'events' && !eventsLoadedRef.current) {
         eventsLoadedRef.current = true;
         tasks.push(exportEvents().then(res => setEvents(res && typeof res === 'object' ? res : null)));
@@ -365,6 +370,40 @@ export default function Admin() {
             </div>
           )}
           {!metrics && !loading && <p className="text-xs text-gray-400 py-4 text-center">暂无指标数据</p>}
+
+          {/* 阶段九十 · R15：产品价值漏斗。把「注册→传数据→出报表→回访」每步人数与
+              转化率摆出来，作为产品迭代的基准口径（口径说明来自后端，避免前后端各写一份）。 */}
+          {funnel?.漏斗?.length > 0 && (
+            <div className="mt-4 border-t border-gray-100 pt-4">
+              <p className="text-sm font-semibold text-gray-800 mb-1">产品价值漏斗</p>
+              <p className="text-[11px] text-gray-400 mb-3">{funnel.口径说明}</p>
+              <div className="space-y-2">
+                {funnel.漏斗.map((步, i) => {
+                  const 总 = funnel.漏斗[0]?.人数 || 0;
+                  const 占 = 总 > 0 ? Math.round((步.人数 / 总) * 100) : 0;
+                  return (
+                    <div key={步.步骤} className="flex items-center gap-3">
+                      <span className="text-xs text-gray-600 w-32 shrink-0">{步.步骤}</span>
+                      <div className="flex-1 h-6 bg-gray-100 rounded-md overflow-hidden relative">
+                        <div className="h-full bg-accent/70 rounded-md transition-all" style={{ width: `${占}%` }} />
+                        <span className="absolute inset-0 flex items-center px-2 text-[11px] text-gray-600">
+                          {步.人数} 人（{占}%）
+                        </span>
+                      </div>
+                      {i > 0 && funnel.转化率 && (
+                        <span className="text-[11px] text-gray-400 w-24 shrink-0 text-right">
+                          {funnel.漏斗[i - 1]?.人数 > 0
+                            ? `${Math.round((步.人数 / funnel.漏斗[i - 1].人数) * 100)}%`
+                            : '—'}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-gray-400 mt-2">右侧百分比 = 相对上一步的转化率（首行无上一步）</p>
+            </div>
+          )}
         </div>
       )}
 

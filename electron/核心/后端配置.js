@@ -3,15 +3,19 @@
 //   再按设置注入 API_PORT 与 PORT、mysql 默认/显式模式下的 MYSQL_*、real 认证下的 AUTH_ENABLED / JWT_SECRET_KEY / SEED_ADMIN_PASSWORD。
 // 为什么在这里拼 env 而不是让后端自己去读桌面版的 settings.json：后端是网页版与桌面版共用的同一份代码，
 //   给它开一条「读桌面版私有目录」的配置路径，就等于把桌面版特有的东西焊进后端；env 是两版共有的进程契约，且外部可观测。
-// 为什么默认是 mysql + 演示模式（阶段八十七）：用户明确要求「桌面版默认必须是 MySQL」——零配置开箱即用
-//   的默认库从 sqlite 改为本机 MySQL（127.0.0.1:3306 / daa_app / daa，与网页版同库，账号数据同步）；
+// 为什么默认是 sqlite + 演示模式（阶段九十回退，覆盖阶段八十七的 MySQL 默认）：
+//   阶段八十七按「用户要求」把默认库改成 MySQL，上线评审时确认这是把「开发方便」
+//   当成了「用户方便」——目标用户是不懂数据库的普通用户，本机没装 MySQL 时后端
+//   初始化数据库失败（api/main.py 只记 logger.error），界面照常显示但每个请求都挂。
+//   改回内置 SQLite 后零安装零配置即可用（文件落 %APPDATA%\数据分析Agent\data，
+//   main.js 显式设 DAA_SQLITE_PATH + cwd）；MySQL 保留为「多人共享/服务器部署」选项。
 //   真实认证仍是可选增强，不能变成前置条件。
 // 坑：API_PORT 与 PORT 都写同一个值——后端自检与 uvicorn 历史上读的键不统一，两个都写才能保证哪个生效结果都一样。
-// 坑：数据库模式缺省为 mysql；仅当显式 模式==='sqlite' 才回退 sqlite（未知模式沿用默认 mysql，校验在 配置模型.js 里做）。
+// 坑：数据库模式缺省为 sqlite；仅当显式 模式==='mysql' 才注入 MYSQL_*（未知模式沿用默认 sqlite，校验在 配置模型.js 里做）。
 // 坑：认证开启时若密钥/口令为空就不注入这两个键——特意留给后端自检去报「未设置」，用空串注入会把「没配」伪装成「配了」。
 function 默认补丁() {
   return {
-    DB_BACKEND: 'mysql',
+    DB_BACKEND: 'sqlite',
     AUTH_ENABLED: 'false',
     HOST: '127.0.0.1',
   };
@@ -38,9 +42,9 @@ function 构建后端环境(基础环境, 设置 = {}, 选项 = {}) {
   }
 
   const 数据库 = 设置.数据库 || {};
-  // 阶段八十七：默认库 = MySQL。用户没配过（settings.json 不存在）或没写 数据库.模式
-  // 时，按「本机 MySQL 默认值」注入，与 配置模型.js 默认表单一致；仅显式 sqlite 才切换。
-  const 数据库模式 = 数据库.模式 || 'mysql';
+  // 阶段九十：默认库 = 内置 SQLite。用户没配过（settings.json 不存在）或没写 数据库.模式
+  // 时，按 SQLite 注入（零配置开箱即用）；仅显式 mysql 才注入 MYSQL_*（与 配置模型.js 默认表单一致）。
+  const 数据库模式 = 数据库.模式 || 'sqlite';
   if (数据库模式 === 'mysql') {
     env.DB_BACKEND = 'mysql';
     env.MYSQL_HOST = 数据库.主机 || '127.0.0.1';
